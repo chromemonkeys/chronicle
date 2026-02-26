@@ -191,6 +191,7 @@ func (f *fakeStore) InsertNamedVersion(context.Context, string, string, string, 
 	return nil
 }
 func (f *fakeStore) ProposalQueue(context.Context) ([]map[string]any, error) { return nil, nil }
+func (f *fakeStore) Ping(context.Context) error { return nil }
 
 type fakeGit struct {
 	historyFn        func(string, string, int) ([]store.CommitInfo, error)
