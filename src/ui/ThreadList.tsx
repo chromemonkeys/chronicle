@@ -6,8 +6,14 @@ type Props = {
   threads: WorkspaceThread[];
   activeThreadId: string;
   onSelectThread: (id: string) => void;
-  onReplyThread?: (id: string) => void;
-  onResolveThread?: (id: string) => void;
+  onReplyThread?: (id: string, body: string) => void;
+  onResolveThread?: (
+    id: string,
+    resolution: {
+      outcome: "ACCEPTED" | "REJECTED" | "DEFERRED";
+      rationale?: string;
+    }
+  ) => void;
   onReopenThread?: (id: string) => void;
   onVoteThread?: (id: string, direction: "up" | "down") => void;
   onReactThread?: (id: string, emoji: string) => void;

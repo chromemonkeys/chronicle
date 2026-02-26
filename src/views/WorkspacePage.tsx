@@ -62,14 +62,35 @@ const panelTabs: { id: PanelTab; label: string }[] = [
   { id: "decisions", label: "Log" },
 ];
 
-const defaultAnchorLabels: Record<string, string> = {
-  title: "¶ Title",
-  overview: "¶ Overview",
-  purpose: "¶ Purpose",
-  tiers: "¶ Tier Definitions",
-  enforce: "¶ Enforcement",
-  exemptions: "¶ Exemptions"
-};
+function extractNodeText(node: DocumentContent["content"][number]): string {
+  if (node.text) return node.text;
+  if (!node.content) return "";
+  return node.content.map((child) => extractNodeText(child)).join("").trim();
+}
+
+function buildNodeLabelMap(doc: DocumentContent | null): Map<string, string> {
+  const labels = new Map<string, string>();
+  if (!doc) {
+    return labels;
+  }
+  for (const node of doc.content) {
+    const nodeId = typeof node.attrs?.nodeId === "string" ? node.attrs.nodeId : "";
+    if (!nodeId) {
+      continue;
+    }
+    const text = extractNodeText(node);
+    if (node.type === "heading") {
+      labels.set(nodeId, `¶ ${text || "Heading"}`);
+      continue;
+    }
+    if (node.type === "paragraph") {
+      labels.set(nodeId, `¶ ${text.slice(0, 48) || "Paragraph"}`);
+      continue;
+    }
+    labels.set(nodeId, `¶ ${node.type}`);
+  }
+  return labels;
+}
 
 export function WorkspacePage() {
   const { docId = "" } = useParams();
@@ -77,8 +98,8 @@ export function WorkspacePage() {
   const [viewState, setViewState] = useState<ViewState>("loading");
   const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
   const [activeTab, setActiveTab] = useState<PanelTab>("discussions");
-  const [selectedBlock, setSelectedBlock] = useState("purpose");
-  const [activeThread, setActiveThread] = useState("purpose");
+  const [activeThread, setActiveThread] = useState("");
+  const [composerAnchorNodeId, setComposerAnchorNodeId] = useState<string | null>(null);
   const [diffVisible, setDiffVisible] = useState(false);
   const [diffMode, setDiffMode] = useState<DiffMode>("split");
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("proposal");
@@ -89,6 +110,7 @@ export function WorkspacePage() {
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [historyData, setHistoryData] = useState<DocumentHistoryPayload | null>(null);
   const [mainHistoryData, setMainHistoryData] = useState<DocumentHistoryPayload | null>(null);
   const [decisionRows, setDecisionRows] = useState<DecisionLogEntry[] | null>(null);
@@ -125,6 +147,7 @@ export function WorkspacePage() {
     setViewState("loading");
     setSaveState("idle");
     setSaveError(null);
+    setActionError(null);
     setHistoryData(null);
     setMainHistoryData(null);
     setDecisionRows(null);
@@ -152,8 +175,8 @@ export function WorkspacePage() {
         setDocDraft(initialDoc);
         baseDocRef.current = initialDoc;
         if (response.threads.length > 0) {
-          setSelectedBlock(response.threads[0].id);
           setActiveThread(response.threads[0].id);
+          setComposerAnchorNodeId(response.threads[0].anchorNodeId ?? null);
         }
         setViewState("success");
       })
@@ -199,12 +222,15 @@ export function WorkspacePage() {
     };
   }, []);
 
+  const nodeLabelMap = useMemo(() => buildNodeLabelMap(docDraft), [docDraft]);
+
   const currentAnchor = useMemo(() => {
-    if (activeNodeId) {
-      return defaultAnchorLabels[selectedBlock] ?? `¶ ${activeNodeId.slice(0, 12)}`;
+    const nodeId = composerAnchorNodeId ?? activeNodeId;
+    if (!nodeId) {
+      return "¶ Unanchored";
     }
-    return defaultAnchorLabels[selectedBlock] ?? `¶ ${selectedBlock}`;
-  }, [selectedBlock, activeNodeId]);
+    return nodeLabelMap.get(nodeId) ?? `¶ ${nodeId.slice(0, 12)}`;
+  }, [composerAnchorNodeId, activeNodeId, nodeLabelMap]);
 
   const threadAnchors = useMemo(() => {
     if (!workspace) return [];
@@ -518,9 +544,17 @@ export function WorkspacePage() {
     return legacyContentToDoc(snapshot, fallbackNodeIds);
   }
 
+  function formatChangedField(item: { field: string; before: string; after: string }) {
+    if (item.field === "doc") {
+      return "Document body updated.";
+    }
+    return `${item.field}: "${item.before}" -> "${item.after}"`;
+  }
+
   function selectThread(id: string) {
     setActiveThread(id);
-    setSelectedBlock(id);
+    const thread = workspace?.threads.find((item) => item.id === id);
+    setComposerAnchorNodeId(thread?.anchorNodeId ?? null);
     setActiveTab("discussions");
   }
 
@@ -540,16 +574,32 @@ export function WorkspacePage() {
 
   const handleSelectionChange = useCallback((nodeId: string | null) => {
     setActiveNodeId(nodeId);
+    setComposerAnchorNodeId(nodeId);
     if (nodeId) {
       // Find thread anchored to this node
       const thread = workspace?.threads.find((t) => t.anchorNodeId === nodeId);
       if (thread) {
-        setSelectedBlock(thread.id);
         setActiveThread(thread.id);
         setActiveTab("discussions");
       }
     }
   }, [workspace?.threads]);
+
+  function getCurrentAnchorOffsets() {
+    if (!editorInstance) {
+      return undefined;
+    }
+    const { from, to } = editorInstance.state.selection;
+    if (from === to) {
+      return undefined;
+    }
+    const quote = editorInstance.state.doc.textBetween(from, to, " ").trim();
+    return {
+      start: from,
+      end: to,
+      quote: quote || undefined,
+    };
+  }
 
   async function saveDraft() {
     if (!contentDraft || !workspace || !proposalMode) {
@@ -577,13 +627,14 @@ export function WorkspacePage() {
     if (!workspace?.document.proposalId) {
       return;
     }
+    setActionError(null);
     try {
       const updated = await requestProposalReview(workspace.document.id, workspace.document.proposalId);
       setWorkspace(updated);
       setContentDraft(updated.content);
       setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
-    } catch {
-      window.alert("Could not submit proposal for review.");
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not submit proposal for review.");
     }
   }
 
@@ -591,13 +642,14 @@ export function WorkspacePage() {
     if (!workspace) {
       return;
     }
+    setActionError(null);
     try {
       const updated = await createProposal(workspace.document.id);
       setWorkspace(updated);
       setContentDraft(updated.content);
       setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
-    } catch {
-      window.alert("Could not start proposal.");
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not start proposal.");
     }
   }
 
@@ -606,6 +658,7 @@ export function WorkspacePage() {
       return;
     }
     setApproveBusyRole(role);
+    setActionError(null);
     try {
       const updated = await approveProposalRole(workspace.document.id, workspace.document.proposalId, role);
       setWorkspace(updated);
@@ -616,16 +669,22 @@ export function WorkspacePage() {
         const blockers = Array.isArray((error.details as { blockers?: unknown[] } | null)?.blockers)
           ? (error.details as { blockers: string[] }).blockers.join(", ")
           : "required prior roles";
-        window.alert(`Approval update failed. Blocked by: ${blockers}`);
+        setActionError(`Approval update failed. Blocked by: ${blockers}`);
       } else {
-        window.alert("Approval update failed.");
+        setActionError(isApiError(error) ? error.message : "Approval update failed.");
       }
     } finally {
       setApproveBusyRole(null);
     }
   }
 
-  async function resolveActiveThread(threadIdOverride?: string) {
+  async function resolveActiveThread(
+    threadIdOverride?: string,
+    resolution?: {
+      outcome: "ACCEPTED" | "REJECTED" | "DEFERRED";
+      rationale?: string;
+    }
+  ) {
     if (!workspace?.document.proposalId) {
       return;
     }
@@ -634,24 +693,10 @@ export function WorkspacePage() {
     if (!thread || thread.resolvedNote) {
       return;
     }
-    const rawOutcome = window.prompt("Resolution outcome (ACCEPTED, REJECTED, DEFERRED)", "ACCEPTED");
-    if (!rawOutcome) {
-      return;
-    }
-    const normalizedOutcome = rawOutcome.trim().toUpperCase();
-    if (normalizedOutcome !== "ACCEPTED" && normalizedOutcome !== "REJECTED" && normalizedOutcome !== "DEFERRED") {
-      window.alert("Invalid outcome. Use ACCEPTED, REJECTED, or DEFERRED.");
-      return;
-    }
-    const outcome = normalizedOutcome as "ACCEPTED" | "REJECTED" | "DEFERRED";
-    let rationale: string | undefined;
-    if (outcome === "REJECTED") {
-      rationale = window.prompt("Rationale (required for REJECTED)")?.trim();
-      if (!rationale) {
-        window.alert("Rationale is required for REJECTED.");
-        return;
-      }
-    }
+    const outcome = resolution?.outcome ?? "ACCEPTED";
+    const rationale = resolution?.rationale?.trim();
+    if (outcome === "REJECTED" && !rationale) return;
+    setActionError(null);
     try {
       const updated = await resolveProposalThread(
         workspace.document.id,
@@ -665,8 +710,8 @@ export function WorkspacePage() {
       setWorkspace(updated);
       setContentDraft(updated.content);
       setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
-    } catch {
-      window.alert("Thread resolution failed.");
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Thread resolution failed.");
     }
   }
 
@@ -681,6 +726,7 @@ export function WorkspacePage() {
     if (!workspace?.document.proposalId || !text.trim()) {
       return;
     }
+    setActionError(null);
     try {
       const updated = await createProposalThread(
         workspace.document.id,
@@ -688,7 +734,8 @@ export function WorkspacePage() {
         {
           text,
           anchorLabel: currentAnchor,
-          anchorNodeId,
+          anchorNodeId: anchorNodeId ?? composerAnchorNodeId ?? activeNodeId ?? undefined,
+          anchorOffsets: getCurrentAnchorOffsets(),
           visibility: options?.visibility ?? "INTERNAL",
           type: options?.type ?? "GENERAL",
         }
@@ -700,15 +747,15 @@ export function WorkspacePage() {
       const newThread = updated.threads[updated.threads.length - 1];
       if (newThread) {
         setActiveThread(newThread.id);
-        setSelectedBlock(newThread.id);
+        setComposerAnchorNodeId(newThread.anchorNodeId ?? null);
         setActiveTab("discussions");
       }
-    } catch {
-      window.alert("Could not create comment. Please retry.");
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not create comment. Please retry.");
     }
   }
 
-  async function replyToThread(threadIdOverride?: string) {
+  async function replyToThread(threadIdOverride: string | undefined, body: string) {
     if (!workspace?.document.proposalId) {
       return;
     }
@@ -717,10 +764,10 @@ export function WorkspacePage() {
     if (!thread) {
       return;
     }
-    const body = window.prompt("Reply");
     if (!body || !body.trim()) {
       return;
     }
+    setActionError(null);
     try {
       const updated = await replyProposalThread(
         workspace.document.id,
@@ -731,8 +778,8 @@ export function WorkspacePage() {
       setWorkspace(updated);
       setContentDraft(updated.content);
       setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
-    } catch {
-      window.alert("Could not post reply. Please retry.");
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not post reply. Please retry.");
     }
   }
 
@@ -740,6 +787,7 @@ export function WorkspacePage() {
     if (!workspace?.document.proposalId) {
       return;
     }
+    setActionError(null);
     try {
       const updated = await voteProposalThread(
         workspace.document.id,
@@ -750,8 +798,8 @@ export function WorkspacePage() {
       setWorkspace(updated);
       setContentDraft(updated.content);
       setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
-    } catch {
-      window.alert("Could not update vote.");
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not update vote.");
     }
   }
 
@@ -759,6 +807,7 @@ export function WorkspacePage() {
     if (!workspace?.document.proposalId) {
       return;
     }
+    setActionError(null);
     try {
       const updated = await reactProposalThread(
         workspace.document.id,
@@ -769,8 +818,8 @@ export function WorkspacePage() {
       setWorkspace(updated);
       setContentDraft(updated.content);
       setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
-    } catch {
-      window.alert("Could not apply reaction.");
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not apply reaction.");
     }
   }
 
@@ -778,6 +827,7 @@ export function WorkspacePage() {
     if (!workspace?.document.proposalId) {
       return;
     }
+    setActionError(null);
     try {
       const updated = await reopenProposalThread(
         workspace.document.id,
@@ -787,8 +837,8 @@ export function WorkspacePage() {
       setWorkspace(updated);
       setContentDraft(updated.content);
       setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
-    } catch {
-      window.alert("Could not reopen thread.");
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not reopen thread.");
     }
   }
 
@@ -801,6 +851,7 @@ export function WorkspacePage() {
       return;
     }
     const nextVisibility = thread.visibility === "EXTERNAL" ? "INTERNAL" : "EXTERNAL";
+    setActionError(null);
     try {
       const updated = await setProposalThreadVisibility(
         workspace.document.id,
@@ -811,8 +862,8 @@ export function WorkspacePage() {
       setWorkspace(updated);
       setContentDraft(updated.content);
       setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
-    } catch {
-      window.alert("Could not change visibility.");
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not change visibility.");
     }
   }
 
@@ -821,6 +872,7 @@ export function WorkspacePage() {
       return;
     }
     setMergeBusy(true);
+    setActionError(null);
     try {
       const updated = await mergeProposal(workspace.document.id, workspace.document.proposalId);
       setWorkspace(updated);
@@ -831,9 +883,9 @@ export function WorkspacePage() {
         const details = error.details as { pendingApprovals?: number; openThreads?: number } | null;
         const pending = details?.pendingApprovals ?? pendingApprovals;
         const open = details?.openThreads ?? openThreads;
-        window.alert(`Merge gate is blocked. Pending approvals: ${pending}, open threads: ${open}.`);
+        setActionError(`Merge gate is blocked. Pending approvals: ${pending}, open threads: ${open}.`);
       } else {
-        window.alert("Merge gate is still blocked.");
+        setActionError(isApiError(error) ? error.message : "Merge gate is still blocked.");
       }
     } finally {
       setMergeBusy(false);
@@ -848,6 +900,7 @@ export function WorkspacePage() {
     if (!label) {
       return;
     }
+    setActionError(null);
     try {
       const updated = await saveNamedVersion(workspace.document.id, workspace.document.proposalId, label);
       setWorkspace(updated);
@@ -857,8 +910,8 @@ export function WorkspacePage() {
         const refreshed = await fetchDocumentHistory(updated.document.id, updated.document.proposalId);
         setHistoryData(refreshed);
       }
-    } catch {
-      window.alert("Could not save named version.");
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not save named version.");
     }
   }
 
@@ -915,7 +968,7 @@ export function WorkspacePage() {
       }
       setCompareSummary(
         comparison.changedFields
-          .map((item) => `${item.field}: “${item.before}” -> “${item.after}”`)
+          .map((item) => formatChangedField(item))
           .join("\n")
       );
     } catch {
@@ -1124,12 +1177,7 @@ export function WorkspacePage() {
             <button
               className={`cm-sidebar-item ${sidebarSection === "all" ? "active" : ""}`.trim()}
               type="button"
-              onClick={() => {
-                setSidebarSection("all");
-                if (activeTab === "decisions") {
-                  setActiveTab("discussions");
-                }
-              }}
+              onClick={() => navigate("/documents")}
             >
               <span className="cm-sidebar-icon">◈</span> All Documents
               <span className="cm-sidebar-count">{documentIndex.length || workspace.counts.allDocuments}</span>
@@ -1249,9 +1297,15 @@ export function WorkspacePage() {
                 <div className="cm-review-diff-list">
                   {reviewDiff.changedFields.map((field) => (
                     <div className="cm-review-diff-row" key={field.field}>
-                      <strong>{field.field}</strong>
-                      <div className="cm-review-diff-before">- {field.before}</div>
-                      <div className="cm-review-diff-after">+ {field.after}</div>
+                      <strong>{field.field === "doc" ? "Document body" : field.field}</strong>
+                      {field.field === "doc" ? (
+                        <div className="cm-review-diff-meta">Rich text blocks changed between proposal and main.</div>
+                      ) : (
+                        <>
+                          <div className="cm-review-diff-before">- {field.before}</div>
+                          <div className="cm-review-diff-after">+ {field.after}</div>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1265,6 +1319,9 @@ export function WorkspacePage() {
               {!saveError && saveState !== "saved" && hasUnsavedChanges && <span>Unsaved changes.</span>}
             </div>
           )}
+          <div className="cm-save-indicator">
+            Add blocks: press <strong>Enter</strong> for a new paragraph, or type <strong>/</strong> at line start for block types.
+          </div>
 
           <div className="cm-doc-scroll">
             <div className="cm-doc-content">
@@ -1303,6 +1360,18 @@ export function WorkspacePage() {
 
         <aside className="cm-discussion-panel">
           <Tabs tabs={discussionTabsWithCount} active={activeTab} onTabChange={setActiveTab} />
+          {actionError ? (
+            <div className="cm-inline-action-error" role="alert">
+              <span>{actionError}</span>
+              <button
+                className="cm-thread-action-btn"
+                type="button"
+                onClick={() => setActionError(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          ) : null}
 
           {activeTab === "discussions" && (
             <div className="cm-panel-content active">
@@ -1375,8 +1444,8 @@ export function WorkspacePage() {
                   threads={workspace.threads}
                   activeThreadId={activeThread}
                   onSelectThread={selectThread}
-                  onReplyThread={(threadId) => { void replyToThread(threadId); }}
-                  onResolveThread={(threadId) => { void resolveActiveThread(threadId); }}
+                  onReplyThread={(threadId, body) => { void replyToThread(threadId, body); }}
+                  onResolveThread={(threadId, resolution) => { void resolveActiveThread(threadId, resolution); }}
                   onReopenThread={(threadId) => { void reopenThread(threadId); }}
                   onVoteThread={(threadId, direction) => { void voteThread(threadId, direction); }}
                   onReactThread={(threadId, emoji) => { void reactThread(threadId, emoji); }}
@@ -1413,29 +1482,9 @@ export function WorkspacePage() {
                 <>
                   <ThreadComposer
                     anchorLabel={currentAnchor}
-                    anchorNodeId={activeNodeId ?? undefined}
+                    anchorNodeId={composerAnchorNodeId ?? activeNodeId ?? undefined}
                     onSubmit={(text, nodeId, options) => { void submitComment(text, nodeId, options); }}
                   />
-                  <button
-                    className="cm-compose-send"
-                    type="button"
-                    disabled={!workspace.document.proposalId || workspace.threads.find((thread) => thread.id === activeThread)?.status === "RESOLVED"}
-                    onClick={() => {
-                      void resolveActiveThread();
-                    }}
-                  >
-                    Resolve Active Thread
-                  </button>
-                  <button
-                    className="cm-compose-send"
-                    type="button"
-                    disabled={!workspace.document.proposalId || !workspace.threads.find((thread) => thread.id === activeThread)}
-                    onClick={() => {
-                      void replyToThread();
-                    }}
-                  >
-                    Reply to Active Thread
-                  </button>
 
                   <div className="cm-approval-panel">
                     <div className="cm-approval-header">
@@ -1524,6 +1573,10 @@ export function WorkspacePage() {
           {activeTab === "history" && (
             <div className="cm-panel-content active">
               <div className="cm-panel-scroll">
+                <div className="cm-approval-fallback">
+                  <strong>Current Branch</strong>
+                  <p className="cm-commit-meta">{historyData?.branch ?? workspace.document.branch.split(" -> ")[0]}</p>
+                </div>
                 {compareOptions.length > 1 ? (
                   <div className="cm-history-compare-controls">
                     <label className="cm-compose-select-wrap">
@@ -1570,15 +1623,32 @@ export function WorkspacePage() {
                     </button>
                   </div>
                 ) : null}
-                {(historyData?.commits ?? workspace.history).map((item) => (
-                  <div className="cm-commit-row" key={item.hash}>
-                    <div className="cm-commit-hash">{item.hash}</div>
-                    <div>
-                      <div className="cm-commit-msg">{item.message}</div>
-                      <div className="cm-commit-meta">{item.meta}</div>
+                <div className="cm-approval-fallback">
+                  <strong>{historyData?.branch ?? "active"} commits</strong>
+                  {(historyData?.commits ?? workspace.history).map((item) => (
+                    <div className="cm-commit-row" key={`${historyData?.branch ?? "active"}-${item.hash}`}>
+                      <div className="cm-commit-hash">{item.hash}</div>
+                      <div>
+                        <div className="cm-commit-msg">{item.message}</div>
+                        <div className="cm-commit-meta">{item.meta}</div>
+                      </div>
                     </div>
+                  ))}
+                </div>
+                {mainHistoryData ? (
+                  <div className="cm-approval-fallback">
+                    <strong>{mainHistoryData.branch} commits</strong>
+                    {mainHistoryData.commits.map((item) => (
+                      <div className="cm-commit-row" key={`${mainHistoryData.branch}-${item.hash}`}>
+                        <div className="cm-commit-hash">{item.hash}</div>
+                        <div>
+                          <div className="cm-commit-msg">{item.message}</div>
+                          <div className="cm-commit-meta">{item.meta}</div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                ) : null}
                 {historyError ? <div className="cm-commit-meta">{historyError}</div> : null}
                 {historyData?.namedVersions.length ? (
                   <div className="cm-approval-fallback">
@@ -1603,6 +1673,12 @@ export function WorkspacePage() {
           {activeTab === "decisions" && (
             <div className="cm-panel-content active">
               <div className="cm-panel-scroll cm-decision-controls">
+                <div className="cm-approval-fallback">
+                  <strong>Decision Log</strong>
+                  <p className="cm-commit-meta">
+                    Resolved thread outcomes and merge decisions appear here once discussions are closed.
+                  </p>
+                </div>
                 <label className="cm-compose-select-wrap">
                   <span>Outcome</span>
                   <select
@@ -1635,20 +1711,29 @@ export function WorkspacePage() {
                   />
                 </label>
               </div>
-              <DecisionLogTable
-                items={
-                  decisionRows
-                    ? decisionRows.map((row) => ({
-                        date: `${new Date(row.decidedAt).toISOString().slice(0, 10)} · ${row.commitHash}`,
-                        tags: [{ label: row.outcome, tone: row.outcome === "REJECTED" ? "rejected" : row.outcome === "DEFERRED" ? "deferred" : "approved" }],
-                        text: row.rationale,
-                        by: row.decidedBy,
-                      }))
-                    : workspace.decisions
-                }
-                note="Auto-generated from resolved threads and merges. Filters query the decision log API."
-                className="cm-panel-scroll"
-              />
+              {decisionRows && decisionRows.length === 0 ? (
+                <div className="cm-panel-scroll">
+                  <div className="cm-panel-fallback-card">
+                    <h3>No decisions yet</h3>
+                    <p>Resolve a thread or merge a proposal to create the first decision log entry.</p>
+                  </div>
+                </div>
+              ) : (
+                <DecisionLogTable
+                  items={
+                    decisionRows
+                      ? decisionRows.map((row) => ({
+                          date: `${new Date(row.decidedAt).toISOString().slice(0, 10)} · ${row.commitHash}`,
+                          tags: [{ label: row.outcome, tone: row.outcome === "REJECTED" ? "rejected" : row.outcome === "DEFERRED" ? "deferred" : "approved" }],
+                          text: row.rationale,
+                          by: row.decidedBy,
+                        }))
+                      : workspace.decisions
+                  }
+                  note="Auto-generated from resolved threads and merges. Filters query the decision log API."
+                  className="cm-panel-scroll"
+                />
+              )}
             </div>
           )}
         </aside>

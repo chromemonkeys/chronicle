@@ -1,4 +1,4 @@
-import { forwardRef } from "react";
+import { forwardRef, useState } from "react";
 import type { WorkspaceThread } from "../api/types";
 
 const toneColors: Record<WorkspaceThread["tone"], string> = {
@@ -13,8 +13,14 @@ type Props = {
   thread: WorkspaceThread;
   isActive: boolean;
   onSelect: (id: string) => void;
-  onReply?: (id: string) => void;
-  onResolve?: (id: string) => void;
+  onReply?: (id: string, body: string) => void;
+  onResolve?: (
+    id: string,
+    resolution: {
+      outcome: "ACCEPTED" | "REJECTED" | "DEFERRED";
+      rationale?: string;
+    }
+  ) => void;
   onReopen?: (id: string) => void;
   onVote?: (id: string, direction: "up" | "down") => void;
   onReact?: (id: string, emoji: string) => void;
@@ -26,6 +32,11 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
   { thread, isActive, onSelect, onReply, onResolve, onReopen, onVote, onReact, onToggleVisibility, className = "" },
   ref
 ) {
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [replyBody, setReplyBody] = useState("");
+  const [resolveOpen, setResolveOpen] = useState(false);
+  const [resolveOutcome, setResolveOutcome] = useState<"ACCEPTED" | "REJECTED" | "DEFERRED">("ACCEPTED");
+  const [resolveRationale, setResolveRationale] = useState("");
   const reactionItems = thread.reactions ?? [];
   const visibilityLabel = thread.visibility === "EXTERNAL" ? "External" : "Internal";
 
@@ -91,7 +102,8 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
             type="button"
             onClick={(event) => {
               event.stopPropagation();
-              onReply?.(thread.id);
+              setResolveOpen(false);
+              setReplyOpen((value) => !value);
             }}
           >
             ↩ Reply
@@ -101,7 +113,8 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
             type="button"
             onClick={(event) => {
               event.stopPropagation();
-              onResolve?.(thread.id);
+              setReplyOpen(false);
+              setResolveOpen((value) => !value);
             }}
           >
             ✓ Resolve
@@ -129,6 +142,104 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
               ▼
             </button>
           </span>
+        </div>
+      )}
+      {!thread.resolvedNote && replyOpen && (
+        <div className="cm-thread-inline-form">
+          <textarea
+            className="cm-thread-inline-textarea"
+            rows={2}
+            value={replyBody}
+            placeholder="Reply in thread..."
+            onChange={(event) => setReplyBody(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+          />
+          <div className="cm-thread-inline-actions">
+            <button
+              className="cm-thread-action-btn"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setReplyOpen(false);
+                setReplyBody("");
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              className="cm-thread-action-btn resolve"
+              type="button"
+              disabled={!replyBody.trim()}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (!replyBody.trim()) return;
+                onReply?.(thread.id, replyBody.trim());
+                setReplyOpen(false);
+                setReplyBody("");
+              }}
+            >
+              Send Reply
+            </button>
+          </div>
+        </div>
+      )}
+      {!thread.resolvedNote && resolveOpen && (
+        <div className="cm-thread-inline-form">
+          <label className="cm-compose-select-wrap">
+            <span>Outcome</span>
+            <select
+              className="cm-compose-select"
+              value={resolveOutcome}
+              onChange={(event) => setResolveOutcome(event.target.value as typeof resolveOutcome)}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <option value="ACCEPTED">Accepted</option>
+              <option value="REJECTED">Rejected</option>
+              <option value="DEFERRED">Deferred</option>
+            </select>
+          </label>
+          <textarea
+            className="cm-thread-inline-textarea"
+            rows={2}
+            value={resolveRationale}
+            placeholder={resolveOutcome === "REJECTED" ? "Rationale is required for rejected outcomes" : "Optional rationale"}
+            onChange={(event) => setResolveRationale(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+          />
+          <div className="cm-thread-inline-actions">
+            <button
+              className="cm-thread-action-btn"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setResolveOpen(false);
+                setResolveOutcome("ACCEPTED");
+                setResolveRationale("");
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              className="cm-thread-action-btn resolve"
+              type="button"
+              disabled={resolveOutcome === "REJECTED" && !resolveRationale.trim()}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (resolveOutcome === "REJECTED" && !resolveRationale.trim()) {
+                  return;
+                }
+                onResolve?.(thread.id, {
+                  outcome: resolveOutcome,
+                  rationale: resolveRationale.trim() || undefined,
+                });
+                setResolveOpen(false);
+                setResolveOutcome("ACCEPTED");
+                setResolveRationale("");
+              }}
+            >
+              Confirm Resolve
+            </button>
+          </div>
         </div>
       )}
       <div className="cm-thread-reactions">
