@@ -1036,3 +1036,8 @@ func (s *PostgresStore) SpaceDocumentCount(ctx context.Context, spaceID string) 
 	}
 	return count, nil
 }
+
+// Ping verifies the database connection is alive
+func (s *PostgresStore) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}

@@ -40,12 +40,13 @@ type WorkspaceContent struct {
 }
 
 type CreateThreadInput struct {
-	Text         string `json:"text"`
-	AnchorLabel  string `json:"anchorLabel"`
-	Anchor       string `json:"anchor"`
-	AnchorNodeID string `json:"anchorNodeId"`
-	Visibility   string `json:"visibility"`
-	Type         string `json:"type"`
+	Text          string          `json:"text"`
+	AnchorLabel   string          `json:"anchorLabel"`
+	Anchor        string          `json:"anchor"`
+	AnchorNodeID  string          `json:"anchorNodeId"`
+	AnchorOffsets json.RawMessage `json:"anchorOffsets"`
+	Visibility    string          `json:"visibility"`
+	Type          string          `json:"type"`
 }
 
 type ThreadReplyInput struct {
@@ -149,6 +150,7 @@ type dataStore interface {
 	ListDocumentsBySpace(context.Context, string) ([]store.Document, error)
 	MoveDocument(context.Context, string, string) error
 	SpaceDocumentCount(context.Context, string) (int, error)
+	Ping(ctx context.Context) error
 }
 
 type gitService interface {
@@ -684,12 +686,16 @@ func (s *Service) CreateThread(ctx context.Context, documentID, proposalID, user
 		anchorLabel = "¶ Unanchored"
 	}
 	threadID := util.NewID("thr")
+	anchorOffsets := normalizeAnchorOffsetsJSON(input.AnchorOffsets)
+	if len(anchorOffsets) == 0 {
+		anchorOffsets = json.RawMessage(`{}`)
+	}
 	if err := s.store.InsertThread(ctx, store.Thread{
 		ID:            threadID,
 		ProposalID:    proposalID,
 		Anchor:        anchorLabel,
 		AnchorNodeID:  strings.TrimSpace(input.AnchorNodeID),
-		AnchorOffsets: "{}",
+		AnchorOffsets: string(anchorOffsets),
 		Text:          text,
 		Status:        "OPEN",
 		Visibility:    visibility,
@@ -1069,6 +1075,7 @@ func (s *Service) History(ctx context.Context, documentID, proposalID string) (m
 			"hash":    item.Hash,
 			"message": item.Message,
 			"meta":    fmt.Sprintf("%s · %s · +%d -%d lines", item.Author, relative(item.CreatedAt), item.Added, item.Removed),
+			"branch":  branch,
 		})
 	}
 
@@ -1239,6 +1246,11 @@ func (s *Service) GetWorkspace(ctx context.Context, documentID string, viewerIsE
 			if thread.Status != "RESOLVED" {
 				openThreads++
 			}
+			anchorOffsets := map[string]any{}
+			if err := json.Unmarshal([]byte(thread.AnchorOffsets), &anchorOffsets); err != nil {
+				anchorOffsets = map[string]any{}
+			}
+			quote, _ := anchorOffsets["quote"].(string)
 			replies := repliesByThread[thread.ID]
 			if replies == nil {
 				replies = []map[string]any{}
@@ -1248,23 +1260,25 @@ func (s *Service) GetWorkspace(ctx context.Context, documentID string, viewerIsE
 				reactions = []map[string]any{}
 			}
 			threads = append(threads, map[string]any{
-				"id":           thread.ID,
-				"initials":     initials(thread.Author),
-				"author":       thread.Author,
-				"time":         relative(thread.CreatedAt),
-				"anchor":       thread.Anchor,
-				"anchorNodeId": thread.AnchorNodeID,
-				"text":         thread.Text,
-				"votes":        voteTotals[thread.ID],
-				"voted":        false,
-				"reactions":    reactions,
-				"tone":         toneFromName(thread.Author),
-				"status":       thread.Status,
-				"type":         thread.Type,
-				"visibility":   thread.Visibility,
+				"id":            thread.ID,
+				"initials":      initials(thread.Author),
+				"author":        thread.Author,
+				"time":          relative(thread.CreatedAt),
+				"anchor":        thread.Anchor,
+				"anchorNodeId":  thread.AnchorNodeID,
+				"anchorOffsets": anchorOffsets,
+				"text":          thread.Text,
+				"quote":         nilIfEmpty(strings.TrimSpace(quote)),
+				"votes":         voteTotals[thread.ID],
+				"voted":         false,
+				"reactions":     reactions,
+				"tone":          toneFromName(thread.Author),
+				"status":        thread.Status,
+				"type":          thread.Type,
+				"visibility":    thread.Visibility,
 				"resolvedOutcome": nilIfEmpty(thread.ResolvedOutcome),
-				"resolvedNote": nilIfEmpty(thread.ResolvedNote),
-				"replies":      replies,
+				"resolvedNote":  nilIfEmpty(thread.ResolvedNote),
+				"replies":       replies,
 			})
 		}
 
@@ -1541,6 +1555,11 @@ func (s *Service) SyncToken() string {
 	return s.cfg.SyncToken
 }
 
+// Ping checks the health of service dependencies (database, etc.)
+func (s *Service) Ping(ctx context.Context) error {
+	return s.store.Ping(ctx)
+}
+
 func (s *Service) HandleSyncSessionEnded(
 	ctx context.Context,
 	sessionID string,
@@ -1720,6 +1739,21 @@ func normalizeDocJSON(doc json.RawMessage) json.RawMessage {
 	}
 	var decoded any
 	if err := json.Unmarshal(doc, &decoded); err != nil {
+		return nil
+	}
+	normalized, err := json.Marshal(decoded)
+	if err != nil {
+		return nil
+	}
+	return json.RawMessage(normalized)
+}
+
+func normalizeAnchorOffsetsJSON(offsets json.RawMessage) json.RawMessage {
+	if len(offsets) == 0 {
+		return nil
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(offsets, &decoded); err != nil {
 		return nil
 	}
 	normalized, err := json.Marshal(decoded)

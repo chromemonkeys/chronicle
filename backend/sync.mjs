@@ -316,13 +316,49 @@ function broadcastMessage(room, client, message) {
   }
 }
 
-const server = createServer((req, res) => {
+async function checkAPIHealth() {
+  try {
+    const response = await fetch(`${API_BASE_URL.replace(/\/$/, "")}/api/health`, {
+      method: "GET",
+      headers: { "Accept": "application/json" }
+    });
+    return response.ok;
+  } catch (error) {
+    console.error(`[sync] API health check failed: ${error.message}`);
+    return false;
+  }
+}
+
+const server = createServer(async (req, res) => {
+  // Basic health check - lightweight, returns immediately
   if (req.url === "/health") {
     res.writeHead(200, {
       "Content-Type": "application/json",
       "Cache-Control": "no-store"
     });
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size }));
+    res.end(JSON.stringify({ ok: true, service: "sync", rooms: rooms.size }));
+    return;
+  }
+
+  // Readiness check - verifies API connectivity
+  if (req.url === "/ready") {
+    const apiHealthy = await checkAPIHealth();
+    const status = apiHealthy ? "ready" : "not_ready";
+    const statusCode = apiHealthy ? 200 : 503;
+
+    res.writeHead(statusCode, {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store"
+    });
+    res.end(JSON.stringify({
+      ok: apiHealthy,
+      status,
+      service: "sync",
+      checks: {
+        api: { status: apiHealthy ? "ok" : "error" },
+        rooms: { status: "ok", count: rooms.size }
+      }
+    }));
     return;
   }
 

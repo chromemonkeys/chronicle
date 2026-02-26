@@ -43,7 +43,30 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodGet && r.URL.Path == "/api/ready" {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		// Check database connectivity
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		status := "ready"
+		statusCode := http.StatusOK
+		checks := map[string]any{
+			"database": map[string]any{"status": "ok"},
+		}
+
+		if err := s.service.Ping(ctx); err != nil {
+			status = "not_ready"
+			statusCode = http.StatusServiceUnavailable
+			checks["database"] = map[string]any{
+				"status": "error",
+				"error":  err.Error(),
+			}
+		}
+
+		writeJSON(w, statusCode, map[string]any{
+			"ok":     status == "ready",
+			"status": status,
+			"checks": checks,
+		})
 		return
 	}
 

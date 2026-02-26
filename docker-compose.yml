@@ -24,6 +24,11 @@ services:
       - redis_data:/data
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   meilisearch:
     image: getmeili/meilisearch:v1.11
@@ -34,6 +39,11 @@ services:
       - meili_data:/meili_data
     ports:
       - "7700:7700"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   minio:
     image: minio/minio:latest
@@ -47,6 +57,11 @@ services:
     ports:
       - "9000:9000"
       - "9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   api:
     build:
@@ -65,8 +80,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8787:8787"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8787/api/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   sync:
     build:
@@ -80,9 +103,16 @@ services:
       CHRONICLE_TOKEN_SECRET: ${CHRONICLE_JWT_SECRET:-chronicle-dev-secret}
       CHRONICLE_SYNC_TOKEN: ${CHRONICLE_SYNC_TOKEN:-chronicle-sync-token}
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       - "8788:8788"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8788/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
   web:
     build:
@@ -92,22 +122,38 @@ services:
     environment:
       VITE_SYNC_URL: ws://localhost:8080/ws
     depends_on:
-      - api
-      - sync
+      api:
+        condition: service_healthy
+      sync:
+        condition: service_healthy
     ports:
       - "4173:4173"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4173/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     depends_on:
-      - api
-      - sync
-      - web
+      api:
+        condition: service_healthy
+      sync:
+        condition: service_healthy
+      web:
+        condition: service_healthy
     ports:
       - "8080:8080"
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:
