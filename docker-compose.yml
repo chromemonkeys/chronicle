@@ -1,0 +1,117 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chronicle}
+      POSTGRES_USER: ${POSTGRES_USER:-chronicle}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chronicle}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chronicle} -d ${POSTGRES_DB:-chronicle}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-chronicle-meili-key}
+    volumes:
+      - meili_data:/meili_data
+    ports:
+      - "7700:7700"
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-chronicle}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-chronicle123}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    environment:
+      API_ADDR: :8787
+      DATABASE_URL: postgres://${POSTGRES_USER:-chronicle}:${POSTGRES_PASSWORD:-chronicle}@postgres:5432/${POSTGRES_DB:-chronicle}?sslmode=disable
+      CHRONICLE_JWT_SECRET: ${CHRONICLE_JWT_SECRET:-chronicle-dev-secret}
+      CHRONICLE_REPOS_DIR: /data/repos
+      CHRONICLE_MIGRATIONS_DIR: /app/db/migrations
+      CHRONICLE_CORS_ORIGIN: ${CHRONICLE_CORS_ORIGIN:-*}
+    volumes:
+      - repos_data:/data/repos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8787:8787"
+
+  sync:
+    build:
+      context: .
+      dockerfile: docker/sync.Dockerfile
+    restart: unless-stopped
+    environment:
+      SYNC_PORT: 8788
+      API_BASE_URL: http://api:8787
+      CHRONICLE_JWT_SECRET: ${CHRONICLE_JWT_SECRET:-chronicle-dev-secret}
+      CHRONICLE_TOKEN_SECRET: ${CHRONICLE_JWT_SECRET:-chronicle-dev-secret}
+      CHRONICLE_SYNC_TOKEN: ${CHRONICLE_SYNC_TOKEN:-chronicle-sync-token}
+    depends_on:
+      - api
+    ports:
+      - "8788:8788"
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    restart: unless-stopped
+    environment:
+      VITE_SYNC_URL: ws://localhost:8080/ws
+    depends_on:
+      - api
+      - sync
+    ports:
+      - "4173:4173"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - sync
+      - web
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+
+volumes:
+  postgres_data:
+  redis_data:
+  meili_data:
+  minio_data:
+  repos_data:

@@ -1,0 +1,1374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chronicle — Where documents are decided, not just edited</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Literata:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=JetBrains+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --ink-2: #3d3d3d;
+    --ink-3: #6b6b6b;
+    --ink-4: #9e9e9e;
+    --paper: #f8f6f1;
+    --paper-2: #f0ede6;
+    --paper-3: #e8e4db;
+    --border: #d8d4cb;
+    --border-2: #c8c3b8;
+    --accent: #c4622d;
+    --accent-2: #a84f22;
+    --accent-soft: #f4e8e0;
+    --green: #2d7a4f;
+    --green-soft: #e0f0e8;
+    --red: #b33a3a;
+    --red-soft: #f0e0e0;
+    --yellow: #b38a2d;
+    --yellow-soft: #f5f0e0;
+    --blue: #2d5e9e;
+    --blue-soft: #e0eaf8;
+    --purple: #6b3fa0;
+    --sidebar-w: 240px;
+    --panel-w: 320px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ─── TOP NAV ─── */
+  .topnav {
+    display: flex;
+    align-items: center;
+    height: 44px;
+    background: var(--ink);
+    color: var(--paper);
+    padding: 0 16px;
+    gap: 12px;
+    flex-shrink: 0;
+    z-index: 100;
+  }
+  .topnav-logo {
+    font-family: 'Literata', serif;
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+    color: #f8f6f1;
+    margin-right: 8px;
+  }
+  .topnav-logo span { color: var(--accent); }
+  .topnav-divider { width: 1px; height: 20px; background: #3a3a3a; }
+  .breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #9a9a9a;
+  }
+  .breadcrumb a { color: #9a9a9a; text-decoration: none; }
+  .breadcrumb a:hover { color: #d8d4cb; }
+  .breadcrumb-sep { color: #555; }
+  .breadcrumb-current { color: #d8d4cb; font-weight: 500; }
+  .topnav-spacer { flex: 1; }
+  .branch-badge {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #a8c8a0;
+    cursor: pointer;
+  }
+  .branch-badge:hover { background: #333; }
+  .branch-dot { width: 6px; height: 6px; background: #5a9e5a; border-radius: 50%; }
+  .nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: 1px solid #3a3a3a;
+    color: #c0bdb8;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: 'DM Sans', sans-serif;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .nav-btn:hover { background: #2a2a2a; color: #f0ede6; border-color: #555; }
+  .nav-btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  .nav-btn.primary:hover { background: var(--accent-2); }
+  .avatar-stack { display: flex; gap: -4px; }
+  .avatar {
+    width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 600;
+    border: 2px solid var(--ink);
+    flex-shrink: 0;
+  }
+  .av1 { background: #4a7c5a; color: white; }
+  .av2 { background: #7c4a6a; color: white; margin-left: -8px; }
+  .av3 { background: #4a5c7c; color: white; margin-left: -8px; }
+
+  /* ─── MAIN LAYOUT ─── */
+  .app-body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ─── LEFT SIDEBAR ─── */
+  .sidebar {
+    width: var(--sidebar-w);
+    background: var(--paper-2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .sidebar-section {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-4);
+    padding: 0 16px 8px;
+  }
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    cursor: pointer;
+    transition: background 0.1s;
+    border-radius: 0;
+    text-decoration: none;
+  }
+  .sidebar-item:hover { background: var(--paper-3); }
+  .sidebar-item.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 500;
+    border-right: 2px solid var(--accent);
+  }
+  .sidebar-icon { font-size: 13px; width: 16px; text-align: center; }
+  .sidebar-count {
+    margin-left: auto;
+    font-size: 10px;
+    background: var(--paper-3);
+    color: var(--ink-3);
+    padding: 1px 5px;
+    border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .sidebar-item.active .sidebar-count {
+    background: var(--accent);
+    color: white;
+  }
+
+  .doc-tree { flex: 1; overflow-y: auto; padding: 8px 0; }
+  .tree-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 16px;
+    font-size: 12px;
+    color: var(--ink-2);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .tree-item:hover { background: var(--paper-3); }
+  .tree-item.active { color: var(--accent); font-weight: 500; }
+  .tree-item.indent { padding-left: 32px; }
+  .tree-item.indent2 { padding-left: 48px; }
+  .tree-toggle { font-size: 9px; color: var(--ink-4); width: 10px; }
+  .tree-icon { font-size: 12px; }
+  .tree-badge {
+    margin-left: auto;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+  }
+  .tree-badge.changed { background: var(--accent); }
+  .tree-badge.pending { background: var(--yellow); }
+
+  /* ─── DOCUMENT AREA ─── */
+  .doc-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--paper);
+  }
+
+  .doc-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--paper);
+    flex-shrink: 0;
+  }
+  .doc-toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 4px;
+    border-right: 1px solid var(--border);
+  }
+  .doc-toolbar-group:last-child { border-right: none; }
+  .tool-btn {
+    background: none;
+    border: none;
+    padding: 4px 7px;
+    border-radius: 3px;
+    font-size: 12px;
+    color: var(--ink-3);
+    cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    transition: all 0.1s;
+  }
+  .tool-btn:hover { background: var(--paper-3); color: var(--ink); }
+  .tool-btn.active { background: var(--paper-3); color: var(--ink); }
+  .toolbar-spacer { flex: 1; }
+  .diff-toggle {
+    display: flex;
+    background: var(--paper-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    font-size: 11px;
+  }
+  .diff-toggle button {
+    background: none;
+    border: none;
+    padding: 3px 10px;
+    cursor: pointer;
+    color: var(--ink-3);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 11px;
+    transition: all 0.1s;
+  }
+  .diff-toggle button.active { background: var(--ink); color: var(--paper); }
+
+  .doc-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 40px 0;
+  }
+
+  .doc-content {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  .doc-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .doc-status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 12px;
+  }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .status-review { background: var(--yellow-soft); color: var(--yellow); }
+  .status-review .status-dot { background: var(--yellow); }
+  .status-draft { background: var(--blue-soft); color: var(--blue); }
+  .status-draft .status-dot { background: var(--blue); }
+  .status-approved { background: var(--green-soft); color: var(--green); }
+  .status-approved .status-dot { background: var(--green); }
+  .doc-version { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-4); }
+  .doc-author { font-size: 12px; color: var(--ink-3); }
+  .doc-author strong { color: var(--ink-2); }
+
+  /* Document typography */
+  .doc-title {
+    font-family: 'Literata', serif;
+    font-size: 30px;
+    font-weight: 400;
+    line-height: 1.25;
+    color: var(--ink);
+    margin-bottom: 6px;
+    letter-spacing: -0.01em;
+  }
+  .doc-subtitle {
+    font-family: 'Literata', serif;
+    font-style: italic;
+    font-size: 16px;
+    color: var(--ink-3);
+    margin-bottom: 28px;
+    font-weight: 300;
+  }
+  .doc-body p {
+    font-family: 'Literata', serif;
+    font-size: 15px;
+    line-height: 1.75;
+    color: var(--ink-2);
+    margin-bottom: 16px;
+  }
+  .doc-body h2 {
+    font-family: 'Literata', serif;
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--ink);
+    margin: 32px 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .doc-body h3 {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 24px 0 8px;
+  }
+  .doc-body ul {
+    font-family: 'Literata', serif;
+    font-size: 15px;
+    line-height: 1.75;
+    color: var(--ink-2);
+    margin-bottom: 16px;
+    padding-left: 20px;
+  }
+  .doc-body ul li { margin-bottom: 4px; }
+  .doc-body code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    background: var(--paper-2);
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--ink);
+  }
+
+  /* Block annotations */
+  .block {
+    position: relative;
+    transition: background 0.15s;
+    border-radius: 3px;
+    cursor: default;
+  }
+  .block:hover { background: rgba(196, 98, 45, 0.04); }
+  .block.has-thread { border-left: 2px solid var(--accent); padding-left: 10px; margin-left: -12px; }
+  .block.selected { background: var(--accent-soft); }
+  .block.diff-added { background: var(--green-soft); border-left: 3px solid var(--green); padding-left: 9px; margin-left: -12px; }
+  .block.diff-removed { background: var(--red-soft); border-left: 3px solid var(--red); padding-left: 9px; margin-left: -12px; text-decoration: line-through; opacity: 0.7; }
+  .block.diff-changed { background: var(--yellow-soft); border-left: 3px solid var(--yellow); padding-left: 9px; margin-left: -12px; }
+
+  .thread-indicator {
+    position: absolute;
+    right: -20px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    background: var(--accent);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+
+  /* diff marks inline */
+  .diff-ins { background: #c8f0d0; color: #1a5a2a; border-radius: 2px; padding: 0 2px; }
+  .diff-del { background: #f0c8c8; color: #5a1a1a; border-radius: 2px; padding: 0 2px; text-decoration: line-through; }
+
+  /* ─── RIGHT PANEL ─── */
+  .discussion-panel {
+    width: var(--panel-w);
+    border-left: 1px solid var(--border);
+    background: var(--paper);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .panel-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--paper-2);
+    flex-shrink: 0;
+  }
+  .panel-tab {
+    flex: 1;
+    padding: 10px 8px;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--ink-3);
+    text-align: center;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+  }
+  .panel-tab:hover { color: var(--ink); }
+  .panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: var(--paper); }
+  .panel-tab-count {
+    background: var(--accent);
+    color: white;
+    font-size: 9px;
+    width: 15px; height: 15px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .panel-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+  }
+
+  /* Thread cards */
+  .thread-card {
+    background: var(--paper-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 10px;
+    overflow: hidden;
+    transition: box-shadow 0.15s;
+  }
+  .thread-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .thread-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+  .thread-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px 8px;
+    cursor: pointer;
+  }
+  .thread-av {
+    width: 24px; height: 24px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 700;
+    flex-shrink: 0; margin-top: 1px;
+  }
+  .thread-meta { flex: 1; min-width: 0; }
+  .thread-author {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 2px;
+  }
+  .thread-time { font-size: 10px; color: var(--ink-4); font-weight: 400; }
+  .thread-anchor {
+    font-size: 10px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 4px;
+    display: inline-block;
+  }
+  .thread-text {
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    font-family: 'Literata', serif;
+  }
+  .thread-quote {
+    border-left: 2px solid var(--border-2);
+    padding: 3px 8px;
+    margin-bottom: 5px;
+    font-size: 11px;
+    color: var(--ink-3);
+    font-style: italic;
+  }
+
+  .thread-actions {
+    display: flex;
+    gap: 4px;
+    padding: 4px 12px 8px;
+    align-items: center;
+  }
+  .thread-action-btn {
+    background: none;
+    border: 1px solid var(--border);
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10.5px;
+    color: var(--ink-3);
+    cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    transition: all 0.1s;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .thread-action-btn:hover { background: var(--paper-3); color: var(--ink); }
+  .thread-action-btn.resolve { color: var(--green); border-color: var(--green); }
+  .thread-action-btn.resolve:hover { background: var(--green-soft); }
+  .vote-bar { display: flex; gap: 4px; margin-left: auto; align-items: center; }
+  .vote-btn {
+    background: none;
+    border: 1px solid var(--border);
+    width: 22px; height: 22px;
+    border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    cursor: pointer;
+    color: var(--ink-3);
+    transition: all 0.1s;
+  }
+  .vote-btn:hover { background: var(--paper-3); }
+  .vote-btn.up.voted { background: var(--green-soft); border-color: var(--green); color: var(--green); }
+  .vote-count { font-size: 10px; font-weight: 600; color: var(--ink-3); font-family: 'JetBrains Mono', monospace; }
+
+  /* Reply */
+  .thread-reply {
+    border-top: 1px solid var(--border);
+    padding: 8px 12px;
+    background: var(--paper);
+  }
+  .reply-item {
+    display: flex;
+    gap: 7px;
+    margin-bottom: 8px;
+  }
+  .reply-item:last-child { margin-bottom: 0; }
+  .reply-text {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    font-family: 'Literata', serif;
+  }
+  .reply-author { font-size: 10.5px; font-weight: 600; color: var(--ink); margin-bottom: 2px; }
+  .reply-time { font-size: 9.5px; color: var(--ink-4); }
+
+  .thread-resolved {
+    padding: 6px 12px;
+    background: var(--green-soft);
+    border-top: 1px solid #c0e0cc;
+    font-size: 10.5px;
+    color: var(--green);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  /* Compose */
+  .compose-box {
+    border-top: 1px solid var(--border);
+    padding: 10px 12px;
+    background: var(--paper-2);
+    flex-shrink: 0;
+  }
+  .compose-input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 7px 10px;
+    font-size: 12.5px;
+    font-family: 'Literata', serif;
+    color: var(--ink);
+    background: var(--paper);
+    resize: none;
+    line-height: 1.5;
+    outline: none;
+  }
+  .compose-input:focus { border-color: var(--accent); }
+  .compose-row {
+    display: flex;
+    align-items: center;
+    margin-top: 6px;
+    gap: 6px;
+  }
+  .compose-attach { font-size: 11px; color: var(--ink-4); cursor: pointer; }
+  .compose-attach:hover { color: var(--ink-2); }
+  .compose-spacer { flex: 1; }
+  .compose-send {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 5px 14px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .compose-send:hover { background: var(--accent-2); }
+
+  /* Approval panel */
+  .approval-panel {
+    border-top: 1px solid var(--border);
+    background: var(--paper-2);
+    flex-shrink: 0;
+  }
+  .approval-header {
+    padding: 10px 12px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .approval-progress {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--yellow);
+  }
+  .approver-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .approver-row:last-child { border-bottom: none; }
+  .approver-status { font-size: 13px; width: 16px; text-align: center; }
+  .approver-name { font-size: 12px; color: var(--ink-2); }
+  .approver-role { font-size: 10px; color: var(--ink-4); }
+  .approver-time { margin-left: auto; font-size: 10px; color: var(--ink-4); font-family: 'JetBrains Mono', monospace; }
+  .merge-btn {
+    margin: 10px 12px 12px;
+    width: calc(100% - 24px);
+    background: var(--green);
+    color: white;
+    border: none;
+    padding: 8px;
+    border-radius: 5px;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: background 0.1s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .merge-btn:hover { background: #256040; }
+  .merge-btn.disabled { background: var(--border-2); cursor: not-allowed; }
+
+  /* Bottom status bar */
+  .statusbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    height: 24px;
+    background: var(--ink);
+    font-size: 10.5px;
+    color: #6a6a6a;
+    flex-shrink: 0;
+  }
+  .statusbar-item { display: flex; align-items: center; gap: 4px; }
+  .statusbar-dot { width: 5px; height: 5px; border-radius: 50%; background: #5a9e5a; }
+  .statusbar-spacer { flex: 1; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
+
+  /* Tab content switching */
+  .tab-content { display: none; }
+  .tab-content.visible { display: block; }
+
+  /* Commit history */
+  .commit-row {
+    display: flex;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    align-items: flex-start;
+  }
+  .commit-hash {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--blue);
+    background: var(--blue-soft);
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    margin-top: 2px;
+    cursor: pointer;
+  }
+  .commit-hash:hover { opacity: 0.8; }
+  .commit-msg { font-size: 12px; color: var(--ink-2); line-height: 1.4; }
+  .commit-meta { font-size: 10px; color: var(--ink-4); margin-top: 2px; }
+
+  /* Decision log */
+  .decision-item {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .decision-date { font-size: 10px; color: var(--ink-4); font-family: 'JetBrains Mono', monospace; margin-bottom: 3px; }
+  .decision-text { font-size: 12px; color: var(--ink-2); line-height: 1.5; font-family: 'Literata', serif; }
+  .decision-by { font-size: 10px; color: var(--ink-3); margin-top: 3px; }
+  .decision-tag {
+    display: inline-block;
+    font-size: 9.5px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-right: 4px;
+    font-weight: 600;
+  }
+  .dt-approved { background: var(--green-soft); color: var(--green); }
+  .dt-rejected { background: var(--red-soft); color: var(--red); }
+  .dt-deferred { background: var(--yellow-soft); color: var(--yellow); }
+
+  /* Active tab */
+  .panel-content { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+  .panel-content.active { display: flex; }
+</style>
+</head>
+<body>
+
+<!-- TOP NAV -->
+<div class="topnav">
+  <div class="topnav-logo">Chronicle<span>.</span></div>
+  <div class="topnav-divider"></div>
+  <div class="breadcrumb">
+    <a href="#">acme-corp</a>
+    <span class="breadcrumb-sep">/</span>
+    <a href="#">Engineering</a>
+    <span class="breadcrumb-sep">/</span>
+    <span class="breadcrumb-current">API Rate Limiting Policy</span>
+  </div>
+  <div class="topnav-spacer"></div>
+  <div class="avatar-stack">
+    <div class="avatar av1">SR</div>
+    <div class="avatar av2">MK</div>
+    <div class="avatar av3">JL</div>
+  </div>
+  <div class="branch-badge" title="Current branch">
+    <div class="branch-dot"></div>
+    feat/rate-limit-v2
+  </div>
+  <button class="nav-btn">⎇ Compare</button>
+  <button class="nav-btn">↗ History</button>
+  <button class="nav-btn primary" onclick="showMergeModal()">⟳ Request Review</button>
+</div>
+
+<!-- APP BODY -->
+<div class="app-body">
+
+  <!-- LEFT SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Workspace</div>
+      <div class="sidebar-item" onclick="setActive(this)">
+        <span class="sidebar-icon">◈</span> All Documents
+        <span class="sidebar-count">42</span>
+      </div>
+      <div class="sidebar-item active" onclick="setActive(this)">
+        <span class="sidebar-icon">⊙</span> Open Reviews
+        <span class="sidebar-count">3</span>
+      </div>
+      <div class="sidebar-item" onclick="setActive(this)">
+        <span class="sidebar-icon">✓</span> Merged
+        <span class="sidebar-count">28</span>
+      </div>
+      <div class="sidebar-item" onclick="setActive(this)">
+        <span class="sidebar-icon">⊕</span> Decision Log
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Engineering Docs</div>
+      <div class="doc-tree">
+        <div class="tree-item" onclick="setTreeActive(this)">
+          <span class="tree-toggle">▾</span>
+          <span class="tree-icon">📁</span> Architecture
+        </div>
+        <div class="tree-item indent" onclick="setTreeActive(this)">
+          <span class="tree-toggle"> </span>
+          <span class="tree-icon">📄</span> API Design Guide
+          <div class="tree-badge changed"></div>
+        </div>
+        <div class="tree-item indent active" onclick="setTreeActive(this)">
+          <span class="tree-toggle"> </span>
+          <span class="tree-icon">📄</span> Rate Limiting Policy
+        </div>
+        <div class="tree-item indent" onclick="setTreeActive(this)">
+          <span class="tree-toggle"> </span>
+          <span class="tree-icon">📄</span> Auth Standards
+          <div class="tree-badge pending"></div>
+        </div>
+        <div class="tree-item" onclick="setTreeActive(this)">
+          <span class="tree-toggle">▸</span>
+          <span class="tree-icon">📁</span> Security Policies
+        </div>
+        <div class="tree-item" onclick="setTreeActive(this)">
+          <span class="tree-toggle">▸</span>
+          <span class="tree-icon">📁</span> Runbooks
+        </div>
+        <div class="tree-item" onclick="setTreeActive(this)">
+          <span class="tree-toggle">▾</span>
+          <span class="tree-icon">📁</span> RFCs
+        </div>
+        <div class="tree-item indent" onclick="setTreeActive(this)">
+          <span class="tree-icon">📄</span> RFC-042: Caching Layer
+          <div class="tree-badge changed"></div>
+        </div>
+        <div class="tree-item indent" onclick="setTreeActive(this)">
+          <span class="tree-icon">📄</span> RFC-043: Event Bus
+        </div>
+        <div class="tree-item indent2" onclick="setTreeActive(this)">
+          <span class="tree-icon">📄</span> Appendix: Schema
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DOCUMENT AREA -->
+  <div class="doc-area">
+
+    <!-- Toolbar -->
+    <div class="doc-toolbar">
+      <div class="doc-toolbar-group">
+        <button class="tool-btn active" title="Edit">✎ Edit</button>
+        <button class="tool-btn" title="Preview">◉ Preview</button>
+      </div>
+      <div class="doc-toolbar-group">
+        <button class="tool-btn" title="Bold"><strong>B</strong></button>
+        <button class="tool-btn" title="Italic"><em>I</em></button>
+        <button class="tool-btn" title="Code">&lt;/&gt;</button>
+        <button class="tool-btn" title="Heading">H₁</button>
+        <button class="tool-btn" title="Link">⛓</button>
+        <button class="tool-btn" title="Table">⊞</button>
+      </div>
+      <div class="doc-toolbar-group">
+        <button class="tool-btn" onclick="toggleDiff()" id="diff-btn">⦿ Show Diff</button>
+        <button class="tool-btn">⧖ Blame</button>
+      </div>
+      <div class="toolbar-spacer"></div>
+      <div class="diff-toggle">
+        <button class="active">Split</button>
+        <button>Unified</button>
+      </div>
+    </div>
+
+    <!-- Document scroll area -->
+    <div class="doc-scroll">
+      <div class="doc-content">
+        <!-- Meta -->
+        <div class="doc-meta">
+          <div class="doc-status status-review">
+            <div class="status-dot"></div>
+            In Review
+          </div>
+          <div class="doc-version">v2.1.0-draft</div>
+          <div class="doc-author">Edited by <strong>Sarah R.</strong> · 2h ago</div>
+          <div style="margin-left:auto; font-size:11px; color:var(--ink-4);">
+            feat/rate-limit-v2 → main
+          </div>
+        </div>
+
+        <!-- Doc content -->
+        <div class="doc-body" id="doc-body">
+          <div class="block" data-block="title" onclick="highlightBlock(this)">
+            <h1 class="doc-title">API Rate Limiting Policy</h1>
+            <p class="doc-subtitle">Governing fair use and abuse prevention across all Acme public and internal APIs.</p>
+          </div>
+
+          <div class="block" data-block="overview" onclick="highlightBlock(this)">
+            <h2>Overview</h2>
+          </div>
+
+          <div class="block has-thread" id="block-purpose" onclick="selectBlock('purpose')">
+            <div class="thread-indicator">2</div>
+            <p>Rate limiting is a critical control mechanism that protects our API infrastructure from abuse, ensures equitable resource distribution among consumers, and maintains service availability during peak load. This policy defines the limits, enforcement mechanisms, and escalation procedures that govern all API interactions.</p>
+          </div>
+
+          <div class="block" onclick="highlightBlock(this)">
+            <p>All rate limits apply per API key, per IP address, and per authenticated user. Limits are evaluated in a rolling window and reset automatically. Exceeding a limit returns a <code>429 Too Many Requests</code> response with a <code>Retry-After</code> header.</p>
+          </div>
+
+          <div class="block" onclick="highlightBlock(this)">
+            <h2>Tier Definitions</h2>
+          </div>
+
+          <div class="block diff-changed" id="block-tiers" onclick="selectBlock('tiers')">
+            <div class="thread-indicator">4</div>
+            <p>Standard tier consumers are limited to <span class="diff-del">1,000</span><span class="diff-ins">2,000</span> requests per minute. This limit was <span class="diff-del">established in Q2 2022</span><span class="diff-ins">revised upward in Q1 2025</span> to reflect our current infrastructure capacity. Premium tier consumers retain a higher limit of 10,000 requests per minute with dedicated burst capacity.</p>
+          </div>
+
+          <div class="block" onclick="highlightBlock(this)">
+            <h3>Tier Comparison</h3>
+          </div>
+
+          <div class="block" onclick="highlightBlock(this)">
+            <ul>
+              <li><strong>Free Tier:</strong> 100 req/min, 10,000 req/day</li>
+              <li><strong>Standard Tier:</strong> 2,000 req/min, 500,000 req/day</li>
+              <li><strong>Premium Tier:</strong> 10,000 req/min, unlimited daily</li>
+              <li><strong>Enterprise:</strong> Custom limits, negotiated SLA</li>
+            </ul>
+          </div>
+
+          <div class="block diff-added" onclick="highlightBlock(this)">
+            <p>Effective Q2 2025, all tiers are subject to a concurrent connection limit of 50 simultaneous open WebSocket connections per API key. This limit was introduced to address resource exhaustion during the March 2025 incident documented in INC-4421.</p>
+          </div>
+
+          <div class="block" onclick="highlightBlock(this)">
+            <h2>Enforcement & Response Codes</h2>
+          </div>
+
+          <div class="block has-thread" id="block-enforce" onclick="selectBlock('enforce')">
+            <div class="thread-indicator">1</div>
+            <p>When a rate limit is exceeded, the API gateway returns a <code>429</code> status with three mandatory headers: <code>X-RateLimit-Limit</code>, <code>X-RateLimit-Remaining</code>, and <code>X-RateLimit-Reset</code>. Clients are expected to implement exponential backoff with jitter. Repeated violations trigger automatic temporary suspension per the abuse policy.</p>
+          </div>
+
+          <div class="block" onclick="highlightBlock(this)">
+            <h2>Exemptions & Appeals</h2>
+          </div>
+
+          <div class="block diff-removed" onclick="highlightBlock(this)">
+            <p>Internal services are exempt from rate limiting when using service-to-service credentials. This exemption is granted automatically.</p>
+          </div>
+
+          <div class="block diff-added" onclick="highlightBlock(this)">
+            <p>Internal services using service accounts are subject to the same rate limits as Premium tier consumers. Exemptions require explicit approval from the Platform team and must be documented in the service registry with justification and a review date not exceeding 90 days.</p>
+          </div>
+
+          <div style="height: 80px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT DISCUSSION PANEL -->
+  <div class="discussion-panel">
+    <!-- Tabs -->
+    <div class="panel-tabs">
+      <div class="panel-tab active" onclick="switchTab('discussions', this)">
+        Discussion
+        <div class="panel-tab-count">7</div>
+      </div>
+      <div class="panel-tab" onclick="switchTab('history', this)">History</div>
+      <div class="panel-tab" onclick="switchTab('decisions', this)">Log</div>
+    </div>
+
+    <!-- DISCUSSIONS TAB -->
+    <div class="panel-content active" id="tab-discussions">
+      <div class="panel-scroll" id="discussion-scroll">
+
+        <!-- Thread 1: on purpose block -->
+        <div class="thread-card active" id="thread-purpose">
+          <div class="thread-header">
+            <div class="thread-av av1" style="background:#7c4a4a;color:white;font-family:'DM Sans',sans-serif;">MK</div>
+            <div class="thread-meta">
+              <div class="thread-author">
+                Marcus K.
+                <span class="thread-time">3h ago</span>
+              </div>
+              <div class="thread-anchor">¶ Overview › Purpose</div>
+              <p class="thread-text">Should we explicitly call out DDoS mitigation as a goal here? Our incident report from March specifically cited rate limiting as the first line of defense, and having it in the policy scope helps justify the stricter enforcement we added.</p>
+            </div>
+          </div>
+          <div class="thread-actions">
+            <button class="thread-action-btn">↩ Reply</button>
+            <button class="thread-action-btn resolve">✓ Resolve</button>
+            <div class="vote-bar">
+              <button class="vote-btn up voted" title="Upvote">▲</button>
+              <span class="vote-count">3</span>
+              <button class="vote-btn down" title="Downvote">▼</button>
+            </div>
+          </div>
+          <div class="thread-reply">
+            <div class="reply-item">
+              <div class="thread-av" style="background:#4a7c5a;color:white;font-family:'DM Sans',sans-serif;font-size:9px;width:20px;height:20px;flex-shrink:0;">SR</div>
+              <div>
+                <div class="reply-author">Sarah R. <span class="reply-time">1h ago</span></div>
+                <div class="reply-text">Good call. I'll add a sentence explicitly scoping this to include abuse prevention and availability protection. Drafting now.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Thread 2: on tiers block -->
+        <div class="thread-card" id="thread-tiers">
+          <div class="thread-header">
+            <div class="thread-av" style="background:#4a5c7c;color:white;font-family:'DM Sans',sans-serif;font-size:9px;">JL</div>
+            <div class="thread-meta">
+              <div class="thread-author">
+                Jamie L.
+                <span class="thread-time">5h ago</span>
+              </div>
+              <div class="thread-anchor">¶ Tier Definitions › Standard Limit</div>
+              <div class="thread-quote">"Standard tier consumers are limited to 2,000 requests per minute"</div>
+              <p class="thread-text">The 2× increase needs load testing data before we commit to this in policy. Do we have benchmarks showing the gateway can sustain 2k req/min per customer at P95 latency under 200ms?</p>
+            </div>
+          </div>
+          <div class="thread-actions">
+            <button class="thread-action-btn">↩ Reply</button>
+            <button class="thread-action-btn resolve">✓ Resolve</button>
+            <div class="vote-bar">
+              <button class="vote-btn up" title="Upvote">▲</button>
+              <span class="vote-count">5</span>
+              <button class="vote-btn down" title="Downvote">▼</button>
+            </div>
+          </div>
+          <div class="thread-reply">
+            <div class="reply-item">
+              <div class="thread-av av1" style="background:#7c4a4a;color:white;font-family:'DM Sans',sans-serif;font-size:9px;width:20px;height:20px;flex-shrink:0;">MK</div>
+              <div>
+                <div class="reply-author">Marcus K. <span class="reply-time">4h ago</span></div>
+                <div class="reply-text">Load test results from last week show P99 at 180ms at 3k req/min concurrent across 50 customers — so yes, 2k is safe. Will link the report.</div>
+              </div>
+            </div>
+            <div class="reply-item">
+              <div class="thread-av" style="background:#6b3fa0;color:white;font-family:'DM Sans',sans-serif;font-size:9px;width:20px;height:20px;flex-shrink:0;">PR</div>
+              <div>
+                <div class="reply-author">Priya R. (Legal) <span class="reply-time">2h ago</span></div>
+                <div class="reply-text">Also flagging: customer contracts reference "1,000 req/min" as a minimum guaranteed. Increasing this is fine but needs a contract amendment notice period per Section 12.4.</div>
+              </div>
+            </div>
+            <div class="reply-item">
+              <div class="thread-av" style="background:#4a7c5a;color:white;font-family:'DM Sans',sans-serif;font-size:9px;width:20px;height:20px;flex-shrink:0;">SR</div>
+              <div>
+                <div class="reply-author">Sarah R. <span class="reply-time">1h ago</span></div>
+                <div class="reply-text">Priya, adding a note linking to the contract amendment ticket. This merge will be blocked until that's resolved. @Jamie does this address your concern?</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Thread 3 -->
+        <div class="thread-card" id="thread-enforce">
+          <div class="thread-header">
+            <div class="thread-av" style="background:#4a7c5a;color:white;font-family:'DM Sans',sans-serif;font-size:9px;">SR</div>
+            <div class="thread-meta">
+              <div class="thread-author">
+                Sarah R.
+                <span class="thread-time">Yesterday</span>
+              </div>
+              <div class="thread-anchor">¶ Enforcement › Response Codes</div>
+              <p class="thread-text">Do we want to specify the exact jitter algorithm here (full jitter vs. decorrelated jitter) or leave that to the SDK documentation? Prescribing it in policy feels too implementation-specific.</p>
+            </div>
+          </div>
+          <div class="thread-actions">
+            <button class="thread-action-btn">↩ Reply</button>
+            <button class="thread-action-btn resolve">✓ Resolve</button>
+            <div class="vote-bar">
+              <button class="vote-btn up voted" title="Upvote">▲</button>
+              <span class="vote-count">2</span>
+              <button class="vote-btn down" title="Downvote">▼</button>
+            </div>
+          </div>
+          <div class="thread-resolved">
+            ✓ Resolved by Marcus K. · 1h ago — "Left to SDK docs, added reference link."
+          </div>
+        </div>
+
+        <!-- Collapsed thread -->
+        <div class="thread-card">
+          <div class="thread-header">
+            <div class="thread-av" style="background:#8a6a2a;color:white;font-family:'DM Sans',sans-serif;font-size:9px;">DW</div>
+            <div class="thread-meta">
+              <div class="thread-author">
+                David W. (Security)
+                <span class="thread-time">2 days ago</span>
+              </div>
+              <div class="thread-anchor">¶ Exemptions</div>
+              <p class="thread-text">The blanket internal service exemption is a security concern. A compromised service account would have unlimited access. Strongly recommend the new cap-based approach.</p>
+            </div>
+          </div>
+          <div class="thread-resolved">
+            ✓ Resolved · Accepted — new policy language applied to diff.
+          </div>
+        </div>
+
+      </div>
+
+      <div class="compose-box">
+        <textarea class="compose-input" rows="2" placeholder="Add a comment… click a paragraph to anchor it"></textarea>
+        <div class="compose-row">
+          <span class="compose-attach">@ ⊕</span>
+          <span style="font-size:11px;color:var(--ink-4);">Anchored to: <strong style="color:var(--accent);">¶ Purpose</strong></span>
+          <div class="compose-spacer"></div>
+          <button class="compose-send">Comment</button>
+        </div>
+      </div>
+
+      <!-- Approval section -->
+      <div class="approval-panel">
+        <div class="approval-header">
+          Required Approvals
+          <span class="approval-progress">1 / 3</span>
+        </div>
+        <div class="approver-row">
+          <div class="approver-status">✅</div>
+          <div>
+            <div class="approver-name">Sarah R. <em style="font-size:10px;color:var(--ink-4);">(author)</em></div>
+            <div class="approver-role">Platform Lead</div>
+          </div>
+          <div class="approver-time">2h ago</div>
+        </div>
+        <div class="approver-row">
+          <div class="approver-status">⏳</div>
+          <div>
+            <div class="approver-name">Jamie L.</div>
+            <div class="approver-role">Architecture Committee</div>
+          </div>
+          <div class="approver-time">pending</div>
+        </div>
+        <div class="approver-row">
+          <div class="approver-status">⏳</div>
+          <div>
+            <div class="approver-name">Priya R.</div>
+            <div class="approver-role">Legal Counsel</div>
+          </div>
+          <div class="approver-time">pending</div>
+        </div>
+        <button class="merge-btn disabled">⊘ Awaiting 2 approvals</button>
+      </div>
+    </div>
+
+    <!-- HISTORY TAB -->
+    <div class="panel-content" id="tab-history">
+      <div class="panel-scroll">
+        <div style="padding: 6px 0;">
+          <div class="commit-row">
+            <div class="commit-hash">a3f9c21</div>
+            <div>
+              <div class="commit-msg">Add WebSocket concurrent connection limit</div>
+              <div class="commit-meta">Sarah R. · 2h ago · +28 −0 lines</div>
+            </div>
+          </div>
+          <div class="commit-row">
+            <div class="commit-hash">b71e440</div>
+            <div>
+              <div class="commit-msg">Revise internal service exemption (security review)</div>
+              <div class="commit-meta">Sarah R. · 4h ago · +12 −8 lines</div>
+            </div>
+          </div>
+          <div class="commit-row">
+            <div class="commit-hash">cc9821a</div>
+            <div>
+              <div class="commit-msg">Increase standard tier limit to 2,000 req/min</div>
+              <div class="commit-meta">Sarah R. · 6h ago · +3 −3 lines</div>
+            </div>
+          </div>
+          <div class="commit-row">
+            <div class="commit-hash">4d2891f</div>
+            <div>
+              <div class="commit-msg">Initial branch from main (v2.0.1)</div>
+              <div class="commit-meta">Sarah R. · Yesterday · branch created</div>
+            </div>
+          </div>
+          <div style="border-top: 2px dashed var(--border); margin: 10px 0; position: relative;">
+            <span style="position:absolute;top:-8px;left:0;background:var(--paper);padding:0 6px;font-size:10px;color:var(--ink-4);">main ← merged</span>
+          </div>
+          <div class="commit-row" style="opacity:0.6;">
+            <div class="commit-hash">9e112bc</div>
+            <div>
+              <div class="commit-msg">v2.0.1: Update contact info</div>
+              <div class="commit-meta">Tom A. · 3 days ago</div>
+            </div>
+          </div>
+          <div class="commit-row" style="opacity:0.6;">
+            <div class="commit-hash">77c4a88</div>
+            <div>
+              <div class="commit-msg">v2.0.0: Major restructure, add enterprise tier</div>
+              <div class="commit-meta">Priya R. · 2 weeks ago</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DECISIONS TAB -->
+    <div class="panel-content" id="tab-decisions">
+      <div class="panel-scroll">
+        <div style="padding: 6px 0; font-size: 11px; color: var(--ink-3); margin-bottom: 8px;">Auto-generated from resolved threads &amp; merges.</div>
+        <div class="decision-item">
+          <div class="decision-date">2025-04-15 · a3f9c21</div>
+          <div>
+            <span class="decision-tag dt-approved">Accepted</span>
+            <span class="decision-tag" style="background:var(--blue-soft);color:var(--blue);">Security</span>
+          </div>
+          <div class="decision-text" style="margin-top:5px;">WebSocket concurrent connection limit (50/key) added after INC-4421 exposed resource exhaustion risk. DW proposed, SR implemented.</div>
+          <div class="decision-by">Approved: Sarah R., David W. · 2 participants</div>
+        </div>
+        <div class="decision-item">
+          <div class="decision-date">2025-04-15 · b71e440</div>
+          <div>
+            <span class="decision-tag dt-approved">Accepted</span>
+          </div>
+          <div class="decision-text" style="margin-top:5px;">Internal service exemption removed. All service accounts now capped at Premium tier limits. Exemptions require Platform approval + 90-day review. Motivated by security review #SEC-2025-018.</div>
+          <div class="decision-by">Proposed: David W. (Security) · Accepted after 3-reply thread</div>
+        </div>
+        <div class="decision-item">
+          <div class="decision-date">2025-04-14 · resolved thread</div>
+          <div>
+            <span class="decision-tag dt-approved">Accepted</span>
+          </div>
+          <div class="decision-text" style="margin-top:5px;">Jitter algorithm specification moved to SDK documentation. Policy intentionally non-prescriptive on implementation detail.</div>
+          <div class="decision-by">Sarah R. → Marcus K. agreed</div>
+        </div>
+        <div class="decision-item">
+          <div class="decision-date">2025-02-12 · v2.0.0 merge</div>
+          <div>
+            <span class="decision-tag dt-approved">Accepted</span>
+          </div>
+          <div class="decision-text" style="margin-top:5px;">Enterprise tier formalized as custom/negotiated. Previously ad-hoc. Added SLA references. Approved by Architecture Committee and Legal.</div>
+          <div class="decision-by">Approved: Jamie L., Priya R., Tom A.</div>
+        </div>
+        <div class="decision-item">
+          <div class="decision-date">2024-11-03 · v1.2.0 merge</div>
+          <div>
+            <span class="decision-tag dt-rejected">Rejected</span>
+          </div>
+          <div class="decision-text" style="margin-top:5px;">Proposal to add per-endpoint limits rejected. Complexity deemed too high for current tooling. Deferred for evaluation in Q1 2025.</div>
+          <div class="decision-by">Rejected by Architecture Committee (3-2 vote)</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- STATUS BAR -->
+<div class="statusbar">
+  <div class="statusbar-item">
+    <div class="statusbar-dot"></div>
+    Connected · 3 online
+  </div>
+  <div class="statusbar-item" style="color:#a8c8a0;font-family:'JetBrains Mono',monospace;">
+    feat/rate-limit-v2
+  </div>
+  <div class="statusbar-item">
+    Markdown · UTF-8 · 847 words
+  </div>
+  <div class="statusbar-spacer"></div>
+  <div class="statusbar-item">
+    7 threads · 1 resolved · 6 open
+  </div>
+  <div class="statusbar-item">
+    Autosaved · 14:32:08
+  </div>
+</div>
+
+<script>
+  function setActive(el) {
+    document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+    el.classList.add('active');
+  }
+
+  function setTreeActive(el) {
+    document.querySelectorAll('.tree-item').forEach(i => i.classList.remove('active'));
+    el.classList.add('active');
+  }
+
+  function highlightBlock(el) {
+    document.querySelectorAll('.block').forEach(b => b.classList.remove('selected'));
+    if (!el.classList.contains('has-thread')) el.classList.add('selected');
+  }
+
+  function selectBlock(id) {
+    document.querySelectorAll('.block').forEach(b => b.classList.remove('selected'));
+    document.querySelectorAll('.thread-card').forEach(c => c.classList.remove('active'));
+    
+    const block = document.getElementById('block-' + id);
+    const thread = document.getElementById('thread-' + id);
+    
+    if (block) block.classList.add('selected');
+    if (thread) {
+      thread.classList.add('active');
+      thread.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Switch to discussions tab
+    switchTab('discussions', document.querySelector('.panel-tab'));
+  }
+
+  function switchTab(tab, el) {
+    document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel-content').forEach(c => c.classList.remove('active'));
+    
+    el.classList.add('active');
+    document.getElementById('tab-' + tab).classList.add('active');
+  }
+
+  let diffVisible = false;
+  function toggleDiff() {
+    diffVisible = !diffVisible;
+    const btn = document.getElementById('diff-btn');
+    const addedBlocks = document.querySelectorAll('.diff-added');
+    const removedBlocks = document.querySelectorAll('.diff-removed');
+    const changedBlocks = document.querySelectorAll('.diff-changed');
+
+    if (diffVisible) {
+      btn.classList.add('active');
+      btn.textContent = '⦿ Diff On';
+    } else {
+      btn.classList.remove('active');
+      btn.textContent = '⦿ Show Diff';
+    }
+  }
+
+  // Tab click fix
+  document.querySelectorAll('.panel-tab').forEach((tab, i) => {
+    const tabIds = ['discussions', 'history', 'decisions'];
+    tab.onclick = function() { switchTab(tabIds[i], this); };
+  });
+
+  // Diff toggle buttons
+  document.querySelectorAll('.diff-toggle button').forEach(btn => {
+    btn.onclick = function() {
+      document.querySelectorAll('.diff-toggle button').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+    };
+  });
+
+  function showMergeModal() {
+    alert('Review Request: feat/rate-limit-v2 → main\n\n2 approvals pending (Jamie L., Priya R.)\n3 open discussion threads must be resolved before merge.\n\nBlocked: Cannot merge until all required approvers sign off.');
+  }
+</script>
+
+</body>
+</html>

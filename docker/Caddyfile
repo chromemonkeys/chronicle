@@ -1,0 +1,17 @@
+:8080 {
+  encode gzip zstd
+
+  @api path /api* /health /ready
+  handle @api {
+    reverse_proxy api:8787
+  }
+
+  @sync path /ws*
+  handle @sync {
+    reverse_proxy sync:8788
+  }
+
+  handle {
+    reverse_proxy web:4173
+  }
+}

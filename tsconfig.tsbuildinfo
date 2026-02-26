@@ -1,0 +1,1 @@
+{"root":["./src/main.tsx","./src/router.tsx","./src/api/client.ts","./src/api/types.ts","./src/mocks/data.ts","./src/state/AuthProvider.tsx","./src/ui/AppShell.tsx","./src/ui/Button.tsx","./src/ui/Card.tsx","./src/views/ApprovalsPage.tsx","./src/views/DocumentsPage.tsx","./src/views/NotFoundPage.tsx","./src/views/SignInPage.tsx","./src/views/WorkspacePage.tsx"],"version":"5.9.3"}

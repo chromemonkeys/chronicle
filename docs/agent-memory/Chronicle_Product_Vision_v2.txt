@@ -1,0 +1,620 @@
+Chronicle
+
+Where documents are decided, not just edited.
+
+Product Vision & Feature Specification
+
+Version 0.1 — Internal Working Document
+
+1. The Problem
+
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Every organisation is making decisions in documents every day. The decision — and the reasoning behind it — disappears the moment the comment is resolved. Six months later, nobody can answer why.
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Modern knowledge tools are optimised for writing and reading. None of them treat deliberation as a first-class citizen. Confluence gives you a wiki. Notion gives you a database. Google Docs gives you a collaborative word processor. All of them have the same fundamental flaw:
+
++------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------+
+| Comments vanish                                                                                | No real approval                                                                                  | Decisions scatter                                                                                |
+|                                                                                                |                                                                                                   |                                                                                                  |
+| When a comment is resolved it disappears. The reasoning behind every edit is permanently lost. | Page approvals are cosmetic. Nothing actually blocks publication until the right people sign off. | The real decision happens in Slack, email, or a meeting. The document just shows the conclusion. |
++------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------+
+
+This is expensive. Teams re-litigate settled decisions. New hires have no way to understand why the architecture looks the way it does. Auditors cannot reconstruct who approved what and when. Regulated industries work around this with paper trails and email chains.
+
+Chronicle solves this by making the deliberation permanent, structured, and queryable — without changing how people write.
+
+2. What Chronicle Is
+
+Chronicle is an open-source, self-hostable document collaboration platform built on a Git backend. It combines the editing experience of a modern word processor with the version control rigour of a software repository — and adds a layer that no competitor has: a permanent, structured record of every decision made in or around a document.
+
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| For engineering teams                                                                                                                                                                                                      | For everyone else                                                                                                                                                                                                       |
+|                                                                                                                                                                                                                            |                                                                                                                                                                                                                         |
+| Replace Confluence. Write RFCs, architecture decisions, runbooks, and policies in a tool that actually tracks who proposed what, who objected, and what was finally agreed. Branch-based editing means no more page locks. | Replace SharePoint, Word round-trips, and email chains. WYSIWYG editing with approval workflows that cannot be bypassed. Every annotation, every tracked change, every sign-off — permanently attached to the document. |
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+Core Philosophy
+
+-   The document is the source of truth — not the meeting, not the Slack thread, not the email
+
+-   Deliberation is as important as the conclusion — both must be preserved
+
+-   Approval must have teeth — you cannot merge until the right people sign off
+
+-   Open source by default — self-hostable, no vendor lock-in, no per-seat pricing at scale
+
+-   Git underneath, invisible on top — all the power of version control with none of the vocabulary
+
+3. Who Uses Chronicle
+
+Chronicle has two distinct but equally important user populations. The primary beachhead is engineering and technical teams — the same people who currently use Confluence. The second wave is regulated and professional industries where document governance is a compliance requirement, not a preference.
+
+Primary: Engineering & Technical Orgs
+
++--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Pain they feel today                                                                                                                                                                                   | Why they switch                                                                                                                                                                                          |
+|                                                                                                                                                                                                        |                                                                                                                                                                                                          |
+| Confluence is slow, expensive ($10–15/user/month), and being force-migrated to Cloud. The editor is widely mocked. Comments on ADRs and RFCs disappear. Merge decisions live in Slack, not in the doc. | Chronicle is free to self-host. The decision log is a genuine differentiator for engineering orgs that value ADRs. Branch-based editing solves the page-lock problem. Import from Confluence on day one. |
++--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+Secondary: Regulated Professional Services
+
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------+
+| Law firms                                                                                                                                                         | Engineering consultancies                                                                                            | Financial services                                                                                                                       |
+|                                                                                                                                                                   |                                                                                                                      |                                                                                                                                          |
+| Engagement letters, contracts, policy documents. Partners need tracked changes, clause-level annotations, and sign-off chains that create a complete audit trail. | Design specs, site instructions, handover documents. PE sign-off workflows, revision control, client approval gates. | Investment memos, compliance policies, board papers. Full audit trails, approval chains, and the ability to prove who saw what and when. |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------+
+
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Chronicle does not require users to know what Git is. The branch, commit, and merge model is the internal implementation. Users see: "Propose a change", "Submit for review", and "Approve".
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+4. Full Feature List
+
+4.1 Rich Text Editor
+
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| WYSIWYG Editing ✓ Core                                                                                                                                            |
+|                                                                                                                                                                   |
+| Full rich text editing with no Markdown syntax visible. Bold, italic, underline, strikethrough, inline code, blockquotes. Behaves like a familiar word processor. |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Block-based Structure ✓ Core                                                                                                                                                                    |
+|                                                                                                                                                                                                 |
+| Documents are composed of typed blocks: Paragraph, Heading 1–3, Bullet List, Ordered List, Code Block, Blockquote, Divider, Callout, Table, and Embed. Each block is independently annotatable. |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++---------------------------------------------------------------------------------------------------------------------------------------+
+| Floating Format Toolbar ✓ Core                                                                                                        |
+|                                                                                                                                       |
+| Selecting text reveals a context-sensitive formatting toolbar. Includes a "Comment" action to anchor a thread to the exact selection. |
++---------------------------------------------------------------------------------------------------------------------------------------+
+
++--------------------------------------------------------------------------------------------------------+
+| Tables ✓ Core                                                                                          |
+|                                                                                                        |
+| Full table support with column resize, row/column add/delete, cell merging, and header row formatting. |
++--------------------------------------------------------------------------------------------------------+
+
++----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Inline Embeds ✓ Core                                                                                                                                           |
+|                                                                                                                                                                |
+| Paste any URL to embed content inline: Figma, Loom, YouTube, Miro, Google Docs, GitHub PRs, Linear issues, Airtable, Typeform, and more via oEmbed and iframe. |
++----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++----------------------------------------------------------------------------------------------------------+
+| Code Blocks ✓ Core                                                                                       |
+|                                                                                                          |
+| Syntax-highlighted code blocks with language selection. Copy button, line numbers, and word-wrap toggle. |
++----------------------------------------------------------------------------------------------------------+
+
++---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Templates v1.1                                                                                                                                                |
+|                                                                                                                                                               |
+| Pre-built templates for: RFC, Architecture Decision Record (ADR), Runbook, Meeting Notes, Incident Report, Onboarding Guide, Engagement Letter, Project Spec. |
++---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| AI Drafting Assistant v2.0                                                                                                                                                             |
+|                                                                                                                                                                                        |
+| Highlight text and ask Chronicle to expand, summarise, rewrite, or suggest improvements. Powered by a configurable LLM. All AI suggestions appear as tracked changes for human review. |
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+4.2 Version Control
+
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Branch-based Editing ✓ Core                                                                                                                                                                          |
+|                                                                                                                                                                                                      |
+| Every change is made on a branch, not directly to the live document. Multiple people can propose competing changes simultaneously. Branches are visible as "Proposals" to users — no Git vocabulary. |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Inline Diff View ✓ Core                                                                                                                                                     |
+|                                                                                                                                                                             |
+| Toggle between "Show changes" and "Final" views. Additions highlighted in green, removals in red, with change bars in the margin. Inline diff for individual words/phrases. |
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++--------------------------------------------------------------------------------------------------------+
+| Split Diff View ✓ Core                                                                                 |
+|                                                                                                        |
+| Side-by-side comparison of any two versions. Select any two points in the document history to compare. |
++--------------------------------------------------------------------------------------------------------+
+
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Named Versions ✓ Core                                                                                                                                                               |
+|                                                                                                                                                                                     |
+| Tag any version with a human-readable name: "Partner Review Draft", "Post-Exclusions Revision", "Final — Client Executed". Version list shows name, author, date, and change count. |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-----------------------------------------------------------------------------------------------------------------------------------+
+| Blame View v1.1                                                                                                                   |
+|                                                                                                                                   |
+| Paragraph-level blame: hover any block to see who last edited it and when. Click to jump to the commit and associated discussion. |
++-----------------------------------------------------------------------------------------------------------------------------------+
+
++---------------------------------------------------------------------------------------------------------------------------+
+| Restore & Fork ✓ Core                                                                                                     |
+|                                                                                                                           |
+| Restore any document to any previous version with one click. Fork any version into a new branch for parallel exploration. |
++---------------------------------------------------------------------------------------------------------------------------+
+
+4.3 Deliberation & Discussion
+
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Block-anchored Threads ✓ Core                                                                                                                                                                      |
+|                                                                                                                                                                                                    |
+| Comments are anchored to a specific block (paragraph, heading, table row, or inline text selection). The anchor persists across edits — the comment travels with the content, not the line number. |
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++---------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Threaded Replies ✓ Core                                                                                                                                 |
+|                                                                                                                                                         |
+| Full threaded discussion on every comment. @mention any workspace member. Support for reactions and votes (upvote/downvote for RFC-style deliberation). |
++---------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-----------------------------------------------------------------------------------------------------------------------------+
+| Annotation Types ✓ Core                                                                                                     |
+|                                                                                                                             |
+| Classify annotations by type: General, Legal, Commercial, Technical, Security, Query, Editorial. Filter and search by type. |
++-----------------------------------------------------------------------------------------------------------------------------+
+
++---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Resolve with Record ✓ Core                                                                                                                                                      |
+|                                                                                                                                                                                 |
+| Resolving a thread requires selecting an outcome: Accepted, Rejected, or Deferred — with an optional note. Resolved threads collapse but are permanently stored and searchable. |
++---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Decision Log ✓ Core                                                                                                                                                                                       |
+|                                                                                                                                                                                                           |
+| Auto-generated log of every resolved thread and merge event. Includes the deliberation, the outcome, the participants, and a link to the document state at that moment. Queryable, exportable, permanent. |
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Suggestion Mode ✓ Core                                                                                                                                                 |
+|                                                                                                                                                                        |
+| Users without edit access can submit suggestions — proposed changes that appear as tracked changes for the author to accept or reject. No direct edit access required. |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+4.4 Approval & Sign-off
+
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Configurable Approval Chains ✓ Core                                                                                                                                               |
+|                                                                                                                                                                                   |
+| Define required approvers per document, template, or space. Approvers can be individuals, roles, or "any member of group". Sequential and parallel approval paths both supported. |
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Hard Gate on Merge ✓ Core                                                                                                                                                                 |
+|                                                                                                                                                                                           |
+| A document cannot be marked final/merged until all required approvers have signed off and all open annotations are resolved. The merge button is physically blocked — not just a warning. |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Digital Sign-off Record ✓ Core                                                                                                                                        |
+|                                                                                                                                                                       |
+| Each approval is recorded with the approver identity, timestamp, IP address (optional), and document state hash. Provides a cryptographically verifiable audit trail. |
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++----------------------------------------------------------------------------------------------------------------+
+| Delegation v1.1                                                                                                |
+|                                                                                                                |
+| Approvers can delegate to another user with a reason recorded. Delegation chain is visible in the audit trail. |
++----------------------------------------------------------------------------------------------------------------+
+
++-----------------------------------------------------------------------------------------------------------+
+| Reminder & Escalation v1.1                                                                                |
+|                                                                                                           |
+| Configurable reminders to pending approvers. Auto-escalation to a backup approver after a defined period. |
++-----------------------------------------------------------------------------------------------------------+
+
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| DocuSign / e-signature Integration v2.0                                                                                                                                          |
+|                                                                                                                                                                                  |
+| For documents that require legally binding signatures, trigger a DocuSign or HelloSign envelope directly from Chronicle. Signed document stored alongside the Chronicle version. |
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+4.5 Organisation & Navigation
+
++----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Spaces ✓ Core                                                                                                                                                  |
+|                                                                                                                                                                |
+| Top-level containers for related documents: Engineering, Legal, HR, Client Matters, etc. Each Space has its own permissions, templates, and approval defaults. |
++----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-------------------------------------------------------------------------------------------------------------------------------------------------+
+| Hierarchical Document Tree ✓ Core                                                                                                               |
+|                                                                                                                                                 |
+| Documents can be nested arbitrarily deep within a Space. Drag-and-drop reordering. Breadcrumb navigation. Folder-level permissions inheritance. |
++-------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Full-text Search ✓ Core                                                                                                                                         |
+|                                                                                                                                                                 |
+| Instant search across all documents, comments, and decision logs you have access to. Filter by space, author, date range, document status, and annotation type. |
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++---------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Document Status ✓ Core                                                                                                                                  |
+|                                                                                                                                                         |
+| Every document has a status: Draft, In Review, Approved, Archived. Status drives workflow — In Review documents require approvals before status change. |
++---------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++----------------------------------------------------------------------------------------------------------------------------------------------------+
+| My Desk View ✓ Core                                                                                                                                |
+|                                                                                                                                                    |
+| Personal inbox showing: documents awaiting your review, documents where you have open threads, documents you proposed changes to, recently viewed. |
++----------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-----------------------------------------------------------------------------------------------------------------+
+| Backlinks v1.1                                                                                                  |
+|                                                                                                                 |
+| Every document shows all other documents that link to it. Automatically maintained — no manual upkeep required. |
++-----------------------------------------------------------------------------------------------------------------+
+
+4.6 Admin, Permissions & Security
+
++-------------------------------------------------------------------------------------------------------------------------------------------------+
+| Role-based Permissions ✓ Core                                                                                                                   |
+|                                                                                                                                                 |
+| Four built-in roles: Viewer, Commenter, Editor, Admin. Roles apply at workspace, space, or document level. Custom roles configurable by admins. |
++-------------------------------------------------------------------------------------------------------------------------------------------------+
+
++--------------------------------------------------------------------------------------------------------+
+| SSO / SAML v1.1                                                                                        |
+|                                                                                                        |
+| SAML 2.0 and OIDC support for enterprise SSO. Tested with Okta, Azure AD, Google Workspace, and Auth0. |
++--------------------------------------------------------------------------------------------------------+
+
++-------------------------------------------------------------------------------------------------+
+| SCIM Provisioning v1.1                                                                          |
+|                                                                                                 |
+| Automated user provisioning and deprovisioning via SCIM 2.0. Group sync from identity provider. |
++-------------------------------------------------------------------------------------------------+
+
++-------------------------------------------------------------------------------------------------------------------------------------+
+| Audit Log ✓ Core                                                                                                                    |
+|                                                                                                                                     |
+| Complete audit log of all user actions: views, edits, comments, approvals, exports, permission changes. Exportable, tamper-evident. |
++-------------------------------------------------------------------------------------------------------------------------------------+
+
++---------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Self-hosting ✓ Core                                                                                                                                     |
+|                                                                                                                                                         |
+| Single Docker Compose deployment for small teams. Helm chart for Kubernetes. Minimal dependencies: Postgres, Redis, and object storage (S3-compatible). |
++---------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++---------------------------------------------------------------------------------------------------------------+
+| Data Export ✓ Core                                                                                            |
+|                                                                                                               |
+| Export any document as PDF, Markdown, or DOCX at any time. Export entire spaces as a zip archive. No lock-in. |
++---------------------------------------------------------------------------------------------------------------+
+
+4.7 Integrations
+
++----------------------------------------------------------------------------------------------------------------------------------------------------+
+| Confluence Import ✓ Core                                                                                                                           |
+|                                                                                                                                                    |
+| One-click import of all Confluence spaces, preserving page hierarchy, author history, and attachments. The migration path is a strategic priority. |
++----------------------------------------------------------------------------------------------------------------------------------------------------+
+
++---------------------------------------------------------------------------------------------------------------------------------------------------+
+| oEmbed Embeds ✓ Core                                                                                                                              |
+|                                                                                                                                                   |
+| Paste any URL from 200+ supported services to embed inline: YouTube, Loom, Figma, Miro, Airtable, Typeform, Spotify, Canva, Google Maps and more. |
++---------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Rich Link Cards ✓ Core                                                                                                                                                            |
+|                                                                                                                                                                                   |
+| For services that expose metadata APIs (GitHub PRs, Linear issues, Jira tickets, Notion pages): paste a URL and get a rich card showing title, status, assignee, and last update. |
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
++----------------------------------------------------------------------------------------------------------------------------------+
+| Webhook Notifications ✓ Core                                                                                                     |
+|                                                                                                                                  |
+| Outbound webhooks on document events: created, updated, approved, merged, comment added. Configurable per-space or per-document. |
++----------------------------------------------------------------------------------------------------------------------------------+
+
++--------------------------------------------------------------------------------------------------------------------------------------------------+
+| Slack & Teams Notifications v1.1                                                                                                                 |
+|                                                                                                                                                  |
+| Notify channels or DMs on approval requests, resolved threads, and document publication. Actionable notifications — approve directly from Slack. |
++--------------------------------------------------------------------------------------------------------------------------------------------------+
+
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| REST API ✓ Core                                                                                                                                                 |
+|                                                                                                                                                                 |
+| Full REST API for all document operations. Read/write documents, manage comments, trigger approvals, query the decision log. Rate-limited, token-authenticated. |
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+5. Chronicle vs Confluence
+
+Chronicle does not need to beat Confluence on every dimension. It needs to be good enough on the core use cases and decisively better on the dimensions that matter most to its target users.
+
+  ------------------------------- -------------- -----------------------------
+  Feature                         Chronicle      Confluence
+  WYSIWYG editing                 ✓ Native       ✓ Native
+  Self-hostable                   ✓ Free         ~ Paid (Data Center)
+  Open source                     ✓ Yes          ✗ No
+  Per-user pricing                ✓ None         ✗ $10–15/user/mo
+  Decision log                    ✓ Built-in     ✗ Not available
+  Branch-based editing            ✓ Native       ✗ Page locks only
+  Block-anchored comments         ✓ Persistent   ~ Disappear on resolve
+  Approval hard gates             ✓ Enforced     ~ Plugin only, not enforced
+  Inline diff / tracked changes   ✓ Word-style   ~ Limited
+  Confluence import               ✓ One-click    N/A
+  Jira deep integration           ✗ Not yet      ✓ Native
+  Marketplace / plugins           ✗ Not yet      ✓ 5,700+ apps
+  Whiteboards                     ✗ Not yet      ✓ Native
+  Spaces & permissions            ✓ Core         ✓ Mature
+  SSO / SAML                      ~ v1.1         ✓ Native
+  AI features                     ~ v2.0         ~ 30+ launched 2024
+  ------------------------------- -------------- -----------------------------
+
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  The critical insight: Confluence has 40,000+ customers and $4B+ revenue not because it is loved, but because switching costs are high and nothing good enough has been free. Chronicle removes both barriers.
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+6. Interface Layouts
+
+Chronicle has three primary layout modes depending on context. All share the same top navigation and left sidebar. The right panel and centre column adapt to the task.
+
+6.1 Document Editor View
+
+The primary view. Used when actively editing or reviewing a document. Three-column layout: navigation sidebar, document canvas, and discussion panel.
+
+Full editor layout (approx. proportions)
+
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  TOP NAVIGATION BAR — Logo · Breadcrumb · Branch badge · Avatars · Review button                                                                                                                                                                                                                                                                                                         
+  LEFT SIDEBAR • Workspace nav • Open Reviews • Merged • Decision Log ────── Doc Tree 📁 Architecture 📄 Rate Limiting 📄 Auth Standards 📁 Security 📁 Runbooks   DOCUMENT CANVAS WYSIWYG editor Full rich text Branch diff overlay ⟨ H1 ⟩ Policy Title ⟨ p ⟩ Body text... ⟨ H2 ⟩ Section heading ⟨ diff ⟩ Changed paragraph ⟨ p ⟩ Body text... ⟨ embed ⟩ Figma / Loom ⟨ table ⟩ Data table   DISCUSSION PANEL Tabs: [Discussion] [History] [Log] ── Threads ── 💬 Thread 1 (open) ↳ Reply 💬 Thread 2 (open) ↳ Reply 1 ↳ Reply 2 ✓ Thread 3 (resolved) ── Compose ── ── Approvals ── ✅ Author ⏳ Reviewer 1 ⏳ Reviewer 2 [ Awaiting sign-off ]
+  STATUS BAR — Branch · Word count · Thread count · Autosaved · 3 online                                                                                                                                                                                                                                                                                                                  
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+6.2 My Desk View
+
+The home screen. Shows everything that needs attention: pending reviews, open threads, recently edited documents, and activity feed. No document is open — this is the inbox.
+
+My Desk layout
+
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  TOP NAVIGATION BAR                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
+  LEFT SIDEBAR • My Desk ◀ active • All Documents • Open Reviews (3) • I Proposed (2) • Finalised ────── Spaces 📁 Engineering 📁 Legal 📁 HR 📁 Client Matters   AWAITING MY REVIEW (3) [Doc card] Rate Limiting Policy · 2 threads · Jamie L. + Priya R. [Doc card] RFC-042: Caching Layer · 5 threads · Marcus K. [Doc card] Engagement Letter · 1 thread · R. Vasquez RECENTLY ACTIVE [Doc card] Auth Standards · Approved · 1h ago [Doc card] Runbook: Deploy · Merged · 3h ago [Doc card] API Design Guide · In review · 5h ago   ACTIVITY FEED ✓ Priya R. approved Engagement Letter 15 min ago 💬 Marcus K. replied in Rate Limiting 1h ago + Sarah R. proposed changes to RFC-042 2h ago ✓ Auth Standards merged → main 3h ago
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+6.3 Decision Log View
+
+A searchable, filterable record of every decision made across all documents in a Space. The killer feature for regulated industries and for organisations that value institutional memory.
+
+Decision Log layout
+
+  ----------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------------------------------------------------
+  TOP NAVIGATION BAR                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+  LEFT SIDEBAR (same as usual) • Decision Log ◀   DECISION LOG — Engineering Space Filter: [All] [Accepted] [Rejected] [Deferred] · Date range · Author · Document ───────────────────────────────────── [Accepted] [Security] 2025-04-15 WebSocket connection limit (50/key) added after INC-4421. Proposed by David W., implemented by Sarah R. Document: Rate Limiting Policy v2.1 ───────────────────────────────────── [Accepted] 2025-04-14 Internal service exemption removed. All service accounts capped at Premium tier. Document: Rate Limiting Policy · Thread → ───────────────────────────────────── [Rejected] 2024-11-03 (3–2 vote) Per-endpoint limits proposal rejected. Complexity too high. Deferred Q1 2025. Document: Rate Limiting Policy v1.2   FILTERS Status: ☑ Accepted ☑ Rejected ☑ Deferred Date: [Last 30 days ▾] Document: [All ▾] Author: [All ▾] Tag: [All ▾]
+  ----------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------------------------------------------------
+
+6.4 Professional Services View (Law Firm Mode)
+
+The same product, themed for professional services environments. The document canvas renders as a printed page. Annotations are classified by type (Legal, Commercial, Drafting). The sign-off chain uses professional role titles.
+
+Law firm layout — Engagement Letter
+
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  TOP NAV — Chronicle · Meridian LLP > Client Matters > Hartwell Capital > Engagement Letter · Partner Review status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
+  MATTER SIDEBAR Awaiting My Review I Proposed Changes Finalised ────── Hartwell Capital 📁 Engagement 📄 Eng. Letter ◀ 📄 Retainer 📄 Conflicts Wvr 📁 Due Diligence 📁 Term Sheets ────── Firm Templates 📄 Eng. Letter v4 📄 NDA Standard   DOCUMENT PAGE (printed page simulation) MERIDIAN VASQUEZ LLP Attorneys at Law · Est. 1991 Matter: HWC-2025-041 Engagement Letter Hartwell Capital Management LLC §1. Scope of Engagement 1.1 Services — [tracked change: entity name] 1.2 Excluded Services §2. Fees and Billing 2.1 Hourly Rates — [tracked change: $900/hr] 2.2 Retainer — [tracked change: $75,000] 2.3 Invoicing §3. Confidentiality [Signature block] Roberto Vasquez ✓ Signed 14:32 _______________________ Awaiting   ANNOTATIONS [Legal] § 1.1 RV: Entity name must match Delaware filing ↳ MT: Confirmed. Updated. [Commercial] § 2.1 SK: 60-day notice period unusual for transaction mandate ↳ RV: Agreed. Revert. [Query] § 2.2 SK: Retainer uplift — client approved? Needs written consent ── SIGN-OFF ── ✅ R. Vasquez (Partner) ⏳ S. Kim (Sr Assoc) ⏳ Client — Hartwell [⊘ 3 annotations open]
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+7. Open Source Strategy
+
+Chronicle is open-core. The core platform is MIT licensed and fully functional without a commercial license. Revenue comes from hosted Chronicle Cloud and from enterprise features.
+
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Chronicle OSS (MIT)                                                                                                                                                                       | Chronicle Cloud / Enterprise                                                                                                                                                 |
+|                                                                                                                                                                                           |                                                                                                                                                                              |
+| Full WYSIWYG editor. Version control and branching. Discussion threads. Decision log. Approval chains. Spaces and permissions. REST API. Self-host via Docker or Kubernetes. Always free. | Managed hosting with SLA. SSO/SAML/SCIM. Advanced audit logs. Dedicated support. Data residency options. Confluence migration service. DocuSign integration. Volume pricing. |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  The OSS strategy is intentional: it removes the single biggest barrier to adoption for IT-gated organisations. An engineer can self-host Chronicle for their team without a procurement process. Enterprise features come when the organisation scales.
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Comparable OSS Trajectories
+
++------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| GitLab                                                                                                                                               | Metabase                                                                                                                                 | Outline                                                                                                                                                      |
+|                                                                                                                                                      |                                                                                                                                          |                                                                                                                                                              |
+| Open-sourced the entire DevOps platform. Grew to $424M ARR and IPO. Community edition drove adoption; enterprise edition captured large org revenue. | Open-source BI tool. Reached 50,000+ organisations. Self-hosted drove adoption; Metabase Cloud and Enterprise captured commercial value. | Open-source Notion/Confluence alternative. Growing steadily. Self-host or cloud. Still pre-revenue scale but demonstrates the exact model Chronicle targets. |
++------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+8. Sharing, Permissions & External Access
+
+Chronicle’s permission model is designed for organisations that have both internal collaborators and external stakeholders — clients, auditors, contractors, regulators — who need controlled access to documents without becoming full workspace members. It is the most common failure point in enterprise document tools, and one of the primary reasons organisations stay on SharePoint or email despite hating both.
+
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Internal members                                                                                                                                                                                                 | External guests                                                                                                                                                                                                                                                              |
+|                                                                                                                                                                                                                  |                                                                                                                                                                                                                                                                              |
+| Full workspace members authenticated via email/SSO. Assigned to groups and spaces. Subject to role-based permissions. Appear in approval chains and @mentions. Governed by SCIM provisioning and deprovisioning. | Outside the organisation. Access limited to specific documents or spaces they are explicitly invited to. Cannot see anything beyond their grant. No access to internal discussion unless explicitly shared. Tracked separately in audit logs. Time-limited access supported. |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+8.1 Permission Levels
+
+Five permission levels apply at workspace, space, folder, or document scope. Lower scopes override higher ones — a document can be locked down tighter than its parent space.
+
+  ----------- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ---------- ----------
+  Role        Capabilities                                                                                                                                                                                                     Internal   External
+  No Access   Document does not appear. Cannot be searched or discovered.                                                                                                                                                      ✓          ✓
+  Viewer      Read-only. Can see the final document and version history. Cannot see internal-only discussion threads.                                                                                                          ✓          ✓
+  Commenter   Can read and add comments. Cannot edit the document body. Can be assigned as a required approver. Can reply to threads they are @mentioned in.                                                                   ✓          ✓
+  Suggester   Can propose tracked changes that appear as suggestions. Cannot directly edit. Changes require Editor acceptance before appearing in the document. Ideal for external reviewers (e.g. client counsel, auditor).   ✓          ✓
+  Editor      Full read and write access. Can create branches, accept/reject suggestions, resolve threads, and request approvals. Cannot change document permissions.                                                          ✓          ✗
+  Admin       Full control including permissions management, archival, deletion, and export. Can invite external guests and set access expiry. Internal only.                                                                  ✓          ✗
+  ----------- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ---------- ----------
+
+8.2 Sharing Modes
+
+Four distinct sharing modes cover the full range of collaboration patterns from tightly controlled internal review to public publishing.
+
+  --------------- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------------------------------------------
+  Mode            How it works                                                                                                                                                                                                                              Example use case
+  Private         Visible only to the document owner. No other user can see or discover it, including workspace admins unless explicitly granted.                                                                                                           Personal notes, draft ideas not ready for review.
+  Space Members   Accessible to all members of the parent Space at their assigned role level. Default for most internal documents. Inherits Space permissions.                                                                                              Engineering team RFC, internal policy, runbook.
+  Invite Only     Specific named users only, regardless of Space membership. Each invitee assigned an explicit role. Overrides Space-level permissions in both directions — can grant access to non-members or restrict access for Space members.           Sensitive HR document, board paper, client engagement letter shared with client counsel.
+  Public Link     Anyone with the link can access the document at a specified permission level (View or Comment). No login required. Optional password protection. Optional expiry date. Revocable at any time. Link access is logged in the audit trail.   Published technical documentation, public API policy, document shared with auditor who has no workspace account.
+  --------------- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------------------------------------------
+
+8.3 Internal vs External Discussion Visibility
+
+This is the most nuanced part of the permission model — and the most important for professional services use cases. Internal teams need to deliberate candidly about a document before sharing it externally. That internal deliberation must never be visible to external parties.
+
++--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Internal thread (default)                                                                                                                                                                                                            | External thread (explicitly marked)                                                                                                                                                                              |
++--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Visible only to internal workspace members. Never shown to external guests or public link viewers, even if they have Commenter access. Used for frank internal deliberation, legal privilege considerations, commercial positioning. | Explicitly shared with one or more external guests. External guests can see and reply to these threads only. Internal guests see a clear visual indicator that this thread is externally visible before posting. |
+|                                                                                                                                                                                                                                      |                                                                                                                                                                                                                  |
+| Example: “The client will push back on this clause — do we want to pre-empt?”                                                                                                                                                        | Example: “Please confirm the entity name as it appears in your Delaware certificate.”                                                                                                                            |
++--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+8.4 Enterprise Permission Features
+
+The following features are specifically required by enterprise and regulated-industry customers and are part of the Chronicle Cloud / Enterprise tier.
+
+  --------------------------- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------
+  Feature                     Description                                                                                                                                                                                                                         Tier
+  Group-based permissions     Assign permissions to user groups, not just individuals. Groups sync from identity provider via SCIM. E.g. “All Partners” group gets Editor on Legal space automatically.                                                           v1.1
+  Time-limited access         External guest access can be set to expire automatically at a specified date/time. Access revoked without manual action. Expiry logged in audit trail.                                                                              Core
+  Legal hold                  Lock a document against deletion, archival, or export restriction. Preserves all versions, comments, and audit logs for litigation or regulatory hold. Requires Admin to set and unset.                                             Enterprise
+  Domain-restricted sharing   Org-wide policy restricting external shares to approved email domains only. E.g. only users with @hartwell.com addresses can be invited. Prevents accidental oversharing.                                                           Enterprise
+  Watermarking                PDF exports and public-link views can include a dynamic watermark showing the viewer’s name, email, and access date. Deters unauthorised distribution of sensitive documents.                                                       Enterprise
+  Data residency              Choose which region (EU, US, AU) stores document data. Required for GDPR compliance, Australian Privacy Act, and certain financial regulations. Chronicle Cloud offers regional deployments. Self-hosting solves this by default.   Enterprise
+  --------------------------- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------
+
+8.5 The Client Portal Use Case
+
+Chronicle’s external sharing model enables a high-value use case that no current tool handles well: the client portal. A law firm, consultancy, or financial adviser can use Chronicle as a live collaboration layer with their clients, without exposing their internal deliberation.
+
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| What the law firm sees                                                                                                                                                | What the client sees                                                                                                                                                                                               |
+|                                                                                                                                                                       |                                                                                                                                                                                                                    |
+| Full document with all internal annotations visible. Internal threads marked clearly. External threads visible. Complete version history. Full approval chain status. | The document body. Only the external threads they are party to. A clean sign-off interface to approve or request changes. No internal annotations. No internal version history. No internal discussion whatsoever. |
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+This replaces the current workflow of: email PDF to client → client marks up Word doc → email back → manually reconcile changes → email again. Chronicle collapses that loop into a single shared view, while keeping firm deliberation entirely private.
+
+9. Build Roadmap
+
+v1.0 — Foundation (Months 1–4)
+
+-   WYSIWYG editor with all core block types
+
+-   Git backend (branch, commit, merge — invisible to user)
+
+-   Inline and split diff views
+
+-   Block-anchored discussion threads with resolve outcomes
+
+-   Decision log auto-generation
+
+-   Approval chains with hard merge gate
+
+-   Spaces and hierarchical document tree
+
+-   Full-text search
+
+-   Self-host via Docker Compose
+
+-   Confluence space import
+
+-   oEmbed and iframe embed support
+
+-   REST API v1
+
+-   Export to PDF, Markdown, DOCX
+
+v1.1 — Growth (Months 5–8)
+
+-   SSO / SAML / OIDC
+
+-   SCIM provisioning
+
+-   Blame view
+
+-   Document templates library
+
+-   Backlinks
+
+-   Slack and Microsoft Teams notifications
+
+-   Delegation in approval chains
+
+-   Reminder and escalation workflows
+
+-   Helm chart for Kubernetes deployment
+
+-   Chronicle Cloud (managed hosting) launch
+
+v2.0 — Enterprise (Months 9–14)
+
+-   AI drafting assistant (tracked-change suggestions)
+
+-   DocuSign / HelloSign integration
+
+-   Advanced audit log and compliance reporting
+
+-   Data residency controls
+
+-   Whiteboards
+
+-   Jira and Linear deep integration
+
+-   Plugin / extension marketplace (early)
+
+-   Mobile apps (iOS and Android)
+
+10. One-Page Pitch
+
+Chronicle
+
+Where documents are decided, not just edited.
+
+  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Confluence has 40,000 customers and $4B+ revenue. It is not loved — it is tolerated. Nobody has replaced it because nothing good enough has been free. Chronicle changes that.
+  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
++---------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------+
+| The problem                                                                                                                                 | The solution                                                                                                                                                      | The moat                                                                                                                             |
+|                                                                                                                                             |                                                                                                                                                                   |                                                                                                                                      |
+| Every organisation makes decisions in documents. Those decisions — and the reasoning behind them — vanish the moment a comment is resolved. | Chronicle keeps the deliberation permanent. Every thread, every vote, every resolved annotation is captured in an auto-generated Decision Log that lives forever. | Open source and self-hostable. No per-user pricing. An engineer can deploy it for their team tomorrow without a procurement process. |
++---------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------+
+
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| What makes it different                                                                                                                                                                                                                                                                                                 | Who it is for                                                                                                                                                                                                                                                                             |
+|                                                                                                                                                                                                                                                                                                                         |                                                                                                                                                                                                                                                                                           |
+| 1. Decision Log — auto-generated, permanent, searchable record of every deliberation and outcome. 2. Approval hard gates — documents cannot be marked final until required approvers sign off and all threads are resolved. 3. Branch-based editing — multiple competing proposals on the same document, no page locks. | Primary: Engineering and technical teams replacing Confluence. Secondary: Law firms, engineering consultancies, financial services — anywhere document governance is a compliance requirement. Beachhead: 50-person engineering org that is about to get its Confluence Data Center bill. |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+chronicle.dev
+
+Open source · Self-hostable · No per-user pricing
