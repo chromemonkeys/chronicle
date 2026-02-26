@@ -39,8 +39,16 @@ export function SignInPage() {
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="Your name"
+          aria-invalid={Boolean(errorMessage)}
+          aria-describedby={errorMessage ? "sign-in-error" : undefined}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void onSignIn();
+            }
+          }}
         />
-        {errorMessage ? <p className="muted">{errorMessage}</p> : null}
+        {errorMessage ? <p id="sign-in-error" className="muted">{errorMessage}</p> : null}
         <div className="button-row">
           <Button onClick={onSignIn} disabled={isSubmitting || isAuthLoading}>
             {isSubmitting ? "Signing in..." : "Sign in"}

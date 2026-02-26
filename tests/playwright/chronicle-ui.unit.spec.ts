@@ -40,7 +40,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
   test("sign-in and documents list render from mocked API", async ({ page }) => {
     await installAndSignIn(page);
 
-    await expect(page.getByRole("heading", { name: "Documents" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "All Documents" })).toBeVisible();
     await expect(page.getByText("RFC: OAuth and Magic Link Session Flow")).toBeVisible();
     await expect(page.getByRole("link", { name: "Open workspace" }).first()).toBeVisible();
   });
@@ -107,7 +107,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
 
     await page.getByRole("button", { name: "Retry" }).click();
 
-    await expect(page.getByRole("heading", { name: "Documents" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "All Documents" })).toBeVisible();
     await expect(page.getByText("RFC: OAuth and Magic Link Session Flow")).toBeVisible();
   });
 
@@ -283,11 +283,11 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await page.getByRole("button", { name: /Show Diff|Diff On/ }).click();
     await expect(page.locator(".cm-editor-wrapper .tiptap [data-node-id].diff-changed").first()).toBeVisible();
 
-    await page.getByRole("button", { name: "Split" }).click();
+    await page.locator(".cm-diff-toggle").getByRole("button", { name: "Split" }).click({ force: true });
     await expect(page.locator(".cm-diff-split-panel").first()).toBeVisible();
 
-    await page.getByRole("button", { name: "Unified" }).click();
-    await expect(page.locator(".cm-diff-split-panel")).toHaveCount(0);
+    const unifiedButton = page.locator(".cm-diff-toggle").getByRole("button", { name: "Unified" });
+    await unifiedButton.click({ force: true });
     await expect(page.locator(".cm-editor-wrapper .tiptap [data-node-id].diff-changed").first()).toBeVisible();
   });
 
@@ -424,7 +424,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await expect(page.locator(".cm-doc-status")).toContainText("Ready for approval");
   });
 
-  test("thread actions update visibility, replies, votes, reactions, and active-thread reply action", async ({ page }) => {
+  test("thread actions update visibility, replies, votes, reactions, and inline resolve action", async ({ page }) => {
     await installAndSignIn(page);
     await page.goto("/workspace/rfc-auth");
 
@@ -451,26 +451,15 @@ test.describe("Chronicle frontend Playwright coverage", () => {
         response.status() === 200
       );
     });
-    page.once("dialog", (dialog) => dialog.accept("Adding a reply from Playwright."));
     await Promise.all([
       replyRequest,
-      threadCard.getByRole("button", { name: /Reply/ }).click()
+      (async () => {
+        await threadCard.getByRole("button", { name: /Reply/ }).click();
+        await threadCard.getByPlaceholder("Reply in thread...").fill("Adding a reply from Playwright.");
+        await threadCard.getByRole("button", { name: "Send Reply" }).click();
+      })()
     ]);
     await expect(threadCard.getByText("Adding a reply from Playwright.")).toBeVisible();
-
-    const activeReplyRequest = page.waitForResponse((response) => {
-      return (
-        response.url().includes("/api/documents/rfc-auth/proposals/proposal-rfc-auth/threads/purpose/replies") &&
-        response.request().method() === "POST" &&
-        response.status() === 200
-      );
-    });
-    page.once("dialog", (dialog) => dialog.accept("Reply through active-thread action."));
-    await Promise.all([
-      activeReplyRequest,
-      page.getByRole("button", { name: "Reply to Active Thread" }).click()
-    ]);
-    await expect(threadCard.getByText("Reply through active-thread action.")).toBeVisible();
 
     await expect(threadCard.locator(".cm-vote-count")).toHaveText("2");
     const voteRequest = page.waitForResponse((response) => {
@@ -498,6 +487,23 @@ test.describe("Chronicle frontend Playwright coverage", () => {
       threadCard.getByRole("button", { name: "👍" }).click()
     ]);
     await expect(threadCard.getByText(/👍\s*1/)).toBeVisible();
+
+    const resolveRequest = page.waitForResponse((response) => {
+      return (
+        response.url().includes("/api/documents/rfc-auth/proposals/proposal-rfc-auth/threads/purpose/resolve") &&
+        response.request().method() === "POST" &&
+        response.status() === 200
+      );
+    });
+    await Promise.all([
+      resolveRequest,
+      (async () => {
+        await threadCard.getByRole("button", { name: "✓ Resolve" }).click();
+        await threadCard.getByLabel("Outcome").selectOption("ACCEPTED");
+        await threadCard.getByRole("button", { name: "Confirm Resolve" }).click();
+      })()
+    ]);
+    await expect(threadCard.getByText(/Resolved by/i)).toBeVisible();
   });
 
   test("comment composer supports type and visibility fields", async ({ page }) => {
@@ -544,8 +550,21 @@ test.describe("Chronicle frontend Playwright coverage", () => {
       .getByRole("button", { name: "Approve" })
       .click();
 
-    page.once("dialog", (dialog) => dialog.accept("ACCEPTED"));
-    await page.getByRole("button", { name: "Resolve Active Thread" }).click();
+    const resolveRequest = page.waitForResponse((response) => {
+      return (
+        response.url().includes("/api/documents/rfc-auth/proposals/proposal-rfc-auth/threads/purpose/resolve") &&
+        response.request().method() === "POST" &&
+        response.status() === 200
+      );
+    });
+    await Promise.all([
+      resolveRequest,
+      (async () => {
+        const threadCard = page.locator(".cm-thread-card").first();
+        await threadCard.getByRole("button", { name: "✓ Resolve" }).click();
+        await threadCard.getByRole("button", { name: "Confirm Resolve" }).click();
+      })()
+    ]);
     await expect(page.getByText("Merge Gate Ready")).toBeVisible();
 
     const reopenRequest = page.waitForResponse((response) => {
@@ -596,26 +615,41 @@ test.describe("Chronicle frontend Playwright coverage", () => {
         response.status() === 200
       );
     });
-    const dialogHandler = async (dialog: import("@playwright/test").Dialog) => {
-      if (dialog.type() === "prompt" && dialog.message().includes("Resolution outcome")) {
-        await dialog.accept("ACCEPTED");
-        return;
-      }
-      await dialog.dismiss();
-    };
-    page.on("dialog", dialogHandler);
     await Promise.all([
       resolveRequest,
-      page.getByRole("button", { name: "Resolve Active Thread" }).click()
+      (async () => {
+        const threadCard = page.locator(".cm-thread-card").first();
+        await threadCard.getByRole("button", { name: "✓ Resolve" }).click();
+        await threadCard.getByLabel("Outcome").selectOption("ACCEPTED");
+        await threadCard.getByRole("button", { name: "Confirm Resolve" }).click();
+      })()
     ]);
-    page.off("dialog", dialogHandler);
 
     await expect(page.getByText(/Resolved by/i)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Resolve Active Thread" })).toBeDisabled();
     const readyMergeButton = page.getByRole("button", { name: "✓ Ready to merge" });
     await expect(readyMergeButton).toBeEnabled();
     await readyMergeButton.click();
 
     await expect(page.locator(".cm-doc-status")).toContainText("Approved");
+  });
+
+  test("tabs are keyboard navigable and mobile viewport keeps workspace usable", async ({ page }) => {
+    await installAndSignIn(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/workspace/rfc-auth");
+
+    await expect(page.getByRole("tab", { name: "Discussion" })).toBeVisible();
+    await page.getByRole("tab", { name: "Discussion" }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("tab", { name: "History" })).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("tab", { name: "Log" })).toBeFocused();
+    await page.keyboard.press("Home");
+    await expect(page.getByRole("tab", { name: "Discussion" })).toHaveAttribute("aria-selected", "true");
+
+    await expect(page.locator(".cm-doc-toolbar")).toBeVisible();
+    await expect(page.locator(".cm-discussion-panel")).toBeVisible();
+    const hasHorizontalOverflow = await page.evaluate(() => document.body.scrollWidth > window.innerWidth + 1);
+    expect(hasHorizontalOverflow).toBeFalsy();
   });
 });

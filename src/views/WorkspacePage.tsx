@@ -1093,16 +1093,20 @@ export function WorkspacePage() {
   return (
     <div className={`cm-app ${diffVisible ? "" : "cm-diff-off"}`.trim()}>
       <div className="cm-topnav">
-        <div className="cm-topnav-logo" onClick={() => navigate("/documents")} style={{ cursor: "pointer" }}>
+        <button className="cm-topnav-logo" type="button" onClick={() => navigate("/documents")}>
           Chronicle<span>.</span>
-        </div>
+        </button>
         <div className="cm-topnav-divider" />
         <div className="cm-breadcrumb">
-          <span className="cm-breadcrumb-link" onClick={() => navigate("/documents")}>{workspace?.workspaceName ?? "Chronicle"}</span>
+          <button className="cm-breadcrumb-link" type="button" onClick={() => navigate("/documents")}>
+            {workspace?.workspaceName ?? "Chronicle"}
+          </button>
           <span className="cm-breadcrumb-sep">/</span>
           {workspace?.space ? (
             <>
-              <span className="cm-breadcrumb-link" onClick={() => navigate(`/spaces/${workspace.space!.id}`)}>{workspace.space.name}</span>
+              <button className="cm-breadcrumb-link" type="button" onClick={() => navigate(`/spaces/${workspace.space!.id}`)}>
+                {workspace.space.name}
+              </button>
               <span className="cm-breadcrumb-sep">/</span>
             </>
           ) : null}
@@ -1359,7 +1363,14 @@ export function WorkspacePage() {
         </main>
 
         <aside className="cm-discussion-panel">
-          <Tabs tabs={discussionTabsWithCount} active={activeTab} onTabChange={setActiveTab} />
+          <Tabs
+            tabs={discussionTabsWithCount}
+            active={activeTab}
+            onTabChange={setActiveTab}
+            className="cm-panel-tabs-rail"
+            orientation="vertical"
+          />
+          <div className="cm-panel-main">
           {actionError ? (
             <div className="cm-inline-action-error" role="alert">
               <span>{actionError}</span>
@@ -1736,6 +1747,7 @@ export function WorkspacePage() {
               )}
             </div>
           )}
+          </div>
         </aside>
       </div>
 

@@ -35,6 +35,7 @@ export function ThreadComposer({ anchorLabel, anchorNodeId, onSubmit, className 
         className="cm-compose-input"
         rows={2}
         placeholder="Add a comment… click a paragraph to anchor it"
+        aria-label="Comment text"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
