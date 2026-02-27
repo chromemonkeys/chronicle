@@ -788,6 +788,7 @@ export function WorkspacePage() {
     try {
       const updated = await approveProposalRole(workspace.document.id, workspace.document.proposalId, role);
       applyWorkspacePayload(updated);
+      setActionError(null);
     } catch (error) {
       if (isApiError(error) && error.code === "APPROVAL_ORDER_BLOCKED") {
         const blockers = Array.isArray((error.details as { blockers?: unknown[] } | null)?.blockers)
@@ -992,6 +993,7 @@ export function WorkspacePage() {
     try {
       const updated = await mergeProposal(workspace.document.id, workspace.document.proposalId);
       applyWorkspacePayload(updated);
+      setActionError(null);
       setDocumentIndex((current) =>
         current.map((doc) =>
           doc.id === updated.document.id
@@ -1034,6 +1036,7 @@ export function WorkspacePage() {
     try {
       const refreshed = await fetchWorkspace(workspace.document.id);
       applyWorkspacePayload(refreshed);
+      setActionError(null);
     } catch (error) {
       const message = isApiError(error) ? error.message : "Approval service request failed.";
       setApprovalError(message);
