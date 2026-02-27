@@ -35,6 +35,7 @@ import type {
 } from "../api/types";
 import { ApprovalChain } from "../ui/ApprovalChain";
 import { DecisionLogTable } from "../ui/DecisionLogTable";
+import { EmptyStateError, EmptyState } from "../ui/EmptyState";
 import { Tabs } from "../ui/Tabs";
 import { ThreadComposer } from "../ui/ThreadComposer";
 import { ThreadList } from "../ui/ThreadList";
@@ -1034,19 +1035,7 @@ export function WorkspacePage() {
   if (viewState === "loading") {
     return (
       <div className="cm-workspace-fallback">
-        <div className="cm-fallback-grid">
-          <div className="cm-fallback-card">
-            <div className="skeleton skeleton-title" />
-            <div className="skeleton skeleton-line" />
-            <div className="skeleton skeleton-line" />
-            <div className="skeleton skeleton-line short" />
-          </div>
-          <div className="cm-fallback-card">
-            <div className="skeleton skeleton-title" />
-            <div className="skeleton skeleton-line" />
-            <div className="skeleton skeleton-line short" />
-          </div>
-        </div>
+        <EmptyState variant="loading" title="Loading workspace..." />
       </div>
     );
   }
@@ -1054,10 +1043,31 @@ export function WorkspacePage() {
   if (viewState === "error" || !workspace) {
     return (
       <div className="cm-workspace-fallback">
-        <div className="cm-fallback-card">
-          <h2>Workspace failed to load</h2>
-          <p>Could not load workspace API data for this document.</p>
-        </div>
+        <EmptyStateError
+          title="Workspace failed to load"
+          description="Could not load workspace data for this document. You can try again or return to your documents."
+          onRetry={() => {
+            setViewState("loading");
+            fetchWorkspace(docId)
+              .then((response) => {
+                setWorkspace(response);
+                setContentDraft(response.content);
+                const initialDoc = response.doc ?? legacyContentToDoc(response.content, response.nodeIds);
+                setDocDraft(initialDoc);
+                baseDocRef.current = initialDoc;
+                if (response.threads.length > 0) {
+                  setActiveThread(response.threads[0].id);
+                  setComposerAnchorNodeId(response.threads[0].anchorNodeId ?? null);
+                }
+                setViewState("success");
+              })
+              .catch(() => {
+                setContentDraft(null);
+                setViewState("error");
+              });
+          }}
+          showHomeFallback={true}
+        />
       </div>
     );
   }
@@ -1065,10 +1075,33 @@ export function WorkspacePage() {
   if (viewState === "empty") {
     return (
       <div className="cm-workspace-fallback">
-        <div className="cm-fallback-card">
-          <h2>No workspace data</h2>
-          <p>No active proposal threads were returned for this document.</p>
-        </div>
+        <EmptyState
+          variant="empty"
+          title="No workspace data"
+          description="This document exists but has no active content. Start a proposal to begin collaborating."
+          primaryAction={{
+            label: "Start Proposal",
+            onClick: () => {
+              setViewState("loading");
+              fetchWorkspace(docId)
+                .then((response) => {
+                  setWorkspace(response);
+                  setContentDraft(response.content);
+                  const initialDoc = response.doc ?? legacyContentToDoc(response.content, response.nodeIds);
+                  setDocDraft(initialDoc);
+                  baseDocRef.current = initialDoc;
+                  setViewState("success");
+                })
+                .catch(() => {
+                  setViewState("error");
+                });
+            }
+          }}
+          secondaryAction={{
+            label: "← Back to Documents",
+            to: "/documents"
+          }}
+        />
       </div>
     );
   }
@@ -1113,65 +1146,86 @@ export function WorkspacePage() {
           <span className="cm-breadcrumb-current">{content.title}</span>
         </div>
         <div className="cm-topnav-spacer" />
-        <div className="cm-mode-toggle" aria-label="Workspace mode">
+        <div className="cm-topnav-context">
+          <div className="cm-mode-toggle" aria-label="Workspace mode">
+            <button
+              className={workspaceMode === "proposal" ? "active" : ""}
+              onClick={() => setWorkspaceMode("proposal")}
+              type="button"
+            >
+              Proposal
+            </button>
+            <button
+              className={workspaceMode === "review" ? "active" : ""}
+              onClick={() => setWorkspaceMode("review")}
+              type="button"
+            >
+              Review
+            </button>
+          </div>
+          <div className="cm-branch-badge" aria-label="Current branch">
+            <div className="cm-branch-dot" />
+            {workspace.document.branch.split(" -> ")[0]}
+          </div>
+        </div>
+
+        <div className="cm-topnav-actions">
+          <div className="cm-action-group cm-action-group--secondary">
+            <button 
+              className="cm-action-btn" 
+              type="button" 
+              onClick={() => void compareLatestCommits()}
+              title={compareActive ? "Close comparison" : "Compare versions"}
+            >
+              {compareActive ? "⨯" : "⎇"}
+              <span>Compare</span>
+            </button>
+            <button 
+              className="cm-action-btn" 
+              type="button" 
+              onClick={() => setActiveTab("history")}
+              title="View history"
+            >
+              ↗<span>History</span>
+            </button>
+          </div>
+
+          <div className="cm-action-group cm-action-group--document">
+            <button
+              className="cm-action-btn"
+              type="button"
+              disabled={!workspace.document.proposalId}
+              onClick={() => void createNamedVersion()}
+              title="Save named version"
+            >
+              ⌁<span>Version</span>
+            </button>
+            <button
+              className="cm-action-btn"
+              type="button"
+              disabled={!proposalMode || !hasUnsavedChanges || saveState === "saving"}
+              onClick={() => void saveDraft()}
+              title="Save draft"
+            >
+              {saveState === "saving" ? "⋯" : "💾"}
+              <span>{saveState === "saving" ? "Saving" : "Save"}</span>
+            </button>
+          </div>
+
           <button
-            className={workspaceMode === "proposal" ? "active" : ""}
-            onClick={() => setWorkspaceMode("proposal")}
+            className="cm-nav-btn cm-primary cm-primary--cta"
             type="button"
+            onClick={() => {
+              if (workspace.document.proposalId) {
+                void requestReview();
+                return;
+              }
+              void startProposal();
+            }}
           >
-            Proposal
-          </button>
-          <button
-            className={workspaceMode === "review" ? "active" : ""}
-            onClick={() => setWorkspaceMode("review")}
-            type="button"
-          >
-            Review
+            {workspace.document.proposalId ? "⟳ Request Review" : "+ Start Proposal"}
           </button>
         </div>
-        <div className="cm-branch-badge" aria-label="Current branch">
-          <div className="cm-branch-dot" />
-          {workspace.document.branch.split(" -> ")[0]}
-        </div>
-        <button className="cm-nav-btn" type="button" onClick={() => void compareLatestCommits()}>
-          {compareActive ? "⨯ Close Compare" : "⎇ Compare"}
-        </button>
-        <button className="cm-nav-btn" type="button" onClick={() => setActiveTab("history")}>
-          ↗ History
-        </button>
-        <button
-          className="cm-nav-btn"
-          type="button"
-          disabled={!workspace.document.proposalId}
-          onClick={() => {
-            void createNamedVersion();
-          }}
-        >
-          ⌁ Save Version
-        </button>
-        <button
-          className="cm-nav-btn"
-          type="button"
-          disabled={!proposalMode || !hasUnsavedChanges || saveState === "saving"}
-          onClick={() => {
-            void saveDraft();
-          }}
-        >
-          {saveState === "saving" ? "Saving..." : "Save Draft"}
-        </button>
-        <button
-          className="cm-nav-btn cm-primary"
-          type="button"
-          onClick={() => {
-            if (workspace.document.proposalId) {
-              void requestReview();
-              return;
-            }
-            void startProposal();
-          }}
-        >
-          {workspace.document.proposalId ? "⟳ Request Review" : "+ Start Proposal"}
-        </button>
       </div>
 
       <div className="cm-app-body">
@@ -1264,9 +1318,6 @@ export function WorkspacePage() {
             editor={editorInstance}
             diffVisible={diffVisible}
             onToggleDiff={() => setDiffVisible((value) => !value)}
-            proposalMode={proposalMode}
-            onSetMode={setWorkspaceMode}
-            onToggleMode={() => setWorkspaceMode((mode) => (mode === "proposal" ? "review" : "proposal"))}
             diffMode={diffMode}
             onSetDiffMode={setDiffMode}
           />
