@@ -11,11 +11,17 @@ RUN cd api && go mod tidy && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /
 # Create the repos directory with correct ownership for nonroot (uid 65532)
 RUN mkdir -p /out/repos && chown 65532:65532 /out/repos
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM alpine:3.20
 WORKDIR /app
 COPY --from=builder /out/chronicle-api /app/chronicle-api
-COPY --from=builder --chown=nonroot:nonroot /out/repos /data/repos
+COPY --from=builder /out/repos /data/repos
 COPY db /app/db
+
+RUN addgroup -S app && adduser -S -G app -u 65532 app \
+    && apk add --no-cache ca-certificates wget \
+    && chown -R app:app /app /data
+
+USER app
 
 ENV API_ADDR=:8787
 ENV CHRONICLE_MIGRATIONS_DIR=/app/db/migrations

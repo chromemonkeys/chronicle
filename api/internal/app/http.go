@@ -37,12 +37,12 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.Method == http.MethodGet && r.URL.Path == "/api/health" {
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.URL.Path == "/api/health" {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
 
-	if r.Method == http.MethodGet && r.URL.Path == "/api/ready" {
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.URL.Path == "/api/ready" {
 		// Check database connectivity
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
