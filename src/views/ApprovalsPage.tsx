@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { fetchApprovals } from "../api/client";
 import type { ApprovalsResponse } from "../api/types";
-import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
+import { EmptyStateError, EmptyStateEmpty } from "../ui/EmptyState";
 import { MergeGateBadge } from "../ui/MergeGateBadge";
 import { StatusPill } from "../ui/StatusPill";
 
@@ -65,20 +65,21 @@ export function ApprovalsPage() {
       )}
 
       {viewState === "empty" && (
-        <Card>
-          <h2>No pending approvals</h2>
-          <p className="muted">You have no documents waiting for sign-off right now.</p>
-        </Card>
+        <EmptyStateEmpty
+          title="No pending approvals"
+          description="You have no documents waiting for sign-off right now. Documents will appear here when you're added as an approver."
+          actionLabel="Browse documents"
+          onAction={() => window.location.href = "/documents"}
+        />
       )}
 
       {viewState === "error" && (
-        <Card>
-          <h2>Approval queue unavailable</h2>
-          <p className="muted">Service timeout while loading approval chains.</p>
-          <div>
-            <Button onClick={retry}>Retry</Button>
-          </div>
-        </Card>
+        <EmptyStateError
+          title="Approval queue unavailable"
+          description="Service timeout while loading approval chains. You can retry or check your documents."
+          onRetry={retry}
+          showHomeFallback={true}
+        />
       )}
 
       {viewState === "success" && approvals && (

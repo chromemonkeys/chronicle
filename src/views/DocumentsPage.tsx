@@ -11,6 +11,7 @@ import {
 import type { DocumentSummary, Space, WorkspacesResponse } from "../api/types";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
+import { EmptyStateError, EmptyStateEmpty } from "../ui/EmptyState";
 
 type ViewState = "success" | "loading" | "empty" | "error";
 
@@ -152,28 +153,24 @@ export function DocumentsPage() {
           </div>
         )}
         {viewState === "empty" && (
-          <Card>
-            <h2>No documents yet</h2>
-            <p className="muted">
-              {activeSpace
+          <EmptyStateEmpty
+            title="No documents yet"
+            description={
+              activeSpace
                 ? `No documents in ${activeSpace.name}. Create one to get started.`
-                : "Create your first RFC, ADR, or policy draft to begin collaboration."}
-            </p>
-            <div>
-              <Button onClick={() => void createNewDocument()} disabled={isCreating}>
-                {isCreating ? "Creating..." : "Create document"}
-              </Button>
-            </div>
-          </Card>
+                : "Create your first RFC, ADR, or policy draft to begin collaboration."
+            }
+            actionLabel={isCreating ? "Creating..." : "Create document"}
+            onAction={createNewDocument}
+          />
         )}
         {viewState === "error" && (
-          <Card>
-            <h2>Could not load documents</h2>
-            <p className="muted">API request failed. Retry keeps user in-flow without losing navigation context.</p>
-            <div>
-              <Button onClick={retry}>Retry</Button>
-            </div>
-          </Card>
+          <EmptyStateError
+            title="Could not load documents"
+            description="We couldn't retrieve your documents. This might be a temporary connection issue."
+            onRetry={retry}
+            showHomeFallback={false}
+          />
         )}
         {viewState === "success" && (
           <div className="grid">
