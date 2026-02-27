@@ -129,6 +129,29 @@ test("proposal merge journey enforces gate ordering and thread resolution", asyn
   assert.ok(historyPayload.commits.length >= 2, "expected main branch to contain merge commit");
   assert.match(historyPayload.commits[0].message, /Merge proposal/);
 
+  const decisionLogResponse = await apiRequest(
+    token,
+    `/api/documents/rfc-auth/decision-log?proposalId=${encodeURIComponent(proposalId)}&limit=20`
+  );
+  await ensureStatus(decisionLogResponse, 200, "decision log failed");
+  const decisionLogPayload = await decisionLogResponse.json();
+  assert.ok(Array.isArray(decisionLogPayload.items), "decision log items should be an array");
+  assert.ok(decisionLogPayload.items.length >= 1, "expected at least one decision log entry");
+  const latestDecision = decisionLogPayload.items[0];
+  assert.ok(
+    ["ACCEPTED", "REJECTED", "DEFERRED"].includes(latestDecision.outcome),
+    `unexpected decision outcome: ${latestDecision.outcome}`
+  );
+  assert.ok(typeof latestDecision.decidedBy === "string" && latestDecision.decidedBy.length > 0, "decidedBy is required");
+  assert.ok(typeof latestDecision.decidedAt === "string" && latestDecision.decidedAt.length > 0, "decidedAt is required");
+  assert.ok(
+    !Number.isNaN(Date.parse(latestDecision.decidedAt)),
+    `decidedAt must be parseable datetime, got ${latestDecision.decidedAt}`
+  );
+  assert.ok(typeof latestDecision.commitHash === "string" && latestDecision.commitHash.length > 0, "commitHash is required");
+  // commitHash is the version-at-decision link required by the architecture contract.
+  assert.ok(/^[a-zA-Z0-9._-]+$/.test(latestDecision.commitHash), "commitHash should be identifier-safe");
+
   if (server.exitCode !== null && server.exitCode !== 0) {
     throw new Error(`server exited unexpectedly: ${serverLogs.join("")}`);
   }
