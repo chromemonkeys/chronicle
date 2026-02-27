@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -729,7 +730,7 @@ func (s *Service) ReplyThread(ctx context.Context, documentID, proposalID, threa
 		return nil, err
 	}
 	if viewerIsExternal && thread.Visibility != "EXTERNAL" {
-		return nil, domainError(http.StatusForbidden, "FORBIDDEN", "external users cannot reply to internal threads", nil)
+		return nil, sql.ErrNoRows
 	}
 	body := strings.TrimSpace(input.Body)
 	if body == "" {
@@ -760,6 +761,13 @@ func (s *Service) ResolveThread(ctx context.Context, documentID, proposalID, thr
 	if proposal.DocumentID != documentID {
 		return nil, sql.ErrNoRows
 	}
+	thread, err := s.store.GetThread(ctx, proposalID, threadID)
+	if err != nil {
+		return nil, err
+	}
+	if viewerIsExternal && thread.Visibility != "EXTERNAL" {
+		return nil, sql.ErrNoRows
+	}
 
 	outcome := normalizeThreadOutcome(input.Outcome)
 	if _, ok := allowedThreadOutcomes[outcome]; !ok {
@@ -781,7 +789,8 @@ func (s *Service) ResolveThread(ctx context.Context, documentID, proposalID, thr
 	if !changed {
 		return nil, sql.ErrNoRows
 	}
-	thread, err := s.store.GetThread(ctx, proposalID, threadID)
+	// Re-fetch thread to get updated state
+	thread, err = s.store.GetThread(ctx, proposalID, threadID)
 	if err != nil {
 		return nil, err
 	}
@@ -832,6 +841,13 @@ func (s *Service) ReopenThread(ctx context.Context, documentID, proposalID, thre
 	if proposal.DocumentID != documentID {
 		return nil, sql.ErrNoRows
 	}
+	thread, err := s.store.GetThread(ctx, proposalID, threadID)
+	if err != nil {
+		return nil, err
+	}
+	if viewerIsExternal && thread.Visibility != "EXTERNAL" {
+		return nil, sql.ErrNoRows
+	}
 	changed, err := s.store.ReopenThread(ctx, proposalID, threadID)
 	if err != nil {
 		return nil, err
@@ -877,7 +893,7 @@ func (s *Service) VoteThread(ctx context.Context, documentID, proposalID, thread
 		return nil, err
 	}
 	if viewerIsExternal && thread.Visibility != "EXTERNAL" {
-		return nil, domainError(http.StatusForbidden, "FORBIDDEN", "external users cannot vote on internal threads", nil)
+		return nil, sql.ErrNoRows
 	}
 	direction := strings.ToLower(strings.TrimSpace(input.Direction))
 	vote := 0
@@ -909,7 +925,7 @@ func (s *Service) ReactThread(ctx context.Context, documentID, proposalID, threa
 		return nil, err
 	}
 	if viewerIsExternal && thread.Visibility != "EXTERNAL" {
-		return nil, domainError(http.StatusForbidden, "FORBIDDEN", "external users cannot react to internal threads", nil)
+		return nil, sql.ErrNoRows
 	}
 	emoji := strings.TrimSpace(input.Emoji)
 	if emoji == "" {

@@ -258,6 +258,22 @@ func (f *fakeStore) ListDocumentsBySpace(context.Context, string) ([]store.Docum
 func (f *fakeStore) MoveDocument(context.Context, string, string) error      { return nil }
 func (f *fakeStore) SpaceDocumentCount(context.Context, string) (int, error) { return 0, nil }
 func (f *fakeStore) Ping(context.Context) error                              { return nil }
+func (f *fakeStore) UpsertChangeReviewState(context.Context, store.ChangeReviewState) error {
+	return nil
+}
+func (f *fakeStore) ListChangeReviewStates(context.Context, string, string, string) ([]store.ChangeReviewState, error) {
+	return nil, nil
+}
+func (f *fakeStore) GetChangeReviewState(context.Context, string, string, string, string) (store.ChangeReviewState, error) {
+	return store.ChangeReviewState{}, sql.ErrNoRows
+}
+func (f *fakeStore) InsertAuditEvent(context.Context, store.AuditEvent) error { return nil }
+func (f *fakeStore) ListAuditEvents(context.Context, string, string, int) ([]store.AuditEvent, error) {
+	return nil, nil
+}
+func (f *fakeStore) ListAuditEventsForChange(context.Context, string, int) ([]store.AuditEvent, error) {
+	return nil, nil
+}
 
 type fakeGit struct {
 	historyFn            func(string, string, int) ([]store.CommitInfo, error)
@@ -925,6 +941,9 @@ func TestResolveThreadRejectsInvalidOutcome(t *testing.T) {
 		getProposalFn: func(_ context.Context, _ string) (store.Proposal, error) {
 			return store.Proposal{ID: "prop-1", DocumentID: "doc-1", BranchName: "proposal-doc-1"}, nil
 		},
+		getThreadFn: func(_ context.Context, _, _ string) (store.Thread, error) {
+			return store.Thread{ID: "thr-1", ProposalID: "prop-1", Visibility: "EXTERNAL"}, nil
+		},
 	}
 	svc := newTestService(fs, &fakeGit{})
 
@@ -944,6 +963,9 @@ func TestResolveThreadRequiresRationaleForRejected(t *testing.T) {
 	fs := &fakeStore{
 		getProposalFn: func(_ context.Context, _ string) (store.Proposal, error) {
 			return store.Proposal{ID: "prop-1", DocumentID: "doc-1", BranchName: "proposal-doc-1"}, nil
+		},
+		getThreadFn: func(_ context.Context, _, _ string) (store.Thread, error) {
+			return store.Thread{ID: "thr-1", ProposalID: "prop-1", Visibility: "EXTERNAL"}, nil
 		},
 	}
 	svc := newTestService(fs, &fakeGit{})
