@@ -18,6 +18,7 @@
     "test:e2e": "node --test tests/*.test.mjs",
     "test:ui": "playwright test",
     "test:ui:headed": "playwright test --project=chromium --headed",
+    "test:api:docker": "./scripts/go-test-docker.sh",
     "stack:up": "./scripts/dev-up.sh",
     "stack:reset": "./scripts/dev-reset.sh"
   },

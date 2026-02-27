@@ -28,6 +28,7 @@ type Props = {
   diffManifest?: DiffManifest | null;
   diffVisible?: boolean;
   diffMode?: "split" | "unified";
+  activeChangeNodeId?: string | null;
   threadAnchors?: ThreadAnchor[];
   className?: string;
 };
@@ -42,13 +43,14 @@ export function ChronicleEditor({
   diffManifest = null,
   diffVisible = false,
   diffMode = "unified",
+  activeChangeNodeId = null,
   threadAnchors = [],
   className = "",
 }: Props) {
   const serializedContent = JSON.stringify(content);
 
   // Mutable ref for diff state so the ProseMirror plugin always reads latest values
-  const diffStateRef = useRef<DiffState>({ manifest: diffManifest, visible: diffVisible, mode: diffMode });
+  const diffStateRef = useRef<DiffState>({ manifest: diffManifest, visible: diffVisible, mode: diffMode, activeChangeNodeId });
   const threadAnchorsRef = useRef<ThreadAnchor[]>(threadAnchors);
 
   const editor = useEditor({
@@ -97,11 +99,11 @@ export function ChronicleEditor({
 
   // Update diff state ref and force decoration recalculation
   useEffect(() => {
-    diffStateRef.current = { manifest: diffManifest, visible: diffVisible, mode: diffMode };
+    diffStateRef.current = { manifest: diffManifest, visible: diffVisible, mode: diffMode, activeChangeNodeId };
     if (editor) {
       editor.view.dispatch(editor.state.tr.setMeta("diffUpdate", true));
     }
-  }, [editor, diffManifest, diffVisible, diffMode]);
+  }, [editor, diffManifest, diffVisible, diffMode, activeChangeNodeId]);
 
   // Update thread anchors ref and force decoration recalculation
   useEffect(() => {

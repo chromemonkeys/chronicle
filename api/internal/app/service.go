@@ -1026,42 +1026,212 @@ func buildNamedVersionTagName(label, commitHash string) string {
 	return "nv-" + slugText + "-" + hashText
 }
 
-func (s *Service) MergeProposal(ctx context.Context, documentID, proposalID, userName string, viewerIsExternal bool) (map[string]any, int, int, error) {
+type MergeGatePolicy struct {
+	AllowMergeWithDeferredChanges bool `json:"allowMergeWithDeferredChanges"`
+	IgnoreFormatOnlyChangesForGate bool `json:"ignoreFormatOnlyChangesForGate"`
+}
+
+func defaultMergeGatePolicy() MergeGatePolicy {
+	return MergeGatePolicy{
+		AllowMergeWithDeferredChanges: false,
+		IgnoreFormatOnlyChangesForGate: false,
+	}
+}
+
+func mergeGateDetailsFromPolicy(policy MergeGatePolicy) map[string]any {
+	return map[string]any{
+		"allowMergeWithDeferredChanges": policy.AllowMergeWithDeferredChanges,
+		"ignoreFormatOnlyChangesForGate": policy.IgnoreFormatOnlyChangesForGate,
+	}
+}
+
+func buildChangeStateBlockers(changeStates []map[string]any, policy MergeGatePolicy) []map[string]any {
+	if len(changeStates) == 0 {
+		return nil
+	}
+	blockers := make([]map[string]any, 0)
+	for _, row := range changeStates {
+		changeID, _ := row["id"].(string)
+		if strings.TrimSpace(changeID) == "" {
+			continue
+		}
+		reviewState, _ := row["reviewState"].(string)
+		changeType, _ := row["type"].(string)
+		anchorNodeID := ""
+		if anchor, ok := row["anchor"].(map[string]any); ok {
+			anchorNodeID, _ = anchor["nodeId"].(string)
+		}
+		switch reviewState {
+		case "accepted":
+			continue
+		case "deferred":
+			if policy.AllowMergeWithDeferredChanges {
+				continue
+			}
+		}
+		if changeType == "format_only" && policy.IgnoreFormatOnlyChangesForGate {
+			continue
+		}
+		blockers = append(blockers, map[string]any{
+			"id":      "change:" + changeID,
+			"type":    "change",
+			"label":   "Change " + changeID + " is " + firstNonBlank(reviewState, "pending"),
+			"changeId": changeID,
+			"state":   firstNonBlank(reviewState, "pending"),
+			"link": map[string]any{
+				"tab":    "history",
+				"changeId": changeID,
+				"nodeId": anchorNodeID,
+			},
+		})
+	}
+	return blockers
+}
+
+func (s *Service) buildMergeGateDetails(ctx context.Context, proposalID string, policy MergeGatePolicy, changeStates []map[string]any) (map[string]any, error) {
+	approvals, err := s.store.ListApprovals(ctx, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	threads, err := s.store.ListThreads(ctx, proposalID, true)
+	if err != nil {
+		return nil, err
+	}
+	pendingApprovals := 0
+	openThreads := 0
+	blockers := make([]map[string]any, 0)
+	for _, approval := range approvals {
+		if strings.EqualFold(strings.TrimSpace(approval.Status), "Approved") {
+			continue
+		}
+		pendingApprovals++
+		roleKey := strings.TrimSpace(approval.Role)
+		blockers = append(blockers, map[string]any{
+			"id":      "approval:" + roleKey,
+			"type":    "approval",
+			"label":   roleLabel(roleKey) + " approval is pending",
+			"role":    roleKey,
+			"status":  approval.Status,
+			"link": map[string]any{
+				"tab":  "approvals",
+				"role": roleKey,
+			},
+		})
+	}
+	if pendingApprovals == 0 {
+		count, err := s.store.PendingApprovalCount(ctx, proposalID)
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			pendingApprovals = count
+			for i := 0; i < count; i++ {
+				blockers = append(blockers, map[string]any{
+					"id":    fmt.Sprintf("approval:pending:%d", i+1),
+					"type":  "approval",
+					"label": "Required approval is pending",
+					"link": map[string]any{
+						"tab": "approvals",
+					},
+				})
+			}
+		}
+	}
+	for _, thread := range threads {
+		if strings.EqualFold(strings.TrimSpace(thread.Status), "RESOLVED") {
+			continue
+		}
+		openThreads++
+		blockers = append(blockers, map[string]any{
+			"id":       "thread:" + thread.ID,
+			"type":     "thread",
+			"label":    "Thread " + thread.ID + " is still open",
+			"threadId": thread.ID,
+			"status":   thread.Status,
+			"link": map[string]any{
+				"tab":      "discussions",
+				"threadId": thread.ID,
+				"nodeId":   thread.AnchorNodeID,
+			},
+		})
+	}
+	if openThreads == 0 {
+		count, err := s.store.OpenThreadCount(ctx, proposalID)
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			openThreads = count
+			for i := 0; i < count; i++ {
+				blockers = append(blockers, map[string]any{
+					"id":    fmt.Sprintf("thread:open:%d", i+1),
+					"type":  "thread",
+					"label": "A required thread is still open",
+					"link": map[string]any{
+						"tab": "discussions",
+					},
+				})
+			}
+		}
+	}
+	blockers = append(blockers, buildChangeStateBlockers(changeStates, policy)...)
+	return map[string]any{
+		"pendingApprovals": pendingApprovals,
+		"openThreads":      openThreads,
+		"changeBlockers":   len(blockers) - pendingApprovals - openThreads,
+		"blockers":         blockers,
+		"policy":           mergeGateDetailsFromPolicy(policy),
+	}, nil
+}
+
+func roleLabel(role string) string {
+	switch strings.TrimSpace(role) {
+	case "architectureCommittee":
+		return "Architecture Committee"
+	case "security":
+		return "Security"
+	case "legal":
+		return "Legal"
+	default:
+		return strings.TrimSpace(role)
+	}
+}
+
+func (s *Service) MergeProposal(ctx context.Context, documentID, proposalID, userName string, viewerIsExternal bool, policy MergeGatePolicy, changeStates []map[string]any) (map[string]any, map[string]any, error) {
 	proposal, err := s.store.GetProposal(ctx, proposalID)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, nil, err
 	}
 	if proposal.DocumentID != documentID {
-		return nil, 0, 0, sql.ErrNoRows
+		return nil, nil, sql.ErrNoRows
 	}
 
-	pendingApprovals, err := s.store.PendingApprovalCount(ctx, proposalID)
+	details, err := s.buildMergeGateDetails(ctx, proposalID, policy, changeStates)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, nil, err
 	}
-	openThreads, err := s.store.OpenThreadCount(ctx, proposalID)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	if pendingApprovals > 0 || openThreads > 0 {
-		return nil, pendingApprovals, openThreads, nil
+	pendingApprovals, _ := details["pendingApprovals"].(int)
+	openThreads, _ := details["openThreads"].(int)
+	changeBlockers, _ := details["changeBlockers"].(int)
+	if pendingApprovals > 0 || openThreads > 0 || changeBlockers > 0 {
+		return nil, details, nil
 	}
 
 	mergeCommit, err := s.git.MergeIntoMain(documentID, proposal.BranchName, userName, "Merge proposal "+proposalID)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, nil, err
 	}
 
 	if err := s.store.MarkProposalMerged(ctx, proposalID); err != nil {
-		return nil, 0, 0, err
+		return nil, nil, err
 	}
 
 	mainContent, _, err := s.git.GetHeadContent(documentID, "main")
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, nil, err
 	}
 	if err := s.store.UpdateDocumentState(ctx, documentID, mainContent.Title, mainContent.Subtitle, "Approved", userName); err != nil {
-		return nil, 0, 0, err
+		return nil, nil, err
 	}
 
 	if err := s.store.InsertDecisionLog(ctx, store.DecisionLogEntry{
@@ -1073,14 +1243,14 @@ func (s *Service) MergeProposal(ctx context.Context, documentID, proposalID, use
 		DecidedBy:  userName,
 		CommitHash: mergeCommit.Hash,
 	}); err != nil {
-		return nil, 0, 0, err
+		return nil, nil, err
 	}
 
 	workspace, err := s.GetWorkspace(ctx, documentID, viewerIsExternal)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, nil, err
 	}
-	return workspace, 0, 0, nil
+	return workspace, details, nil
 }
 
 func (s *Service) History(ctx context.Context, documentID, proposalID string) (map[string]any, error) {
@@ -2208,12 +2378,14 @@ func nilIfEmpty(value string) any {
 	return value
 }
 
-func firstNonBlank(candidate, fallback string) string {
-	trimmed := strings.TrimSpace(candidate)
-	if trimmed == "" {
-		return fallback
+func firstNonBlank(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
 	}
-	return trimmed
+	return ""
 }
 
 func relative(value time.Time) string {

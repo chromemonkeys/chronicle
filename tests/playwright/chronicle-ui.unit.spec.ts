@@ -330,6 +330,48 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await expect(page.locator(".cm-diff-split-panel")).toHaveCount(0);
   });
 
+  test("change navigator supports filters, mode switching, and keyboard navigation", async ({ page }) => {
+    await installAndSignIn(page);
+    await page.goto("/workspace/rfc-auth");
+
+    await page.locator(".cm-editor-wrapper .tiptap p").first().click();
+    await page.keyboard.type(" Change rail coverage.");
+    await page.getByRole("button", { name: "Save Draft" }).click();
+    await page.getByLabel("Workspace mode").getByRole("button", { name: "Review", exact: true }).click();
+
+    const compareRequest = page.waitForResponse((response) => {
+      return (
+        response.url().includes("/api/documents/rfc-auth/compare") &&
+        response.request().method() === "GET" &&
+        response.status() === 200
+      );
+    });
+    await Promise.all([
+      compareRequest,
+      page.getByRole("button", { name: /Compare/ }).click()
+    ]);
+
+    await page.getByRole("button", { name: /History/ }).click();
+    await expect(page.getByText("Change Navigator")).toBeVisible();
+    await expect(page.getByText(/changes · split mode/)).toBeVisible();
+    await expect(page.locator(".cm-change-row").first()).toBeVisible();
+
+    await page.getByRole("button", { name: "Unified" }).click();
+    await expect(page.getByText(/changes · unified mode/)).toBeVisible();
+
+    await page.getByLabel("Filter change type").selectOption("modified");
+    await expect(page.locator(".cm-change-row")).toHaveCount(1);
+
+    await page.getByLabel("Filter review state").selectOption("pending");
+    await page.getByRole("checkbox", { name: "Unresolved only" }).check();
+
+    await page.locator(".cm-change-row").first().click();
+    await expect(page.locator(".cm-change-row--active").first()).toBeVisible();
+
+    await page.keyboard.press("ArrowDown");
+    await expect(page.locator(".cm-change-row--active").first()).toBeVisible();
+  });
+
   test("history compare picker compares selected commits", async ({ page }) => {
     await installAndSignIn(page);
     await page.goto("/workspace/rfc-auth");
@@ -716,7 +758,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await page.getByRole("tab", { name: "Required approvals" }).click();
     await expect(page.getByText("Merge blockers: 3 pending approvals, 1 open thread.")).toBeVisible();
 
-    await page.getByRole("button", { name: "View open threads" }).click();
+    await page.getByRole("button", { name: /Thread .* is still open/ }).first().click();
     await expect(page.getByRole("tab", { name: "Discussion" })).toHaveAttribute("aria-selected", "true");
     await page.getByRole("tab", { name: "Required approvals" }).click();
 

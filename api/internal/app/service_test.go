@@ -814,18 +814,90 @@ func TestMergeProposalReturnsBlockedCountsWithoutMerge(t *testing.T) {
 	}
 	svc := newTestService(fs, fg)
 
-	payload, pendingApprovals, openThreads, err := svc.MergeProposal(context.Background(), "doc-1", "prop-1", "Avery", false)
+	payload, details, err := svc.MergeProposal(
+		context.Background(),
+		"doc-1",
+		"prop-1",
+		"Avery",
+		false,
+		defaultMergeGatePolicy(),
+		nil,
+	)
 	if err != nil {
 		t.Fatalf("MergeProposal() error = %v", err)
 	}
 	if payload != nil {
 		t.Fatalf("expected nil payload while merge is blocked, got %#v", payload)
 	}
+	pendingApprovals, _ := details["pendingApprovals"].(int)
+	openThreads, _ := details["openThreads"].(int)
 	if pendingApprovals != 2 || openThreads != 1 {
 		t.Fatalf("expected blocked counts (2,1), got (%d,%d)", pendingApprovals, openThreads)
 	}
+	blockers, ok := details["blockers"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected blockers slice, got %#v", details["blockers"])
+	}
+	if len(blockers) != 3 {
+		t.Fatalf("expected 3 blockers (2 approvals + 1 thread), got %d", len(blockers))
+	}
 	if mergeCalls != 0 {
 		t.Fatalf("expected no merge call while gate blocked, got %d", mergeCalls)
+	}
+}
+
+func TestBuildChangeStateBlockersRespectsPolicyToggles(t *testing.T) {
+	changeStates := []map[string]any{
+		{
+			"id":          "chg_pending",
+			"type":        "modified",
+			"reviewState": "pending",
+			"anchor":      map[string]any{"nodeId": "node_pending"},
+		},
+		{
+			"id":          "chg_deferred",
+			"type":        "modified",
+			"reviewState": "deferred",
+			"anchor":      map[string]any{"nodeId": "node_deferred"},
+		},
+		{
+			"id":          "chg_format",
+			"type":        "format_only",
+			"reviewState": "pending",
+			"anchor":      map[string]any{"nodeId": "node_format"},
+		},
+	}
+
+	defaultBlockers := buildChangeStateBlockers(changeStates, MergeGatePolicy{
+		AllowMergeWithDeferredChanges: false,
+		IgnoreFormatOnlyChangesForGate: false,
+	})
+	if len(defaultBlockers) != 3 {
+		t.Fatalf("expected all 3 changes to block by default, got %d", len(defaultBlockers))
+	}
+
+	allowDeferred := buildChangeStateBlockers(changeStates, MergeGatePolicy{
+		AllowMergeWithDeferredChanges: true,
+		IgnoreFormatOnlyChangesForGate: false,
+	})
+	if len(allowDeferred) != 2 {
+		t.Fatalf("expected deferred change excluded, got %d blockers", len(allowDeferred))
+	}
+
+	ignoreFormatOnly := buildChangeStateBlockers(changeStates, MergeGatePolicy{
+		AllowMergeWithDeferredChanges: false,
+		IgnoreFormatOnlyChangesForGate: true,
+	})
+	if len(ignoreFormatOnly) != 2 {
+		t.Fatalf("expected format_only change excluded, got %d blockers", len(ignoreFormatOnly))
+	}
+
+	fullyRelaxed := buildChangeStateBlockers(changeStates, MergeGatePolicy{
+		AllowMergeWithDeferredChanges: true,
+		IgnoreFormatOnlyChangesForGate: true,
+	})
+	if len(fullyRelaxed) != 1 {
+		t.Fatalf("expected only pending non-format blocker to remain, got %d", len(fullyRelaxed))
 	}
 }
 
@@ -937,7 +1009,15 @@ func TestMergeProposalFailsWhenDecisionLogInsertFails(t *testing.T) {
 	}
 	svc := newTestService(fs, fg)
 
-	_, _, _, err := svc.MergeProposal(context.Background(), "doc-1", "prop-1", "Avery", false)
+	_, _, err := svc.MergeProposal(
+		context.Background(),
+		"doc-1",
+		"prop-1",
+		"Avery",
+		false,
+		defaultMergeGatePolicy(),
+		nil,
+	)
 	if err == nil || err.Error() != "immutable violation" {
 		t.Fatalf("expected decision-log error, got %v", err)
 	}

@@ -9,6 +9,7 @@ export type DiffState = {
   manifest: DiffManifest | null;
   visible: boolean;
   mode: "split" | "unified";
+  activeChangeNodeId?: string | null;
 };
 
 export const DiffDecorations = Extension.create({
@@ -34,6 +35,7 @@ export const DiffDecorations = Extension.create({
               return DecorationSet.empty;
             }
             const mode = diffState.mode ?? "unified";
+            const activeNodeId = diffState.activeChangeNodeId ?? null;
 
             const decorations: Decoration[] = [];
             const nodeDiffMap = new Map<string, NodeDiff>();
@@ -45,22 +47,25 @@ export const DiffDecorations = Extension.create({
               const nodeId = node.attrs.nodeId as string | undefined;
               if (!nodeId) return;
 
+              const isActiveNode = nodeId === activeNodeId;
+
               if (manifest.addedIds.has(nodeId)) {
                 decorations.push(
                   Decoration.node(pos, pos + node.nodeSize, {
-                    class: "diff-added",
+                    class: `diff-added${isActiveNode ? " diff-active" : ""}`,
                   })
                 );
               } else if (manifest.removedIds.has(nodeId)) {
                 decorations.push(
                   Decoration.node(pos, pos + node.nodeSize, {
-                    class: "diff-removed",
+                    class: `diff-removed${isActiveNode ? " diff-active" : ""}`,
                   })
                 );
               } else if (manifest.changedIds.has(nodeId)) {
+                const base = mode === "split" ? "diff-changed diff-split-node" : "diff-changed";
                 decorations.push(
                   Decoration.node(pos, pos + node.nodeSize, {
-                    class: mode === "split" ? "diff-changed diff-split-node" : "diff-changed",
+                    class: `${base}${isActiveNode ? " diff-active" : ""}`,
                   })
                 );
 

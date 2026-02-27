@@ -549,9 +549,18 @@ export async function resolveProposalThread(
   );
 }
 
-export async function mergeProposal(documentId: string, proposalId: string) {
+type MergeProposalPayload = {
+  policy?: {
+    allowMergeWithDeferredChanges: boolean;
+    ignoreFormatOnlyChangesForGate: boolean;
+  };
+  changeStates?: DocumentComparePayload["changes"];
+};
+
+export async function mergeProposal(documentId: string, proposalId: string, payload?: MergeProposalPayload) {
   return apiRequest<WorkspacePayload>(`/api/documents/${documentId}/proposals/${proposalId}/merge`, {
-    method: "POST"
+    method: "POST",
+    body: payload
   });
 }
 

@@ -57,6 +57,54 @@ type CompareOption = {
   hash: string;
   label: string;
 };
+type CompareChangeType = "inserted" | "deleted" | "modified" | "moved" | "format_only";
+type CompareReviewState = "pending" | "accepted" | "rejected" | "deferred";
+type CompareChangeRow = {
+  id: string;
+  type: CompareChangeType;
+  fromRef: string;
+  toRef: string;
+  anchor: {
+    nodeId: string;
+    fromOffset: number;
+    toOffset: number;
+  };
+  context: {
+    before: string;
+    after: string;
+  };
+  snippet: string;
+  author: {
+    id: string;
+    name: string;
+  };
+  editedAt: string;
+  reviewState: CompareReviewState;
+  threadIds: string[];
+  blockers: string[];
+};
+type MergeGateBlockerType = "approval" | "thread" | "change";
+type MergeGateBlockerLink = {
+  tab?: PanelTab;
+  role?: string;
+  threadId?: string;
+  changeId?: string;
+  nodeId?: string;
+};
+type MergeGateBlockerRow = {
+  id: string;
+  type: MergeGateBlockerType;
+  label: string;
+  role?: string;
+  threadId?: string;
+  changeId?: string;
+  state?: string;
+  link?: MergeGateBlockerLink;
+};
+type MergeGatePolicySnapshot = {
+  allowMergeWithDeferredChanges: boolean;
+  ignoreFormatOnlyChangesForGate: boolean;
+};
 
 const panelTabs: { id: PanelTab; label: string; ariaLabel: string; icon: JSX.Element }[] = [
   {
@@ -162,6 +210,122 @@ function pluralize(value: number, singular: string, plural: string) {
   return value === 1 ? singular : plural;
 }
 
+function compareTypeRank(type: CompareChangeType): number {
+  switch (type) {
+    case "moved":
+      return 0;
+    case "modified":
+      return 1;
+    case "inserted":
+      return 2;
+    case "deleted":
+      return 3;
+    case "format_only":
+      return 4;
+    default:
+      return 5;
+  }
+}
+
+function normalizeCompareChanges(payload: DocumentComparePayload): CompareChangeRow[] {
+  if (Array.isArray(payload.changes) && payload.changes.length > 0) {
+    return payload.changes.map((item) => ({
+      ...item,
+      type: item.type as CompareChangeType,
+      reviewState: item.reviewState as CompareReviewState,
+      threadIds: Array.isArray(item.threadIds) ? item.threadIds : [],
+      blockers: Array.isArray(item.blockers) ? item.blockers : [],
+    }));
+  }
+  if (!Array.isArray(payload.changedFields) || payload.changedFields.length === 0) {
+    return [];
+  }
+  const authorName = "Unknown";
+  const editedAt = new Date().toISOString();
+  return payload.changedFields
+    .map((field, index) => ({
+      id: `chg_fallback_${index}_${field.field}`,
+      type: (field.field === "doc" ? "modified" : "format_only") as CompareChangeType,
+      fromRef: payload.from,
+      toRef: payload.to,
+      anchor: {
+        nodeId: field.field === "doc" ? `doc-${index}` : `field-${field.field}`,
+        fromOffset: 0,
+        toOffset: 0,
+      },
+      context: {
+        before: field.before,
+        after: field.after,
+      },
+      snippet: field.field === "doc" ? "Document body changed" : `${field.field}: ${field.after}`,
+      author: { id: "usr_unknown", name: authorName },
+      editedAt,
+      reviewState: "pending" as CompareReviewState,
+      threadIds: [],
+      blockers: [],
+    }))
+    .sort((a, b) => {
+      if (a.anchor.nodeId !== b.anchor.nodeId) {
+        return a.anchor.nodeId.localeCompare(b.anchor.nodeId);
+      }
+      return compareTypeRank(a.type) - compareTypeRank(b.type);
+    });
+}
+
+function roleLabel(role: string): string {
+  switch (role) {
+    case "security":
+      return "Security";
+    case "architectureCommittee":
+      return "Architecture Committee";
+    case "legal":
+      return "Legal";
+    default:
+      return role;
+  }
+}
+
+function normalizeMergeGateBlockers(value: unknown): MergeGateBlockerRow[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const rows: MergeGateBlockerRow[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const row = item as Record<string, unknown>;
+    const id = typeof row.id === "string" ? row.id : "";
+    const label = typeof row.label === "string" ? row.label : "";
+    const typeRaw = typeof row.type === "string" ? row.type : "";
+    if (!id || !label || (typeRaw !== "approval" && typeRaw !== "thread" && typeRaw !== "change")) {
+      continue;
+    }
+    const linkRaw = row.link && typeof row.link === "object" ? (row.link as Record<string, unknown>) : null;
+    rows.push({
+      id,
+      type: typeRaw,
+      label,
+      role: typeof row.role === "string" ? row.role : undefined,
+      threadId: typeof row.threadId === "string" ? row.threadId : undefined,
+      changeId: typeof row.changeId === "string" ? row.changeId : undefined,
+      state: typeof row.state === "string" ? row.state : undefined,
+      link: linkRaw
+        ? {
+            tab: linkRaw.tab === "approvals" || linkRaw.tab === "discussions" || linkRaw.tab === "history" || linkRaw.tab === "decisions"
+              ? linkRaw.tab
+              : undefined,
+            role: typeof linkRaw.role === "string" ? linkRaw.role : undefined,
+            threadId: typeof linkRaw.threadId === "string" ? linkRaw.threadId : undefined,
+            changeId: typeof linkRaw.changeId === "string" ? linkRaw.changeId : undefined,
+            nodeId: typeof linkRaw.nodeId === "string" ? linkRaw.nodeId : undefined,
+          }
+        : undefined,
+    });
+  }
+  return rows;
+}
+
 export function WorkspacePage() {
   const { docId = "" } = useParams();
   const navigate = useNavigate();
@@ -204,6 +368,14 @@ export function WorkspacePage() {
   const [compareManifest, setCompareManifest] = useState<DiffManifest | null>(null);
   const [compareBeforeDoc, setCompareBeforeDoc] = useState<DocumentContent | null>(null);
   const [compareAfterDoc, setCompareAfterDoc] = useState<DocumentContent | null>(null);
+  const [compareChanges, setCompareChanges] = useState<CompareChangeRow[]>([]);
+  const [compareFilterType, setCompareFilterType] = useState<CompareChangeType | "all">("all");
+  const [compareFilterAuthor, setCompareFilterAuthor] = useState("all");
+  const [compareFilterState, setCompareFilterState] = useState<CompareReviewState | "all">("all");
+  const [compareUnresolvedOnly, setCompareUnresolvedOnly] = useState(false);
+  const [activeCompareChangeId, setActiveCompareChangeId] = useState<string>("");
+  const [mergeGateBlockers, setMergeGateBlockers] = useState<MergeGateBlockerRow[]>([]);
+  const [mergeGatePolicy, setMergeGatePolicy] = useState<MergeGatePolicySnapshot | null>(null);
   const [approveBusyRole, setApproveBusyRole] = useState<MergeGateRole | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "connected" | "offline">("connecting");
@@ -228,6 +400,8 @@ export function WorkspacePage() {
     setWorkspace(payload);
     setContentDraft(payload.content);
     setDocDraft(payload.doc ?? legacyContentToDoc(payload.content, payload.nodeIds));
+    setMergeGateBlockers([]);
+    setMergeGatePolicy(null);
     latestRealtimeAtRef.current = Date.now();
   }, []);
 
@@ -248,6 +422,14 @@ export function WorkspacePage() {
     setCompareActive(false);
     setCompareDoc(null);
     setCompareManifest(null);
+    setCompareChanges([]);
+    setCompareFilterType("all");
+    setCompareFilterAuthor("all");
+    setCompareFilterState("all");
+    setCompareUnresolvedOnly(false);
+    setActiveCompareChangeId("");
+    setMergeGateBlockers([]);
+    setMergeGatePolicy(null);
     setReviewDiff(null);
     setReviewDiffState("idle");
     setApproveBusyRole(null);
@@ -321,6 +503,51 @@ export function WorkspacePage() {
   }, []);
 
   const nodeLabelMap = useMemo(() => buildNodeLabelMap(docDraft), [docDraft]);
+  const compareAuthorOptions = useMemo(() => {
+    const options = new Set<string>();
+    for (const change of compareChanges) {
+      if (change.author.name) {
+        options.add(change.author.name);
+      }
+    }
+    return ["all", ...Array.from(options).sort((a, b) => a.localeCompare(b))];
+  }, [compareChanges]);
+  const filteredCompareChanges = useMemo(() => {
+    return compareChanges.filter((change) => {
+      if (compareFilterType !== "all" && change.type !== compareFilterType) {
+        return false;
+      }
+      if (compareFilterAuthor !== "all" && change.author.name !== compareFilterAuthor) {
+        return false;
+      }
+      if (compareFilterState !== "all" && change.reviewState !== compareFilterState) {
+        return false;
+      }
+      if (!compareUnresolvedOnly) {
+        return true;
+      }
+      return (
+        change.reviewState === "pending" ||
+        change.reviewState === "deferred" ||
+        change.threadIds.length > 0 ||
+        change.blockers.length > 0
+      );
+    });
+  }, [compareChanges, compareFilterAuthor, compareFilterState, compareFilterType, compareUnresolvedOnly]);
+  const activeCompareNodeId = useMemo(
+    () => compareChanges.find((item) => item.id === activeCompareChangeId)?.anchor.nodeId ?? null,
+    [activeCompareChangeId, compareChanges]
+  );
+  useEffect(() => {
+    if (!compareActive || filteredCompareChanges.length === 0) {
+      setActiveCompareChangeId("");
+      return;
+    }
+    if (filteredCompareChanges.some((item) => item.id === activeCompareChangeId)) {
+      return;
+    }
+    setActiveCompareChangeId(filteredCompareChanges[0].id);
+  }, [activeCompareChangeId, compareActive, filteredCompareChanges]);
 
   const currentAnchor = useMemo(() => {
     const nodeId = composerAnchorNodeId ?? activeNodeId;
@@ -691,6 +918,97 @@ export function WorkspacePage() {
     setActiveTab("discussions");
   }
 
+  async function openMergeBlocker(row: MergeGateBlockerRow) {
+    const targetTab = row.link?.tab;
+    if (targetTab) {
+      setActiveTab(targetTab);
+    }
+    if (row.type === "thread") {
+      const threadID = row.threadId ?? row.link?.threadId;
+      if (threadID) {
+        selectThread(threadID);
+      }
+      return;
+    }
+    if (row.type === "change") {
+      const changeID = row.changeId ?? row.link?.changeId;
+      let availableChanges = compareChanges;
+      if (!compareActive) {
+        const loadedChanges = await compareLatestCommits();
+        if (loadedChanges) {
+          availableChanges = loadedChanges;
+        }
+      }
+      const fallbackNodeId = row.link?.nodeId;
+      if (!changeID) {
+        if (fallbackNodeId) {
+          setActiveNodeId(fallbackNodeId);
+          setComposerAnchorNodeId(fallbackNodeId);
+        }
+        return;
+      }
+      const match = availableChanges.find((item) => item.id === changeID);
+      if (match) {
+        focusCompareChange(match);
+      } else if (fallbackNodeId) {
+        setActiveNodeId(fallbackNodeId);
+        setComposerAnchorNodeId(fallbackNodeId);
+      }
+      return;
+    }
+    setActiveTab("approvals");
+  }
+
+  const focusCompareChange = useCallback((change: CompareChangeRow) => {
+    setActiveCompareChangeId(change.id);
+    setActiveNodeId(change.anchor.nodeId);
+    setComposerAnchorNodeId(change.anchor.nodeId);
+    const nodeSelector = `[data-node-id="${change.anchor.nodeId}"]`;
+    const target =
+      document.querySelector<HTMLElement>(`.cm-doc-body ${nodeSelector}`) ??
+      document.querySelector<HTMLElement>(`.cm-editor-wrapper ${nodeSelector}`) ??
+      document.querySelector<HTMLElement>(nodeSelector);
+    if (!target) {
+      return;
+    }
+    target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    target.classList.add("cm-compare-anchor-focus");
+    window.setTimeout(() => {
+      target.classList.remove("cm-compare-anchor-focus");
+    }, 900);
+  }, []);
+
+  const stepCompareChange = useCallback((direction: 1 | -1) => {
+    if (!compareActive || filteredCompareChanges.length === 0) {
+      return;
+    }
+    const currentIndex = filteredCompareChanges.findIndex((item) => item.id === activeCompareChangeId);
+    const startIndex = currentIndex < 0 ? (direction > 0 ? -1 : 0) : currentIndex;
+    const nextIndex = (startIndex + direction + filteredCompareChanges.length) % filteredCompareChanges.length;
+    focusCompareChange(filteredCompareChanges[nextIndex]);
+  }, [activeCompareChangeId, compareActive, filteredCompareChanges, focusCompareChange]);
+
+  useEffect(() => {
+    if (!compareActive) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT")) {
+        return;
+      }
+      if (event.key === "ArrowDown" || event.key.toLowerCase() === "n" || (event.altKey && event.key === "]")) {
+        event.preventDefault();
+        stepCompareChange(1);
+      } else if (event.key === "ArrowUp" || event.key.toLowerCase() === "p" || (event.altKey && event.key === "[")) {
+        event.preventDefault();
+        stepCompareChange(-1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [compareActive, stepCompareChange]);
+
   const handleEditorUpdate = useCallback((doc: DocumentContent) => {
     const nextContent = docToLegacyContent(doc);
     setDocDraft(doc);
@@ -995,7 +1313,13 @@ export function WorkspacePage() {
     setApprovalError(null);
     setApprovalStateOverride(null);
     try {
-      const updated = await mergeProposal(workspace.document.id, workspace.document.proposalId);
+      const updated = await mergeProposal(workspace.document.id, workspace.document.proposalId, {
+        policy: mergeGatePolicy ?? {
+          allowMergeWithDeferredChanges: false,
+          ignoreFormatOnlyChangesForGate: false,
+        },
+        changeStates: compareChanges,
+      });
       applyWorkspacePayload(updated);
       setActionError(null);
       setDocumentIndex((current) =>
@@ -1014,13 +1338,32 @@ export function WorkspacePage() {
       void refreshDocumentIndex("background");
     } catch (error) {
       if (isApiError(error) && error.code === "MERGE_GATE_BLOCKED") {
-        const details = error.details as { pendingApprovals?: number; openThreads?: number } | null;
+        const details = error.details as {
+          pendingApprovals?: number;
+          openThreads?: number;
+          blockers?: unknown;
+          policy?: {
+            allowMergeWithDeferredChanges?: boolean;
+            ignoreFormatOnlyChangesForGate?: boolean;
+          };
+        } | null;
         const pending = details?.pendingApprovals ?? pendingApprovals;
         const open = details?.openThreads ?? openThreads;
+        setMergeGateBlockers(normalizeMergeGateBlockers(details?.blockers));
+        if (details?.policy) {
+          setMergeGatePolicy({
+            allowMergeWithDeferredChanges: Boolean(details.policy.allowMergeWithDeferredChanges),
+            ignoreFormatOnlyChangesForGate: Boolean(details.policy.ignoreFormatOnlyChangesForGate),
+          });
+        } else {
+          setMergeGatePolicy(null);
+        }
         const message = `Merge gate is blocked. Pending approvals: ${pending}, open threads: ${open}.`;
         setActionError(message);
         setApprovalError(message);
       } else {
+        setMergeGateBlockers([]);
+        setMergeGatePolicy(null);
         const message = isApiError(error) ? error.message : "Merge gate is still blocked.";
         setActionError(message);
         setApprovalError(message);
@@ -1077,21 +1420,23 @@ export function WorkspacePage() {
     setCompareManifest(null);
     setCompareBeforeDoc(null);
     setCompareAfterDoc(null);
+    setCompareChanges([]);
+    setActiveCompareChangeId("");
     setCompareSummary(null);
     setDiffVisible(false);
   }
 
-  async function compareCommits(fromHash: string, toHash: string, statusLabel = "Comparing selected commits...") {
+  async function compareCommits(fromHash: string, toHash: string, statusLabel = "Comparing selected commits..."): Promise<CompareChangeRow[] | null> {
     if (!workspace) {
-      return;
+      return null;
     }
     if (!fromHash || !toHash) {
       setCompareSummary("Select two commits to compare.");
-      return;
+      return null;
     }
     if (fromHash === toHash) {
       setCompareSummary("Select two different commits.");
-      return;
+      return null;
     }
     setCompareFromHash(fromHash);
     setCompareToHash(toHash);
@@ -1121,23 +1466,32 @@ export function WorkspacePage() {
         setCompareBeforeDoc(null);
         setCompareAfterDoc(null);
         setCompareManifest(null);
+        setCompareChanges([]);
+        setActiveCompareChangeId("");
         setCompareSummary("Compare loaded, but snapshot content is unavailable from the API response.");
-        return;
+        return null;
       }
+      const normalizedChanges = normalizeCompareChanges(comparison);
+      setCompareChanges(normalizedChanges);
+      setActiveCompareChangeId(normalizedChanges[0]?.id ?? "");
       if (comparison.changedFields.length === 0) {
         setCompareSummary("No field-level differences between selected commits.");
-        return;
+        return normalizedChanges;
       }
       setCompareSummary(
         comparison.changedFields
           .map((item) => formatChangedField(item))
           .join("\n")
       );
+      return normalizedChanges;
     } catch {
       setCompareActive(false);
       setCompareDoc(null);
       setCompareManifest(null);
+      setCompareChanges([]);
+      setActiveCompareChangeId("");
       setCompareSummary("Compare request failed.");
+      return null;
     }
   }
 
@@ -1166,17 +1520,16 @@ export function WorkspacePage() {
     await compareCommits(hash, currentHash, `Comparing ${label} against current version...`);
   }
 
-  async function compareLatestCommits() {
+  async function compareLatestCommits(): Promise<CompareChangeRow[] | null> {
     if (!workspace) {
-      return;
+      return null;
     }
     if (compareActive) {
       clearCompare();
-      return;
+      return null;
     }
     if (compareFromHash && compareToHash && compareFromHash !== compareToHash) {
-      await compareCommits(compareFromHash, compareToHash);
-      return;
+      return compareCommits(compareFromHash, compareToHash);
     }
     setCompareSummary("Comparing latest main and proposal commits...");
     try {
@@ -1191,7 +1544,7 @@ export function WorkspacePage() {
         const mainHead = mainHistory.commits[0];
         if (!proposalHead || !mainHead) {
           setCompareSummary("Need both proposal and main commits to compare.");
-          return;
+          return null;
         }
         fromHash = mainHead.hash;
         toHash = proposalHead.hash;
@@ -1199,18 +1552,21 @@ export function WorkspacePage() {
         const commits = historyData?.commits ?? workspace.history;
         if (commits.length < 2) {
           setCompareSummary("Need at least two commits to compare.");
-          return;
+          return null;
         }
         const [head, base] = commits;
         fromHash = base.hash;
         toHash = head.hash;
       }
-      await compareCommits(fromHash, toHash, "Comparing latest main and proposal commits...");
+      return compareCommits(fromHash, toHash, "Comparing latest main and proposal commits...");
     } catch {
       setCompareActive(false);
       setCompareDoc(null);
       setCompareManifest(null);
+      setCompareChanges([]);
+      setActiveCompareChangeId("");
       setCompareSummary("Compare request failed.");
+      return null;
     }
   }
 
@@ -1300,6 +1656,30 @@ export function WorkspacePage() {
   const mergeReady = hasActiveProposal && pendingApprovals === 0 && openThreads === 0 && runtimeApprovalState === "success";
   const showMergeBlockers = hasActiveProposal && !mergeReady && effectiveApprovalState === "success";
   const mergeBlockerSummary = `Merge blockers: ${pendingApprovals} pending ${pluralize(pendingApprovals, "approval", "approvals")}, ${openThreads} open ${pluralize(openThreads, "thread", "threads")}.`;
+  const fallbackMergeBlockers: MergeGateBlockerRow[] = workspace
+    ? (() => {
+        const approvalRows: MergeGateBlockerRow[] = (Object.entries(workspace.approvals) as Array<[MergeGateRole, string]>)
+      .filter(([, status]) => status !== "Approved")
+      .map(([role]) => ({
+        id: `approval:${role}`,
+        type: "approval" as const,
+        label: `${roleLabel(role)} approval is pending`,
+        role,
+        link: { tab: "approvals" as PanelTab, role }
+      }));
+        const threadRows: MergeGateBlockerRow[] = workspace.threads
+      .filter((thread) => thread.status !== "RESOLVED")
+      .map((thread) => ({
+        id: `thread:${thread.id}`,
+        type: "thread" as const,
+        label: `Thread ${thread.id} is still open`,
+        threadId: thread.id,
+        link: { tab: "discussions" as PanelTab, threadId: thread.id, nodeId: thread.anchorNodeId }
+      }));
+        return [...approvalRows, ...threadRows];
+      })()
+    : [];
+  const activeMergeBlockers = mergeGateBlockers.length > 0 ? mergeGateBlockers : fallbackMergeBlockers;
   const content = contentDraft ?? workspace.content;
   const workspaceDoc = workspace.doc ?? legacyContentToDoc(workspace.content, workspace.nodeIds);
   const activeDoc = docDraft ?? workspaceDoc;
@@ -1604,6 +1984,8 @@ export function WorkspacePage() {
                     afterLabel={compareToHash ? `To ${compareToHash.slice(0, 7)}` : "After"}
                     beforeHash={compareFromHash}
                     afterHash={compareToHash}
+                    scrollToNodeId={activeCompareNodeId}
+                    activeChangeNodeId={activeCompareNodeId}
                   />
                 ) : (compareDoc ?? docDraft) ? (
                   <ChronicleEditor
@@ -1615,6 +1997,7 @@ export function WorkspacePage() {
                     diffManifest={compareActive ? compareManifest : diffManifest}
                     diffVisible={diffVisible}
                     diffMode={diffMode}
+                    activeChangeNodeId={compareActive ? activeCompareNodeId : null}
                     threadAnchors={threadAnchors}
                     className="cm-editor-wrapper"
                   />
@@ -1870,14 +2253,27 @@ export function WorkspacePage() {
                         {showMergeBlockers ? (
                           <div className="cm-merge-blockers" role="status">
                             <p>{mergeBlockerSummary}</p>
-                            {openThreads > 0 ? (
-                              <button
-                                className="cm-thread-action-btn"
-                                type="button"
-                                onClick={() => setActiveTab("discussions")}
-                              >
-                                View open threads
-                              </button>
+                            {activeMergeBlockers.length > 0 ? (
+                              <ul className="cm-merge-blockers-list">
+                                {activeMergeBlockers.map((row) => (
+                                  <li key={row.id}>
+                                    <button
+                                      className="cm-thread-action-btn"
+                                      type="button"
+                                      onClick={() => {
+                                        void openMergeBlocker(row);
+                                      }}
+                                    >
+                                      {row.label}
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : null}
+                            {mergeGatePolicy ? (
+                              <p className="cm-merge-blockers-policy">
+                                Policy: deferred changes {mergeGatePolicy.allowMergeWithDeferredChanges ? "allowed" : "block merge"}, format-only changes {mergeGatePolicy.ignoreFormatOnlyChangesForGate ? "ignored" : "block merge"}.
+                              </p>
                             ) : null}
                           </div>
                         ) : null}
@@ -1916,6 +2312,109 @@ export function WorkspacePage() {
                   <strong>Current Branch</strong>
                   <p className="cm-commit-meta">{historyData?.branch ?? workspace.document.branch.split(" -> ")[0]}</p>
                 </div>
+                {compareActive ? (
+                  <div className="cm-approval-fallback cm-compare-rail" aria-label="Change navigator">
+                    <strong>Change Navigator</strong>
+                    <p className="cm-change-summary">
+                      {filteredCompareChanges.length} of {compareChanges.length} changes · {diffMode} mode
+                    </p>
+                    <div className="cm-change-filters">
+                      <label className="cm-compose-select-wrap">
+                        <span>Type</span>
+                        <select
+                          className="cm-compose-select"
+                          aria-label="Filter change type"
+                          value={compareFilterType}
+                          onChange={(event) => setCompareFilterType(event.target.value as CompareChangeType | "all")}
+                        >
+                          <option value="all">All types</option>
+                          <option value="modified">Modified</option>
+                          <option value="inserted">Inserted</option>
+                          <option value="deleted">Deleted</option>
+                          <option value="moved">Moved</option>
+                          <option value="format_only">Format only</option>
+                        </select>
+                      </label>
+                      <label className="cm-compose-select-wrap">
+                        <span>Author</span>
+                        <select
+                          className="cm-compose-select"
+                          aria-label="Filter change author"
+                          value={compareFilterAuthor}
+                          onChange={(event) => setCompareFilterAuthor(event.target.value)}
+                        >
+                          {compareAuthorOptions.map((author) => (
+                            <option key={author} value={author}>
+                              {author === "all" ? "All authors" : author}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="cm-compose-select-wrap">
+                        <span>State</span>
+                        <select
+                          className="cm-compose-select"
+                          aria-label="Filter review state"
+                          value={compareFilterState}
+                          onChange={(event) => setCompareFilterState(event.target.value as CompareReviewState | "all")}
+                        >
+                          <option value="all">All states</option>
+                          <option value="pending">Pending</option>
+                          <option value="accepted">Accepted</option>
+                          <option value="rejected">Rejected</option>
+                          <option value="deferred">Deferred</option>
+                        </select>
+                      </label>
+                      <label className="cm-compare-toggle">
+                        <input
+                          type="checkbox"
+                          checked={compareUnresolvedOnly}
+                          onChange={(event) => setCompareUnresolvedOnly(event.target.checked)}
+                        />
+                        <span>Unresolved only</span>
+                      </label>
+                    </div>
+                    <div className="cm-compare-nav-actions">
+                      <button className="cm-thread-action-btn" type="button" onClick={() => stepCompareChange(-1)}>
+                        Previous
+                      </button>
+                      <button className="cm-thread-action-btn" type="button" onClick={() => stepCompareChange(1)}>
+                        Next
+                      </button>
+                    </div>
+                    {filteredCompareChanges.length === 0 ? (
+                      <p className="cm-commit-meta">No changes match current filters.</p>
+                    ) : (
+                      <div className="cm-compare-change-list">
+                        {filteredCompareChanges.map((change) => (
+                          <button
+                            key={change.id}
+                            className={`cm-change-row ${activeCompareChangeId === change.id ? "cm-change-row--active" : ""}`.trim()}
+                            type="button"
+                            onClick={() => focusCompareChange(change)}
+                          >
+                            <div className="cm-change-row-top">
+                              <span className={`cm-change-type cm-badge-change cm-badge-${change.type}`}>{change.type}</span>
+                              <span className="cm-compare-change-id">{change.id}</span>
+                            </div>
+                            <div className="cm-change-snippet">{change.snippet || "Change"}</div>
+                            <div className="cm-change-meta">
+                              <span>{change.author.name}</span>
+                              <span>{change.editedAt ? new Date(change.editedAt).toLocaleString() : "Unknown time"}</span>
+                              <span className={`cm-change-state cm-change-state--${change.reviewState}`}>{change.reviewState}</span>
+                            </div>
+                            {(change.threadIds.length > 0 || change.blockers.length > 0) ? (
+                              <div className="cm-change-threads">
+                                {change.threadIds.length > 0 ? <span>Threads {change.threadIds.length}</span> : null}
+                                {change.blockers.length > 0 ? <span>Blockers {change.blockers.length}</span> : null}
+                              </div>
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
                 {compareOptions.length > 1 ? (
                   <div className="cm-history-compare-controls">
                     <label className="cm-compose-select-wrap">
@@ -2114,6 +2613,7 @@ export function WorkspacePage() {
               )}
             </div>
           )}
+
           </div>}
         </aside>
       </div>

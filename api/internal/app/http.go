@@ -593,7 +593,23 @@ func (s *HTTPServer) handleProposalAction(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
 			return
 		}
-		payload, pendingApprovals, openThreads, err := s.service.MergeProposal(r.Context(), documentID, proposalID, session.UserName, session.IsExternal)
+		policy := defaultMergeGatePolicy()
+		changeStates := []map[string]any(nil)
+		if r.ContentLength > 0 {
+			var body struct {
+				Policy       *MergeGatePolicy `json:"policy"`
+				ChangeStates []map[string]any `json:"changeStates"`
+			}
+			if err := decodeBody(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+				return
+			}
+			if body.Policy != nil {
+				policy = *body.Policy
+			}
+			changeStates = body.ChangeStates
+		}
+		payload, mergeGateDetails, err := s.service.MergeProposal(r.Context(), documentID, proposalID, session.UserName, session.IsExternal, policy, changeStates)
 		if err != nil {
 			log.Printf("merge error for document=%s proposal=%s: %v", documentID, proposalID, err)
 			status, code, message, details := mapError(err)
@@ -601,10 +617,7 @@ func (s *HTTPServer) handleProposalAction(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if payload == nil {
-			writeError(w, http.StatusConflict, "MERGE_GATE_BLOCKED", "Merge gate blocked", map[string]any{
-				"pendingApprovals": pendingApprovals,
-				"openThreads":      openThreads,
-			})
+			writeError(w, http.StatusConflict, "MERGE_GATE_BLOCKED", "Merge gate blocked", mergeGateDetails)
 			return
 		}
 		writeJSON(w, http.StatusOK, payload)

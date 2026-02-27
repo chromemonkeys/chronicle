@@ -662,10 +662,118 @@ export class ChroniclePlaywrightAgent {
           before: baseline[field],
           after: workspace.content[field]
         }));
+      const baselineNodes = Array.isArray((baselineDoc as { content?: unknown[] }).content)
+        ? ((baselineDoc as { content: Array<{ attrs?: { nodeId?: string }; content?: Array<{ text?: string }> }> }).content)
+        : [];
+      const currentNodes = Array.isArray((workspace.doc as { content?: unknown[] }).content)
+        ? ((workspace.doc as { content: Array<{ attrs?: { nodeId?: string }; content?: Array<{ text?: string }> }> }).content)
+        : [];
+      const baselineByNodeId = new Map<string, { index: number; text: string }>();
+      for (let i = 0; i < baselineNodes.length; i += 1) {
+        const node = baselineNodes[i];
+        const nodeId = node?.attrs?.nodeId;
+        if (!nodeId) continue;
+        const text = Array.isArray(node.content) ? node.content.map((item) => item?.text ?? "").join("").trim() : "";
+        baselineByNodeId.set(nodeId, { index: i, text });
+      }
+      const currentByNodeId = new Map<string, { index: number; text: string }>();
+      for (let i = 0; i < currentNodes.length; i += 1) {
+        const node = currentNodes[i];
+        const nodeId = node?.attrs?.nodeId;
+        if (!nodeId) continue;
+        const text = Array.isArray(node.content) ? node.content.map((item) => item?.text ?? "").join("").trim() : "";
+        currentByNodeId.set(nodeId, { index: i, text });
+      }
+      const changes: Array<{
+        id: string;
+        type: "inserted" | "deleted" | "modified" | "moved" | "format_only";
+        fromRef: string;
+        toRef: string;
+        anchor: { nodeId: string; fromOffset: number; toOffset: number };
+        context: { before: string; after: string };
+        snippet: string;
+        author: { id: string; name: string };
+        editedAt: string;
+        reviewState: "pending";
+        threadIds: string[];
+        blockers: string[];
+      }> = [];
+      for (const [nodeId, baseNode] of baselineByNodeId.entries()) {
+        const nextNode = currentByNodeId.get(nodeId);
+        if (!nextNode) {
+          changes.push({
+            id: `chg-${nodeId}-deleted`,
+            type: "deleted",
+            fromRef: from,
+            toRef: to,
+            anchor: { nodeId, fromOffset: 0, toOffset: baseNode.text.length },
+            context: { before: "", after: "" },
+            snippet: baseNode.text || "Deleted content",
+            author: { id: "usr_avery", name: "Avery" },
+            editedAt: new Date().toISOString(),
+            reviewState: "pending",
+            threadIds: [],
+            blockers: []
+          });
+          continue;
+        }
+        if (baseNode.index !== nextNode.index && baseNode.text === nextNode.text) {
+          changes.push({
+            id: `chg-${nodeId}-moved`,
+            type: "moved",
+            fromRef: from,
+            toRef: to,
+            anchor: { nodeId, fromOffset: 0, toOffset: nextNode.text.length },
+            context: { before: "", after: "" },
+            snippet: nextNode.text || "Moved content",
+            author: { id: "usr_avery", name: "Avery" },
+            editedAt: new Date().toISOString(),
+            reviewState: "pending",
+            threadIds: [],
+            blockers: []
+          });
+        } else if (baseNode.text !== nextNode.text) {
+          changes.push({
+            id: `chg-${nodeId}-modified`,
+            type: "modified",
+            fromRef: from,
+            toRef: to,
+            anchor: { nodeId, fromOffset: 0, toOffset: nextNode.text.length },
+            context: { before: baseNode.text, after: nextNode.text },
+            snippet: nextNode.text || "Modified content",
+            author: { id: "usr_avery", name: "Avery" },
+            editedAt: new Date().toISOString(),
+            reviewState: "pending",
+            threadIds: [],
+            blockers: []
+          });
+        }
+      }
+      for (const [nodeId, currentNode] of currentByNodeId.entries()) {
+        if (baselineByNodeId.has(nodeId)) {
+          continue;
+        }
+        changes.push({
+          id: `chg-${nodeId}-inserted`,
+          type: "inserted",
+          fromRef: from,
+          toRef: to,
+          anchor: { nodeId, fromOffset: 0, toOffset: currentNode.text.length },
+          context: { before: "", after: currentNode.text },
+          snippet: currentNode.text || "Inserted content",
+          author: { id: "usr_avery", name: "Avery" },
+          editedAt: new Date().toISOString(),
+          reviewState: "pending",
+          threadIds: [],
+          blockers: []
+        });
+      }
+      changes.sort((a, b) => a.id.localeCompare(b.id));
       await this.ok(route, {
         from,
         to,
         changedFields,
+        changes,
         fromContent: {
           ...baseline,
           doc: clone(baselineDoc)

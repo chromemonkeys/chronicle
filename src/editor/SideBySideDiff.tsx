@@ -17,6 +17,8 @@ interface SideBySideDiffProps {
   afterLabel?: string;
   beforeHash?: string;
   afterHash?: string;
+  scrollToNodeId?: string | null;
+  activeChangeNodeId?: string | null;
 }
 
 export function SideBySideDiff({
@@ -26,6 +28,8 @@ export function SideBySideDiff({
   afterLabel = "After",
   beforeHash,
   afterHash,
+  scrollToNodeId = null,
+  activeChangeNodeId = null,
 }: SideBySideDiffProps) {
   const [syncEnabled, setSyncEnabled] = useState(true);
   const leftScrollRef = useRef<HTMLDivElement>(null);
@@ -37,6 +41,12 @@ export function SideBySideDiff({
   const diffManifest = diffDocs(beforeDoc, afterDoc);
   const isSameDoc = JSON.stringify(beforeDoc) === JSON.stringify(afterDoc);
 
+  // Mutable refs so ProseMirror plugin closures always read latest values
+  const diffManifestRef = useRef(diffManifest);
+  diffManifestRef.current = diffManifest;
+  const activeNodeIdRef = useRef(activeChangeNodeId);
+  activeNodeIdRef.current = activeChangeNodeId;
+
   // Create before editor (read-only)
   const beforeEditor = useEditor({
     extensions: [
@@ -44,9 +54,10 @@ export function SideBySideDiff({
       NodeId,
       DiffDecorations.configure({
         getDiffState: () => ({
-          manifest: diffManifest,
+          manifest: diffManifestRef.current,
           visible: true,
           mode: "split",
+          activeChangeNodeId: activeNodeIdRef.current,
         }),
       }),
     ],
@@ -61,15 +72,41 @@ export function SideBySideDiff({
       NodeId,
       DiffDecorations.configure({
         getDiffState: () => ({
-          manifest: diffManifest,
+          manifest: diffManifestRef.current,
           visible: true,
           mode: "split",
+          activeChangeNodeId: activeNodeIdRef.current,
         }),
       }),
     ],
     content: afterDoc,
     editable: false,
   });
+
+  // Force decoration recalculation when activeChangeNodeId changes
+  useEffect(() => {
+    if (beforeEditor) {
+      beforeEditor.view.dispatch(beforeEditor.state.tr.setMeta("diffUpdate", true));
+    }
+    if (afterEditor) {
+      afterEditor.view.dispatch(afterEditor.state.tr.setMeta("diffUpdate", true));
+    }
+  }, [beforeEditor, afterEditor, activeChangeNodeId]);
+
+  // Scroll to node when scrollToNodeId changes
+  useEffect(() => {
+    if (!scrollToNodeId) return;
+    // Try to find the node in the after editor first, then before
+    for (const editorRef of [rightScrollRef, leftScrollRef]) {
+      const container = editorRef.current;
+      if (!container) continue;
+      const el = container.querySelector(`[data-node-id="${CSS.escape(scrollToNodeId)}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+    }
+  }, [scrollToNodeId]);
 
   // Synchronized scrolling handler
   const handleScroll = useCallback((source: "left" | "right") => {
