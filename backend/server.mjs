@@ -1,7 +1,15 @@
 import { createServer } from "node:http";
 import crypto from "node:crypto";
 
-import { issueAuthToken, verifyAuthToken } from "./auth-token.mjs";
+import {
+  issueAuthToken,
+  verifyAuthToken,
+  issueRefreshToken,
+  verifyRefreshToken,
+  revokeRefreshToken,
+  cleanupExpiredRefreshTokens,
+  getRefreshTokenStats
+} from "./auth-token.mjs";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const SYNC_INTERNAL_TOKEN = process.env.CHRONICLE_SYNC_TOKEN ?? "chronicle-sync-dev-token";
@@ -1087,6 +1095,34 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (method === "GET" && path === "/api/internal/token-stats") {
+    const internalToken = req.headers["x-chronicle-sync-token"];
+    if (internalToken !== SYNC_INTERNAL_TOKEN) {
+      sendError(res, 401, "AUTH_REQUIRED", "Invalid token");
+      return;
+    }
+    
+    const stats = getRefreshTokenStats();
+    sendJson(res, 200, { 
+      ok: true, 
+      refreshTokens: stats,
+      accessTokens: { revoked: revokedTokens.size }
+    });
+    return;
+  }
+
+  if (method === "POST" && path === "/api/internal/token-cleanup") {
+    const internalToken = req.headers["x-chronicle-sync-token"];
+    if (internalToken !== SYNC_INTERNAL_TOKEN) {
+      sendError(res, 401, "AUTH_REQUIRED", "Invalid token");
+      return;
+    }
+    
+    const result = cleanupExpiredRefreshTokens();
+    sendJson(res, 200, { ok: true, result });
+    return;
+  }
+
   if (method === "POST" && path === "/api/internal/sync/session-ended") {
     const internalToken = req.headers["x-chronicle-sync-token"];
     if (internalToken !== SYNC_INTERNAL_TOKEN) {
@@ -1212,7 +1248,39 @@ const server = createServer(async (req, res) => {
       const name = typeof body.name === "string" ? body.name.trim() : "";
       const userName = name || "User";
       const token = issueAuthToken(userName);
-      sendJson(res, 200, { token, userName });
+      const refreshToken = issueRefreshToken(userName);
+      sendJson(res, 200, { token, refreshToken, userName });
+      return;
+    } catch (error) {
+      sendError(res, 400, "INVALID_BODY", error.message);
+      return;
+    }
+  }
+
+  if (method === "POST" && path === "/api/session/refresh") {
+    try {
+      const body = await parseBody(req);
+      const refreshToken = typeof body.refreshToken === "string" ? body.refreshToken : "";
+      
+      if (!refreshToken) {
+        sendError(res, 401, "AUTH_REQUIRED", "Refresh token required");
+        return;
+      }
+      
+      const tokenData = verifyRefreshToken(refreshToken);
+      if (!tokenData) {
+        sendError(res, 401, "AUTH_REQUIRED", "Invalid or expired refresh token");
+        return;
+      }
+      
+      // Issue new tokens
+      const newToken = issueAuthToken(tokenData.userName);
+      const newRefreshToken = issueRefreshToken(tokenData.userName);
+      
+      // Revoke the old refresh token (rotation)
+      revokeRefreshToken(refreshToken);
+      
+      sendJson(res, 200, { token: newToken, refreshToken: newRefreshToken, userName: tokenData.userName });
       return;
     } catch (error) {
       sendError(res, 400, "INVALID_BODY", error.message);
@@ -1221,10 +1289,22 @@ const server = createServer(async (req, res) => {
   }
 
   if (method === "POST" && path === "/api/session/logout") {
+    // Revoke access token
     const token = parseAuthToken(req);
     if (token) {
       revokedTokens.add(token);
     }
+    
+    // Revoke refresh token if provided
+    try {
+      const body = await parseBody(req);
+      if (body.refreshToken) {
+        revokeRefreshToken(body.refreshToken);
+      }
+    } catch {
+      // Ignore body parsing errors - refresh token revocation is best-effort
+    }
+    
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -2253,9 +2333,120 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Blame endpoint - paragraph-level attribution
+  const blameMatch = path.match(/^\/api\/documents\/([^/]+)\/blame$/);
+  if (method === "GET" && blameMatch) {
+    if (!requireSession(req, res)) {
+      return;
+    }
+
+    const documentId = decodeURIComponent(blameMatch[1]);
+    const proposalId = asOptionalString(url.searchParams.get("proposalId"));
+    const document = getDocumentOr404(res, documentId);
+    if (!document) {
+      return;
+    }
+
+    const useMain = proposalId === "main";
+    const proposal = useMain
+      ? null
+      : proposalId
+        ? getProposalOr404(res, document, proposalId)
+        : workflowProposal(document);
+    if (proposalId && proposalId !== "main" && !proposal) {
+      return;
+    }
+
+    const commits = proposal ? proposal.commits : document.main.commits;
+    const headCommit = commits[commits.length - 1];
+    
+    // Get threads for this proposal/document
+    const allThreads = proposal ? proposal.threads : [];
+    
+    // Build blame entries from commit history
+    // For each node in the head commit, find the most recent commit that modified it
+    const entries = [];
+    const doc = headCommit?.content?.doc;
+    
+    if (doc && Array.isArray(doc.content)) {
+      // Track which nodes we've found blame for
+      const nodeBlameMap = new Map();
+      
+      // Walk through commits from newest to oldest
+      for (let i = commits.length - 1; i >= 0; i--) {
+        const commit = commits[i];
+        const commitDoc = commit.content?.doc;
+        
+        if (!commitDoc || !Array.isArray(commitDoc.content)) {
+          continue;
+        }
+        
+        // For each node in this commit
+        for (const node of commitDoc.content) {
+          const nodeId = node.attrs?.nodeId;
+          if (!nodeId || nodeBlameMap.has(nodeId)) {
+            continue;
+          }
+          
+          // Record blame for this node
+          nodeBlameMap.set(nodeId, {
+            nodeId,
+            author: commit.author,
+            editedAt: commit.createdAt,
+            commitHash: commit.hash,
+            commitMessage: commit.message
+          });
+        }
+      }
+      
+      // Add entries for nodes in head commit, including thread info
+      for (const node of doc.content) {
+        const nodeId = node.attrs?.nodeId;
+        if (!nodeId) continue;
+        
+        const blame = nodeBlameMap.get(nodeId);
+        if (blame) {
+          // Find threads anchored to this node
+          const nodeThreads = allThreads
+            .filter(t => t.anchorNodeId === nodeId)
+            .map(t => ({
+              id: t.id,
+              author: t.author,
+              status: t.status,
+              replyCount: t.replies?.length || 0
+            }));
+          
+          entries.push({
+            ...blame,
+            threads: nodeThreads.length > 0 ? nodeThreads : undefined
+          });
+        }
+      }
+    }
+
+    sendJson(res, 200, {
+      documentId,
+      branch: proposal ? `proposals/${proposal.id}` : "main",
+      entries
+    });
+    return;
+  }
+
   sendError(res, 404, "NOT_FOUND", "Not found");
 });
 
+// Periodic cleanup of expired refresh tokens (every hour)
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+setInterval(() => {
+  const result = cleanupExpiredRefreshTokens();
+  structuredLog("TOKEN_CLEANUP", {
+    active: result.active,
+    revoked: result.revoked,
+    cleaned: result.cleaned
+  });
+}, CLEANUP_INTERVAL_MS);
+
 server.listen(PORT, () => {
   console.log(`Chronicle API listening on http://localhost:${PORT}`);
+  console.log(`Token cleanup running every ${CLEANUP_INTERVAL_MS / 1000 / 60} minutes`);
 });

@@ -1,10 +1,12 @@
 import type {
   ApprovalsResponse,
   DecisionLogResponse,
+  DocumentBlamePayload,
   DocumentComparePayload,
   DocumentHistoryPayload,
   DocumentSummary,
   MergeGateRole,
+  SearchResponse,
   SyncEvent,
   WorkspaceContent,
   WorkspacePayload,
@@ -72,7 +74,8 @@ export type ApiErrorCode =
   | "INVALID_BODY"
   | "NETWORK_ERROR"
   | "SERVER_ERROR"
-  | "REQUEST_FAILED";
+  | "REQUEST_FAILED"
+  | "EXPORT_ERROR";
 
 export class ApiError extends Error {
   status: number | null;
@@ -269,6 +272,64 @@ export async function loadSession() {
   }
 }
 
+// Email/Password Auth APIs
+export async function signUp(email: string, password: string, displayName: string) {
+  const data = await apiRequest<{
+    userId: string;
+    message: string;
+    devVerificationToken?: string;
+  }>("/api/auth/signup", {
+    method: "POST",
+    body: { email, password, displayName }
+  });
+  return data;
+}
+
+export async function signIn(email: string, password: string) {
+  const data = await apiRequest<{
+    accessToken: string;
+    refreshToken: string;
+    userId: string;
+    userName: string;
+    role: string;
+    expiresAt: number;
+  }>("/api/auth/signin", {
+    method: "POST",
+    body: { email, password }
+  });
+  setToken(data.accessToken);
+  setRefreshToken(data.refreshToken);
+  clearLocalUser();
+  return data;
+}
+
+export async function verifyEmail(token: string) {
+  const data = await apiRequest<{ message: string }>("/api/auth/verify-email", {
+    method: "POST",
+    body: { token }
+  });
+  return data;
+}
+
+export async function requestPasswordReset(email: string) {
+  const data = await apiRequest<{
+    message: string;
+    devResetToken?: string;
+  }>("/api/auth/reset-password/request", {
+    method: "POST",
+    body: { email }
+  });
+  return data;
+}
+
+export async function resetPassword(token: string, newPassword: string) {
+  const data = await apiRequest<{ message: string }>("/api/auth/reset-password", {
+    method: "POST",
+    body: { token, newPassword }
+  });
+  return data;
+}
+
 export async function login(name: string) {
   try {
     const data = await apiRequest<{ token: string; refreshToken: string; userName: string }>("/api/session/login", {
@@ -305,6 +366,24 @@ export async function logout() {
 export async function fetchDocuments() {
   const data = await apiRequest<{ documents: DocumentSummary[] }>("/api/documents");
   return data.documents;
+}
+
+export async function searchGlobal(
+  query: string,
+  filters: {
+    type?: "document" | "thread" | "decision";
+    spaceId?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
+) {
+  const params = new URLSearchParams();
+  params.set("q", query);
+  if (filters.type) params.set("type", filters.type);
+  if (filters.spaceId) params.set("spaceId", filters.spaceId);
+  if (typeof filters.limit === "number") params.set("limit", String(filters.limit));
+  if (typeof filters.offset === "number") params.set("offset", String(filters.offset));
+  return apiRequest<SearchResponse>(`/api/search?${params.toString()}`);
 }
 
 export async function createDocument(title: string, subtitle = "", spaceId?: string) {
@@ -675,4 +754,44 @@ export async function fetchAuditEvents(
     payload: Record<string, unknown>;
     createdAt: string;
   }> }>(`/api/documents/${documentId}/audit-events?${params.toString()}`);
+}
+
+export async function fetchDocumentBlame(documentId: string, proposalId: string | null) {
+  const suffix = proposalId ? `?proposalId=${encodeURIComponent(proposalId)}` : "";
+  return apiRequest<DocumentBlamePayload>(`/api/documents/${documentId}/blame${suffix}`);
+}
+
+
+export async function exportDocument(
+  documentId: string,
+  format: "pdf" | "docx",
+  options: {
+    version?: string;
+    includeThreads?: boolean;
+  } = {}
+): Promise<Blob> {
+  const token = getToken();
+  const response = await fetch(`/api/documents/${documentId}/export`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      format,
+      version: options.version ?? "latest",
+      includeThreads: options.includeThreads ?? true,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({ error: "Export failed" }));
+    throw new ApiError(
+      typeof errorBody.error === "string" ? errorBody.error : "Export failed",
+      parseApiErrorCode(errorBody.code) ?? "EXPORT_ERROR",
+      response.status
+    );
+  }
+
+  return response.blob();
 }

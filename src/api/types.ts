@@ -242,6 +242,106 @@ export type DecisionLogResponse = {
   items: DecisionLogEntry[];
 };
 
+export type SearchResultType = "document" | "thread" | "decision";
+
+export type SearchResult = {
+  type: SearchResultType;
+  id: string;
+  title: string;
+  snippet: string;
+  documentId: string;
+  spaceId: string;
+  visibility?: "INTERNAL" | "EXTERNAL";
+};
+
+export type SearchResponse = {
+  results: SearchResult[];
+  total: number;
+  query: string;
+};
+
+export type BlameEntry = {
+  nodeId: string;
+  author: string;
+  editedAt: string;
+  commitHash: string;
+  commitMessage: string;
+  threads?: {
+    id: string;
+    author: string;
+    status: "OPEN" | "RESOLVED" | "ORPHANED";
+    replyCount: number;
+  }[];
+};
+
+export type DocumentBlamePayload = {
+  documentId: string;
+  branch: string;
+  entries: BlameEntry[];
+};
+
+export type TreeItemData = {
+  id: string;
+  label: string;
+  icon?: string;
+  indent?: "indent" | "indent2" | "indent3";
+  toggle?: string;
+  badge?: "changed" | "pending" | "approved";
+  status?: DocumentStatus;
+  openThreads?: number;
+  isFolder?: boolean;
+  isEmpty?: boolean;
+  documentCount?: number;
+  children?: TreeItemData[];
+};
+
+// Auth types
+export type SignUpRequest = {
+  email: string;
+  password: string;
+  displayName: string;
+};
+
+export type SignUpResponse = {
+  userId: string;
+  message: string;
+  // Dev bypass: verification token shown in UI when email service is not configured
+  devVerificationToken?: string;
+};
+
+export type SignInRequest = {
+  email: string;
+  password: string;
+};
+
+export type SignInResponse = {
+  accessToken: string;
+  refreshToken: string;
+  userId: string;
+  userName: string;
+  role: string;
+  expiresAt: number;
+};
+
+export type RequestPasswordResetRequest = {
+  email: string;
+};
+
+export type RequestPasswordResetResponse = {
+  message: string;
+  // Dev bypass: reset token shown in UI when email service is not configured
+  devResetToken?: string;
+};
+
+export type ResetPasswordRequest = {
+  token: string;
+  newPassword: string;
+};
+
+export type VerifyEmailRequest = {
+  token: string;
+};
+
 export type SyncEvent =
   | {
       type: "connected";

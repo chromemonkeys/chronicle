@@ -1038,6 +1038,157 @@ func (s *PostgresStore) SpaceDocumentCount(ctx context.Context, spaceID string) 
 	return count, nil
 }
 
+// Tree Operations for Document Hierarchy
+
+// ListDocumentTree returns documents in tree order (root level only, sorted)
+func (s *PostgresStore) ListDocumentTree(ctx context.Context, spaceID string) ([]Document, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, title, subtitle, status, space_id, parent_id, sort_order, path, updated_by_name, updated_at
+		FROM documents
+		WHERE space_id=$1 AND parent_id IS NULL
+		ORDER BY sort_order, title
+	`, spaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list document tree: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Document, 0)
+	for rows.Next() {
+		var item Document
+		if err := rows.Scan(&item.ID, &item.Title, &item.Subtitle, &item.Status, &item.SpaceID,
+			&item.ParentID, &item.SortOrder, &item.Path, &item.UpdatedBy, &item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan document: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate documents: %w", err)
+	}
+	return items, nil
+}
+
+// ListChildDocuments returns children of a parent document
+func (s *PostgresStore) ListChildDocuments(ctx context.Context, parentID string) ([]Document, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, title, subtitle, status, space_id, parent_id, sort_order, path, updated_by_name, updated_at
+		FROM documents
+		WHERE parent_id=$1
+		ORDER BY sort_order, title
+	`, parentID)
+	if err != nil {
+		return nil, fmt.Errorf("list child documents: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Document, 0)
+	for rows.Next() {
+		var item Document
+		if err := rows.Scan(&item.ID, &item.Title, &item.Subtitle, &item.Status, &item.SpaceID,
+			&item.ParentID, &item.SortOrder, &item.Path, &item.UpdatedBy, &item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan document: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate documents: %w", err)
+	}
+	return items, nil
+}
+
+// MoveDocumentToParent moves a document to a new parent (or root) and updates path
+func (s *PostgresStore) MoveDocumentToParent(ctx context.Context, documentID string, newParentID *string, newSpaceID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Get current document info
+	var oldPath string
+	var oldSpaceID string
+	err = tx.QueryRowContext(ctx, `SELECT path, space_id FROM documents WHERE id=$1`, documentID).Scan(&oldPath, &oldSpaceID)
+	if err != nil {
+		return fmt.Errorf("get document path: %w", err)
+	}
+
+	// Build new path
+	var newPath string
+	if newParentID != nil {
+		var parentPath string
+		err = tx.QueryRowContext(ctx, `SELECT path FROM documents WHERE id=$1`, *newParentID).Scan(&parentPath)
+		if err != nil {
+			return fmt.Errorf("get parent path: %w", err)
+		}
+		newPath = parentPath + "/" + documentID
+	} else {
+		newPath = "/" + documentID
+	}
+
+	// Update this document
+	_, err = tx.ExecContext(ctx, `
+		UPDATE documents 
+		SET parent_id=$2, space_id=$3, path=$4, updated_at=NOW()
+		WHERE id=$1
+	`, documentID, newParentID, newSpaceID, newPath)
+	if err != nil {
+		return fmt.Errorf("update document parent: %w", err)
+	}
+
+	// Update all descendants' paths
+	oldPrefix := oldPath
+	newPrefix := newPath
+	_, err = tx.ExecContext(ctx, `
+		UPDATE documents
+		SET path = $2 || substring(path from $3),
+		    space_id = $4,
+		    updated_at = NOW()
+		WHERE path LIKE $1 || '/%'
+	`, oldPrefix, newPrefix, len(oldPrefix)+1, newSpaceID)
+	if err != nil {
+		return fmt.Errorf("update descendant paths: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// ReorderDocument updates sort_order for manual reordering
+func (s *PostgresStore) ReorderDocument(ctx context.Context, documentID string, newOrder int) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE documents 
+		SET sort_order=$2, updated_at=NOW()
+		WHERE id=$1
+	`, documentID, newOrder)
+	if err != nil {
+		return fmt.Errorf("reorder document: %w", err)
+	}
+	return nil
+}
+
+// GetDocumentWithChildren returns a document with its children populated
+func (s *PostgresStore) GetDocumentWithChildren(ctx context.Context, documentID string) (DocumentTreeNode, error) {
+	doc, err := s.GetDocument(ctx, documentID)
+	if err != nil {
+		return DocumentTreeNode{}, err
+	}
+
+	children, err := s.ListChildDocuments(ctx, documentID)
+	if err != nil {
+		return DocumentTreeNode{}, err
+	}
+
+	childNodes := make([]DocumentTreeNode, len(children))
+	for i, child := range children {
+		childNodes[i] = DocumentTreeNode{Document: child, Depth: 1}
+	}
+
+	return DocumentTreeNode{
+		Document: doc,
+		Children: childNodes,
+		Depth:    0,
+	}, nil
+}
+
 // Ping verifies the database connection is alive
 func (s *PostgresStore) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
@@ -1332,4 +1483,133 @@ func (s *PostgresStore) FindThreadsByAnchorNodeIDs(ctx context.Context, proposal
 		return nil, fmt.Errorf("iterate threads by anchor: %w", err)
 	}
 	return items, nil
+}
+
+
+// Auth methods
+
+// GetUserByEmail looks up a user by email address
+func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (User, error) {
+	var user User
+	var verificationExpires sql.NullTime
+	var verificationToken sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, display_name, email, password_hash, role, is_external, 
+		       is_email_verified, verification_token, verification_expires_at, created_at, updated_at
+		FROM users
+		WHERE email = $1
+	`, email).Scan(
+		&user.ID, &user.DisplayName, &user.Email, &user.PasswordHash, &user.Role,
+		&user.IsExternal, &user.IsEmailVerified, &verificationToken,
+		&verificationExpires, &user.CreatedAt, &user.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return User{}, sql.ErrNoRows
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("get user by email: %w", err)
+	}
+	if verificationToken.Valid {
+		user.VerificationToken = verificationToken.String
+	}
+	if verificationExpires.Valid {
+		user.VerificationExpiresAt = &verificationExpires.Time
+	}
+	return user, nil
+}
+
+// CreateUser creates a new user with email/password
+func (s *PostgresStore) CreateUser(ctx context.Context, user User) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO users (id, display_name, email, password_hash, role, is_external, is_email_verified)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, user.ID, user.DisplayName, user.Email, user.PasswordHash, user.Role, user.IsExternal, user.IsEmailVerified)
+	if err != nil {
+		return fmt.Errorf("create user: %w", err)
+	}
+	return nil
+}
+
+// UpdateUserVerificationToken sets the email verification token
+func (s *PostgresStore) UpdateUserVerificationToken(ctx context.Context, userID, token string, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE users 
+		SET verification_token = $2, verification_expires_at = $3, updated_at = NOW()
+		WHERE id = $1
+	`, userID, token, expiresAt)
+	if err != nil {
+		return fmt.Errorf("update verification token: %w", err)
+	}
+	return nil
+}
+
+// VerifyUserEmail marks a user as email-verified
+func (s *PostgresStore) VerifyUserEmail(ctx context.Context, token string) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE users 
+		SET is_email_verified = true, verification_token = NULL, verification_expires_at = NULL, updated_at = NOW()
+		WHERE verification_token = $1 AND verification_expires_at > NOW()
+	`, token)
+	if err != nil {
+		return fmt.Errorf("verify email: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UpdateUserPassword updates the password hash for a user
+func (s *PostgresStore) UpdateUserPassword(ctx context.Context, userID, passwordHash string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE users 
+		SET password_hash = $2, updated_at = NOW()
+		WHERE id = $1
+	`, userID, passwordHash)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	return nil
+}
+
+// CreatePasswordReset creates a password reset token
+func (s *PostgresStore) CreatePasswordReset(ctx context.Context, userID, token string, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO password_resets (user_id, reset_token, expires_at)
+		VALUES ($1, $2, $3)
+	`, userID, token, expiresAt)
+	if err != nil {
+		return fmt.Errorf("create password reset: %w", err)
+	}
+	return nil
+}
+
+// GetPasswordReset looks up a password reset token
+func (s *PostgresStore) GetPasswordReset(ctx context.Context, token string) (string, error) {
+	var userID string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT user_id FROM password_resets
+		WHERE reset_token = $1 AND expires_at > NOW() AND used_at IS NULL
+	`, token).Scan(&userID)
+	if err == sql.ErrNoRows {
+		return "", sql.ErrNoRows
+	}
+	if err != nil {
+		return "", fmt.Errorf("get password reset: %w", err)
+	}
+	return userID, nil
+}
+
+// MarkPasswordResetUsed marks a password reset token as used
+func (s *PostgresStore) MarkPasswordResetUsed(ctx context.Context, token string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE password_resets 
+		SET used_at = NOW()
+		WHERE reset_token = $1
+	`, token)
+	if err != nil {
+		return fmt.Errorf("mark password reset used: %w", err)
+	}
+	return nil
 }

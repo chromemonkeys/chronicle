@@ -19,7 +19,7 @@ COPY db /app/db
 
 RUN addgroup -S app && adduser -S -G app -u 65532 app \
     && i=0; until [ "$i" -ge 5 ]; do \
-         apk update && apk add --no-cache ca-certificates wget && break; \
+         apk update && apk add --no-cache ca-certificates wget chromium pandoc ttf-freefont && break; \
          i=$((i + 1)); \
          echo "apk install failed (attempt $i/5), retrying..."; \
          sleep $((i * 2)); \

@@ -12,6 +12,7 @@ import type { DocumentSummary, Space, WorkspacesResponse } from "../api/types";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { EmptyStateError, EmptyStateEmpty } from "../ui/EmptyState";
+import { SearchBar } from "../ui/SearchBar";
 
 type ViewState = "success" | "loading" | "empty" | "error";
 
@@ -215,6 +216,7 @@ export function DocumentsPage() {
               </Button>
             </div>
           </div>
+          <SearchBar spaceId={spaceId} />
           {isCreateDocFormOpen ? (
             <form
               className="inline-form"

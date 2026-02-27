@@ -7,15 +7,26 @@ import (
 )
 
 type Config struct {
-	Addr          string
-	DatabaseURL   string
-	JWTSecret     string
-	SyncToken     string
-	AccessTTL     time.Duration
-	RefreshTTL    time.Duration
-	ReposDir      string
-	MigrationsDir string
-	CORSOrigin    string
+	Addr           string
+	DatabaseURL    string
+	JWTSecret      string
+	SyncToken      string
+	AccessTTL      time.Duration
+	RefreshTTL     time.Duration
+	ReposDir       string
+	MigrationsDir  string
+	CORSOrigin     string
+	MeiliURL       string
+	MeiliMasterKey string
+	// SMTP Configuration
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+	SMTPFromName string
+	// Redis Configuration
+	RedisURL string
 }
 
 func Load() Config {
@@ -28,7 +39,18 @@ func Load() Config {
 		RefreshTTL:    time.Duration(getenvInt("CHRONICLE_REFRESH_TTL_SECONDS", 2592000)) * time.Second,
 		ReposDir:      getenv("CHRONICLE_REPOS_DIR", "./data/repos"),
 		MigrationsDir: getenv("CHRONICLE_MIGRATIONS_DIR", "./db/migrations"),
-		CORSOrigin:    getenv("CHRONICLE_CORS_ORIGIN", "*"),
+		CORSOrigin:     getenv("CHRONICLE_CORS_ORIGIN", "*"),
+		MeiliURL:       getenv("MEILI_URL", "http://localhost:7700"),
+		MeiliMasterKey: getenv("MEILI_MASTER_KEY", "chronicle-meili-key"),
+		// SMTP - empty by default, email disabled if not configured
+		SMTPHost:     getenv("SMTP_HOST", ""),
+		SMTPPort:     getenv("SMTP_PORT", "587"),
+		SMTPUsername: getenv("SMTP_USERNAME", ""),
+		SMTPPassword: getenv("SMTP_PASSWORD", ""),
+		SMTPFrom:     getenv("SMTP_FROM", ""),
+		SMTPFromName: getenv("SMTP_FROM_NAME", "Chronicle"),
+		// Redis - required for refresh token storage (AUTH-102)
+		RedisURL: getenv("REDIS_URL", "redis://localhost:6379/0"),
 	}
 }
 

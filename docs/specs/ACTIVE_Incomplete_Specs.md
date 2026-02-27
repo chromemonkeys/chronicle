@@ -36,7 +36,7 @@ Source: former `docs/specs/PHASE-1_Foundation_Detailed_Spec.md`
 ### Phase 2 Core Document Engine (open)
 Source: former `docs/specs/PHASE-2_Core_Document_Engine_Detailed_Spec.md`
 - [ ] Proposal lifecycle is fully end-to-end with audit-safe transitions.
-- [ ] Realtime events are contract-stable and reconnect-safe.
+- [x] Realtime events are contract-stable and reconnect-safe.
 - [ ] Workspace load/save round-trips canonical document content deterministically.
 - [ ] Merge prechecks are fully server-enforced with stable conflict payloads.
 - [ ] Critical flows have blocking automated tests.
@@ -99,7 +99,7 @@ Source: `docs/specs/SPEC-004_Diff_Review_V1_V2.md`
 ## 5) Remaining Audit Fix Set
 
 Source: former `docs/Phase1-3_Audit_Fixes.md`
-- [ ] Fix 1: main-branch history special-casing + tests
+- [x] Fix 1: main-branch history special-casing + tests
 - [ ] Fix 2: approval ordering enforcement + tests
 - [ ] Fix 3: sync session idempotency/document-proposal validation + tests
 - [ ] Fix 4: submit-action RBAC enforcement + tests

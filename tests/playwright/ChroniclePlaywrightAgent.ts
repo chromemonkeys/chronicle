@@ -18,6 +18,8 @@ type ApprovalsResponse = {
   mergeGate: Record<MergeGateRole, MergeGateStatus>;
   queue: Array<{
     id: string;
+    documentId: string;
+    proposalId: string;
     title: string;
     requestedBy: string;
     status: ApprovalQueueStatus;
@@ -309,6 +311,8 @@ function buildDefaultApprovals(workspace: WorkspacePayload): ApprovalsResponse {
     queue: [
       {
         id: workspace.document.id,
+        documentId: workspace.document.id,
+        proposalId: workspace.document.proposalId ?? "",
         title: workspace.document.title,
         requestedBy: workspace.document.editedBy,
         status: "Blocked"
@@ -1153,9 +1157,10 @@ export class ChroniclePlaywrightAgent {
         await this.fail(route, 422, "name is required", "VALIDATION_ERROR");
         return;
       }
+      this.touchWorkspace(documentId, `Save named version: ${name}`);
       const namedVersion: NamedVersion = {
         name,
-        hash: this.nextHash(),
+        hash: workspace.history[0]?.hash ?? this.nextHash(),
         createdBy: this.userName ?? "Reviewer",
         createdAt: nowIso()
       };
@@ -1163,7 +1168,6 @@ export class ChroniclePlaywrightAgent {
         namedVersion,
         ...(this.namedVersionsByDocumentId[documentId] ?? [])
       ];
-      this.touchWorkspace(documentId, `Save named version: ${name}`);
       await this.ok(route, workspace);
       return;
     }
@@ -1200,6 +1204,8 @@ export class ChroniclePlaywrightAgent {
       ? [
           {
             id: primary.document.id,
+            documentId: primary.document.id,
+            proposalId: primary.document.proposalId ?? "",
             title: primary.document.title,
             requestedBy: primary.document.editedBy,
             status: pendingApprovals === 3 ? "Blocked" : "Ready"

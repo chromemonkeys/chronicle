@@ -3,10 +3,17 @@ package store
 import "time"
 
 type User struct {
-	ID          string
-	DisplayName string
-	Role        string
-	IsExternal  bool
+	ID                   string
+	DisplayName          string
+	Email                string
+	PasswordHash         string
+	Role                 string
+	IsExternal           bool
+	IsEmailVerified      bool
+	VerificationToken    string
+	VerificationExpiresAt *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type Workspace struct {
@@ -30,13 +37,23 @@ type Space struct {
 }
 
 type Document struct {
-	ID        string
-	Title     string
-	Subtitle  string
-	Status    string
-	SpaceID   string
-	UpdatedBy string
-	UpdatedAt time.Time
+	ID         string
+	Title      string
+	Subtitle   string
+	Status     string
+	SpaceID    string
+	ParentID   *string
+	SortOrder  int
+	Path       string
+	UpdatedBy  string
+	UpdatedAt  time.Time
+}
+
+// DocumentTreeNode represents a document in the tree hierarchy
+type DocumentTreeNode struct {
+	Document
+	Children []DocumentTreeNode
+	Depth    int
 }
 
 type Proposal struct {

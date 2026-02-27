@@ -6,12 +6,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"chronicle/api/internal/app"
 	"chronicle/api/internal/config"
 	"chronicle/api/internal/gitrepo"
+	"chronicle/api/internal/search"
+	"chronicle/api/internal/session"
 	"chronicle/api/internal/store"
 )
 
@@ -35,7 +38,30 @@ func main() {
 
 	dataStore := store.NewPostgresStore(db)
 	gitService := gitrepo.New(cfg.ReposDir)
-	service := app.New(cfg, dataStore, gitService)
+	pgfts := search.NewPgFTS(db)
+	var meiliClient *search.Meili
+	if strings.TrimSpace(cfg.MeiliURL) != "" {
+		meiliClient = search.NewMeili(cfg.MeiliURL, cfg.MeiliMasterKey)
+	}
+	searchService := search.NewService(meiliClient, pgfts)
+	if meiliClient != nil {
+		defer meiliClient.Close()
+	}
+
+	// Initialize Redis session store for refresh tokens (AUTH-102)
+	var service *app.Service
+	if strings.TrimSpace(cfg.RedisURL) != "" {
+		log.Printf("Using Redis for refresh token storage")
+		redisStore, err := session.NewRedisStore(cfg.RedisURL)
+		if err != nil {
+			log.Fatalf("redis connection failed: %v", err)
+		}
+		defer redisStore.Close()
+		service = app.NewWithSessionStore(cfg, dataStore, redisStore, gitService, searchService)
+	} else {
+		log.Printf("Using PostgreSQL for refresh token storage")
+		service = app.New(cfg, dataStore, gitService, searchService)
+	}
 	if err := service.Bootstrap(ctx); err != nil {
 		log.Printf("WARNING: bootstrap error (will retry on next restart): %v", err)
 	}

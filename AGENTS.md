@@ -6,6 +6,7 @@ At the start of every new agent session, load these files before taking actions:
 1. `docs/agent-memory/README.md`
 2. `docs/agent-memory/Chronicle_Product_Vision_v2.txt`
 3. `docs/agent-memory/Chronicle_Technical_Architecture.txt`
+4. `docs/architecture-model/README.md`
 
 If a `.txt` file is missing, load the matching `.md` file instead.
 
@@ -27,3 +28,17 @@ These files are the canonical product and architecture context for this reposito
 - The source of truth for task tracking is GitHub Issue `#76`.
 - All tasks must be managed and worked from GitHub, not local backlog files.
 - When starting work on any task, update its GitHub status immediately to reflect that it is in progress.
+
+## Architecture Model Maintenance (Required)
+- The file `docs/architecture-model/README.md` is the canonical architecture reference.
+- **After every code commit that changes:**
+  - Service structure or boundaries
+  - Database schema or tables
+  - Directory/folder organization
+  - API patterns or communication flows
+  - Security model or permissions
+  - Deployment configuration
+  - Build milestones or dependencies
+- **You MUST update the architecture model** to reflect the changes.
+- Update the **Last Updated** date at the top of the file after each modification.
+- Use the Maintenance Checklist in that file to ensure all relevant sections are updated.

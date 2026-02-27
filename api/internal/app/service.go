@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,9 +16,12 @@ import (
 	"time"
 
 	"chronicle/api/internal/auth"
+	"chronicle/api/internal/authpw"
 	"chronicle/api/internal/config"
+	"chronicle/api/internal/export"
 	"chronicle/api/internal/gitrepo"
 	"chronicle/api/internal/rbac"
+	"chronicle/api/internal/search"
 	"chronicle/api/internal/store"
 	"chronicle/api/internal/util"
 )
@@ -153,6 +157,10 @@ type dataStore interface {
 	ListDocumentsBySpace(context.Context, string) ([]store.Document, error)
 	MoveDocument(context.Context, string, string) error
 	SpaceDocumentCount(context.Context, string) (int, error)
+	ListDocumentTree(context.Context, string) ([]store.Document, error)
+	ListChildDocuments(context.Context, string) ([]store.Document, error)
+	MoveDocumentToParent(context.Context, string, *string, string) error
+	ReorderDocument(context.Context, string, int) error
 	Ping(ctx context.Context) error
 	UpsertChangeReviewState(context.Context, store.ChangeReviewState) error
 	ListChangeReviewStates(context.Context, string, string, string) ([]store.ChangeReviewState, error)
@@ -163,6 +171,15 @@ type dataStore interface {
 	OrphanThread(context.Context, string, string, string) (bool, error)
 	ListOrphanedThreads(context.Context, string) ([]store.Thread, error)
 	FindThreadsByAnchorNodeIDs(context.Context, string, []string) ([]store.Thread, error)
+	// Auth methods
+	GetUserByEmail(context.Context, string) (store.User, error)
+	CreateUser(context.Context, store.User) error
+	UpdateUserVerificationToken(context.Context, string, string, time.Time) error
+	VerifyUserEmail(context.Context, string) error
+	UpdateUserPassword(context.Context, string, string) error
+	CreatePasswordReset(context.Context, string, string, time.Time) error
+	GetPasswordReset(context.Context, string) (string, error)
+	MarkPasswordResetUsed(context.Context, string) error
 }
 
 type gitService interface {
@@ -182,22 +199,226 @@ type syncSessionRecord struct {
 	payload   map[string]any
 }
 
+// RefreshTokenStore defines the interface for refresh token storage
+type RefreshTokenStore interface {
+	SaveRefreshSession(ctx context.Context, tokenHash, userID string, expiresAt time.Time) error
+	LookupRefreshSession(ctx context.Context, tokenHash string) (store.User, error)
+	RevokeRefreshSession(ctx context.Context, tokenHash string) error
+}
+
 type Service struct {
 	cfg            config.Config
 	store          dataStore
+	sessionStore   RefreshTokenStore
 	git            gitService
+	search         *search.Service
+	export         *export.Service
+	authPw         *authpw.Service
 	syncSessionTTL time.Duration
 	syncMu         sync.Mutex
 	syncSessions   map[string]syncSessionRecord
 }
 
-func New(cfg config.Config, dataStore *store.PostgresStore, gitService *gitrepo.Service) *Service {
+func New(cfg config.Config, dataStore *store.PostgresStore, gitService *gitrepo.Service, searchService *search.Service) *Service {
+	return NewWithSessionStore(cfg, dataStore, dataStore, gitService, searchService)
+}
+
+// NewWithSessionStore creates a Service with a custom session store (e.g., Redis)
+func NewWithSessionStore(cfg config.Config, dataStore *store.PostgresStore, sessionStore RefreshTokenStore, gitService *gitrepo.Service, searchService *search.Service) *Service {
+	// Initialize auth service (uses JWT secret for token generation)
+	authPwService := authpw.NewService(dataStore, cfg.JWTSecret)
+
 	return &Service{
 		cfg:            cfg,
 		store:          dataStore,
+		sessionStore:   sessionStore,
 		git:            gitService,
+		search:         searchService,
+		export:         export.NewService(&exportStoreAdapter{store: dataStore, git: gitService}),
+		authPw:         authPwService,
 		syncSessionTTL: 15 * time.Minute,
 		syncSessions:   make(map[string]syncSessionRecord),
+	}
+}
+
+// exportStoreAdapter adapts the app's dataStore to export.DataStore interface
+type exportStoreAdapter struct {
+	store dataStore
+	git   gitService
+}
+
+func (a *exportStoreAdapter) GetDocument(ctx context.Context, id string) (export.DocumentInfo, error) {
+	doc, err := a.store.GetDocument(ctx, id)
+	if err != nil {
+		return export.DocumentInfo{}, err
+	}
+	return export.DocumentInfo{
+		ID:        doc.ID,
+		Title:     doc.Title,
+		Subtitle:  doc.Subtitle,
+		Status:    doc.Status,
+		SpaceID:   doc.SpaceID,
+		UpdatedBy: doc.UpdatedBy,
+		UpdatedAt: doc.UpdatedAt,
+	}, nil
+}
+
+func (a *exportStoreAdapter) GetSpace(ctx context.Context, id string) (export.SpaceInfo, error) {
+	space, err := a.store.GetSpace(ctx, id)
+	if err != nil {
+		return export.SpaceInfo{}, err
+	}
+	return export.SpaceInfo{
+		ID:   space.ID,
+		Name: space.Name,
+	}, nil
+}
+
+func (a *exportStoreAdapter) ListThreads(ctx context.Context, documentID string) ([]export.ThreadInfo, error) {
+	// Get active proposal for document
+	proposal, err := a.store.GetActiveProposal(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+	if proposal == nil {
+		return []export.ThreadInfo{}, nil
+	}
+
+	threads, err := a.store.ListThreads(ctx, proposal.ID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []export.ThreadInfo
+	for _, t := range threads {
+		result = append(result, export.ThreadInfo{
+			ID:         t.ID,
+			DocumentID: documentID,
+			Anchor:     t.Anchor,
+			Text:       t.Text,
+			Author:     t.Author,
+			Status:     t.Status,
+			Outcome:    t.ResolvedOutcome,
+			Visibility: t.Visibility,
+		})
+	}
+	return result, nil
+}
+
+func (a *exportStoreAdapter) ListThreadReplies(ctx context.Context, threadID string) ([]export.ReplyInfo, error) {
+	annotations, err := a.store.ListThreadAnnotations(ctx, "", threadID)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []export.ReplyInfo
+	for _, ann := range annotations {
+		result = append(result, export.ReplyInfo{
+			Author: ann.Author,
+			Body:   ann.Body,
+		})
+	}
+	return result, nil
+}
+
+func (a *exportStoreAdapter) GetDocumentContent(ctx context.Context, documentID, version string) (interface{}, error) {
+	var (
+		content gitrepo.Content
+		err     error
+	)
+
+	if version == "" || version == "latest" {
+		content, _, err = a.git.GetHeadContent(documentID, "main")
+	} else {
+		content, err = a.git.GetContentByHash(documentID, version)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(content.Doc) == 0 {
+		legacyDoc := legacyExportDoc(content)
+		if legacyDoc == nil {
+			return nil, export.ErrContentUnavailable
+		}
+		return legacyDoc, nil
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(content.Doc, &doc); err != nil {
+		return nil, fmt.Errorf("unmarshal doc content: %w", err)
+	}
+	return doc, nil
+}
+
+func legacyExportDoc(content gitrepo.Content) map[string]any {
+	nodes := make([]any, 0, 8)
+	appendHeadingAndParagraph := func(heading string, body string) {
+		trimmed := strings.TrimSpace(body)
+		if trimmed == "" {
+			return
+		}
+		nodes = append(nodes,
+			map[string]any{
+				"type": "heading",
+				"attrs": map[string]any{
+					"level": 2,
+				},
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": heading,
+					},
+				},
+			},
+			map[string]any{
+				"type": "paragraph",
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": trimmed,
+					},
+				},
+			},
+		)
+	}
+
+	if title := strings.TrimSpace(content.Title); title != "" {
+		nodes = append(nodes, map[string]any{
+			"type": "heading",
+			"attrs": map[string]any{
+				"level": 1,
+			},
+			"content": []any{
+				map[string]any{
+					"type": "text",
+					"text": title,
+				},
+			},
+		})
+	}
+
+	if subtitle := strings.TrimSpace(content.Subtitle); subtitle != "" {
+		nodes = append(nodes, map[string]any{
+			"type": "paragraph",
+			"content": []any{
+				map[string]any{
+					"type": "text",
+					"text": subtitle,
+				},
+			},
+		})
+	}
+
+	appendHeadingAndParagraph("Purpose", content.Purpose)
+	appendHeadingAndParagraph("Tiers", content.Tiers)
+	appendHeadingAndParagraph("Enforcement", content.Enforce)
+
+	if len(nodes) == 0 {
+		return nil
+	}
+	return map[string]any{
+		"type":    "doc",
+		"content": nodes,
 	}
 }
 
@@ -207,6 +428,7 @@ func (s *Service) Bootstrap(ctx context.Context) error {
 		return err
 	}
 	if len(documents) > 0 {
+		s.bootstrapSearch(ctx)
 		return nil
 	}
 
@@ -329,7 +551,15 @@ func (s *Service) Bootstrap(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	s.bootstrapSearch(ctx)
 	return nil
+}
+
+func (s *Service) bootstrapSearch(ctx context.Context) {
+	if s.search == nil {
+		return
+	}
+	s.search.ReindexAllFromPG(ctx)
 }
 
 func (s *Service) Login(ctx context.Context, name string) (Session, error) {
@@ -348,14 +578,38 @@ func (s *Service) Login(ctx context.Context, name string) (Session, error) {
 
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (Session, error) {
 	tokenHash := auth.HashToken(refreshToken)
-	user, err := s.store.LookupRefreshSession(ctx, tokenHash)
+	user, err := s.sessionStore.LookupRefreshSession(ctx, tokenHash)
 	if err != nil {
 		return Session{}, err
 	}
-	if err := s.store.RevokeRefreshSession(ctx, tokenHash); err != nil {
+	if err := s.sessionStore.RevokeRefreshSession(ctx, tokenHash); err != nil {
 		return Session{}, err
 	}
 	return s.issueSession(ctx, user)
+}
+
+// CreateSession creates a new session for a user by ID (used for email/password auth)
+func (s *Service) CreateSession(ctx context.Context, userID string) (Session, error) {
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return Session{}, err
+	}
+	return s.issueSession(ctx, user)
+}
+
+// GetUserByID retrieves a user by their ID
+func (s *Service) GetUserByID(ctx context.Context, userID string) (store.User, error) {
+	return s.store.GetUserByID(ctx, userID)
+}
+
+// GetUserByEmail retrieves a user by their email
+func (s *Service) GetUserByEmail(ctx context.Context, email string) (store.User, error) {
+	return s.store.GetUserByEmail(ctx, email)
+}
+
+// AuthPasswordService returns the email/password auth service (may be nil if not configured)
+func (s *Service) AuthPasswordService() *authpw.Service {
+	return s.authPw
 }
 
 func (s *Service) issueSession(ctx context.Context, user store.User) (Session, error) {
@@ -376,7 +630,7 @@ func (s *Service) issueSession(ctx context.Context, user store.User) (Session, e
 
 	refresh := util.NewID("rft") + util.NewID("")
 	refreshExpires := now.Add(s.cfg.RefreshTTL)
-	if err := s.store.SaveRefreshSession(ctx, auth.HashToken(refresh), user.ID, refreshExpires); err != nil {
+	if err := s.sessionStore.SaveRefreshSession(ctx, auth.HashToken(refresh), user.ID, refreshExpires); err != nil {
 		return Session{}, err
 	}
 
@@ -426,7 +680,7 @@ func (s *Service) Logout(ctx context.Context, session Session, refreshToken stri
 		_ = s.store.RevokeAccessToken(ctx, session.JTI, session.ExpiresAt)
 	}
 	if refreshToken != "" {
-		_ = s.store.RevokeRefreshSession(ctx, auth.HashToken(refreshToken))
+		_ = s.sessionStore.RevokeRefreshSession(ctx, auth.HashToken(refreshToken))
 	}
 	return nil
 }
@@ -464,6 +718,68 @@ func (s *Service) ListDocuments(ctx context.Context) ([]map[string]any, error) {
 		})
 	}
 	return items, nil
+}
+
+func (s *Service) Search(ctx context.Context, text, filterType, filterSpaceID string, limit, offset int, isExternal bool) (map[string]any, error) {
+	if s.search == nil {
+		return map[string]any{
+			"results": []map[string]any{},
+			"total":   0,
+			"query":   strings.TrimSpace(text),
+		}, nil
+	}
+
+	var resultType search.ResultType
+	switch strings.TrimSpace(strings.ToLower(filterType)) {
+	case "":
+		resultType = ""
+	case "document":
+		resultType = search.ResultDocument
+	case "thread":
+		resultType = search.ResultThread
+	case "decision":
+		resultType = search.ResultDecision
+	default:
+		return nil, domainError(http.StatusUnprocessableEntity, "VALIDATION_ERROR", "type must be one of document, thread, decision", nil)
+	}
+
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	response := s.search.Search(search.Query{
+		Text:          strings.TrimSpace(text),
+		FilterType:    resultType,
+		FilterSpaceID: strings.TrimSpace(filterSpaceID),
+		Limit:         limit,
+		Offset:        offset,
+		IsExternal:    isExternal,
+	})
+
+	results := make([]map[string]any, 0, len(response.Results))
+	for _, result := range response.Results {
+		results = append(results, map[string]any{
+			"type":       string(result.Type),
+			"id":         result.ID,
+			"title":      result.Title,
+			"snippet":    result.Snippet,
+			"documentId": result.DocumentID,
+			"spaceId":    result.SpaceID,
+			"visibility": result.Visibility,
+		})
+	}
+
+	return map[string]any{
+		"results": results,
+		"total":   response.Total,
+		"query":   response.Query,
+	}, nil
 }
 
 func (s *Service) GetDocumentSummary(ctx context.Context, documentID string) (map[string]any, error) {
@@ -566,6 +882,15 @@ func (s *Service) CreateDocument(ctx context.Context, title, subtitle, spaceID, 
 	if err := s.git.EnsureDocumentRepo(documentID, initialContent, userName); err != nil {
 		return nil, err
 	}
+	if s.search != nil {
+		s.search.IndexDocument(search.DocumentRecord{
+			ID:       documentID,
+			Title:    documentTitle,
+			Subtitle: documentSubtitle,
+			SpaceID:  spaceID,
+			Status:   "Draft",
+		})
+	}
 	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
 }
 
@@ -606,6 +931,18 @@ func (s *Service) SaveWorkspace(ctx context.Context, documentID string, content 
 		}
 		if err := s.store.UpdateDocumentState(ctx, documentID, next.Title, next.Subtitle, "In review", userName); err != nil {
 			return nil, err
+		}
+		if s.search != nil {
+			doc, err := s.store.GetDocument(ctx, documentID)
+			if err == nil {
+				s.search.IndexDocument(search.DocumentRecord{
+					ID:       documentID,
+					Title:    next.Title,
+					Subtitle: next.Subtitle,
+					SpaceID:  doc.SpaceID,
+					Status:   "In review",
+				})
+			}
 		}
 		// Check for orphaned threads when document structure changes
 		if err := s.detectAndOrphanThreads(ctx, proposal.ID, next.Doc, userName); err != nil {
@@ -722,6 +1059,21 @@ func (s *Service) CreateThread(ctx context.Context, documentID, proposalID, user
 	}); err != nil {
 		return nil, err
 	}
+	if s.search != nil {
+		document, err := s.store.GetDocument(ctx, documentID)
+		if err == nil {
+			s.search.IndexThread(search.ThreadRecord{
+				ID:          threadID,
+				Body:        text,
+				AnchorLabel: anchorLabel,
+				DocumentID:  documentID,
+				SpaceID:     document.SpaceID,
+				Visibility:  visibility,
+				Status:      "OPEN",
+				Type:        threadType,
+			})
+		}
+	}
 	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
 }
 
@@ -827,16 +1179,42 @@ func (s *Service) ResolveThread(ctx context.Context, documentID, proposalID, thr
 		return nil, err
 	}
 	if err := s.store.InsertDecisionLog(ctx, store.DecisionLogEntry{
-		DocumentID: documentID,
-		ProposalID: proposalID,
-		ThreadID:   threadID,
-		Outcome:    outcome,
-		Rationale:  rationale,
-		DecidedBy:  userName,
-		CommitHash: headCommit.Hash,
+		DocumentID:   documentID,
+		ProposalID:   proposalID,
+		ThreadID:     threadID,
+		Outcome:      outcome,
+		Rationale:    rationale,
+		DecidedBy:    userName,
+		CommitHash:   headCommit.Hash,
 		Participants: participants,
 	}); err != nil {
 		return nil, err
+	}
+	if s.search != nil {
+		document, err := s.store.GetDocument(ctx, documentID)
+		if err == nil {
+			s.search.IndexThread(search.ThreadRecord{
+				ID:          thread.ID,
+				Body:        thread.Text,
+				AnchorLabel: thread.Anchor,
+				DocumentID:  documentID,
+				SpaceID:     document.SpaceID,
+				Visibility:  thread.Visibility,
+				Status:      thread.Status,
+				Type:        thread.Type,
+			})
+			decisionRows, err := s.store.ListDecisionLog(ctx, documentID, proposalID, 1)
+			if err == nil && len(decisionRows) > 0 {
+				entry := decisionRows[0]
+				s.search.IndexDecision(search.DecisionRecord{
+					ID:         fmt.Sprintf("%d", entry.ID),
+					Rationale:  entry.Rationale,
+					Outcome:    entry.Outcome,
+					DocumentID: entry.DocumentID,
+					SpaceID:    document.SpaceID,
+				})
+			}
+		}
 	}
 	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
 }
@@ -1057,20 +1435,20 @@ func buildNamedVersionTagName(label, commitHash string) string {
 }
 
 type MergeGatePolicy struct {
-	AllowMergeWithDeferredChanges bool `json:"allowMergeWithDeferredChanges"`
+	AllowMergeWithDeferredChanges  bool `json:"allowMergeWithDeferredChanges"`
 	IgnoreFormatOnlyChangesForGate bool `json:"ignoreFormatOnlyChangesForGate"`
 }
 
 func defaultMergeGatePolicy() MergeGatePolicy {
 	return MergeGatePolicy{
-		AllowMergeWithDeferredChanges: false,
+		AllowMergeWithDeferredChanges:  false,
 		IgnoreFormatOnlyChangesForGate: false,
 	}
 }
 
 func mergeGateDetailsFromPolicy(policy MergeGatePolicy) map[string]any {
 	return map[string]any{
-		"allowMergeWithDeferredChanges": policy.AllowMergeWithDeferredChanges,
+		"allowMergeWithDeferredChanges":  policy.AllowMergeWithDeferredChanges,
 		"ignoreFormatOnlyChangesForGate": policy.IgnoreFormatOnlyChangesForGate,
 	}
 }
@@ -1103,15 +1481,15 @@ func buildChangeStateBlockers(changeStates []map[string]any, policy MergeGatePol
 			continue
 		}
 		blockers = append(blockers, map[string]any{
-			"id":      "change:" + changeID,
-			"type":    "change",
-			"label":   "Change " + changeID + " is " + firstNonBlank(reviewState, "pending"),
+			"id":       "change:" + changeID,
+			"type":     "change",
+			"label":    "Change " + changeID + " is " + firstNonBlank(reviewState, "pending"),
 			"changeId": changeID,
-			"state":   firstNonBlank(reviewState, "pending"),
+			"state":    firstNonBlank(reviewState, "pending"),
 			"link": map[string]any{
-				"tab":    "history",
+				"tab":      "history",
 				"changeId": changeID,
-				"nodeId": anchorNodeID,
+				"nodeId":   anchorNodeID,
 			},
 		})
 	}
@@ -1137,11 +1515,11 @@ func (s *Service) buildMergeGateDetails(ctx context.Context, proposalID string, 
 		pendingApprovals++
 		roleKey := strings.TrimSpace(approval.Role)
 		blockers = append(blockers, map[string]any{
-			"id":      "approval:" + roleKey,
-			"type":    "approval",
-			"label":   roleLabel(roleKey) + " approval is pending",
-			"role":    roleKey,
-			"status":  approval.Status,
+			"id":     "approval:" + roleKey,
+			"type":   "approval",
+			"label":  roleLabel(roleKey) + " approval is pending",
+			"role":   roleKey,
+			"status": approval.Status,
 			"link": map[string]any{
 				"tab":  "approvals",
 				"role": roleKey,
@@ -1263,6 +1641,18 @@ func (s *Service) MergeProposal(ctx context.Context, documentID, proposalID, use
 	if err := s.store.UpdateDocumentState(ctx, documentID, mainContent.Title, mainContent.Subtitle, "Approved", userName); err != nil {
 		return nil, nil, err
 	}
+	if s.search != nil {
+		document, err := s.store.GetDocument(ctx, documentID)
+		if err == nil {
+			s.search.IndexDocument(search.DocumentRecord{
+				ID:       documentID,
+				Title:    mainContent.Title,
+				Subtitle: mainContent.Subtitle,
+				SpaceID:  document.SpaceID,
+				Status:   "Approved",
+			})
+		}
+	}
 
 	if err := s.store.InsertDecisionLog(ctx, store.DecisionLogEntry{
 		DocumentID: documentID,
@@ -1274,6 +1664,22 @@ func (s *Service) MergeProposal(ctx context.Context, documentID, proposalID, use
 		CommitHash: mergeCommit.Hash,
 	}); err != nil {
 		return nil, nil, err
+	}
+	if s.search != nil {
+		document, err := s.store.GetDocument(ctx, documentID)
+		if err == nil {
+			decisionRows, err := s.store.ListDecisionLog(ctx, documentID, proposalID, 1)
+			if err == nil && len(decisionRows) > 0 {
+				entry := decisionRows[0]
+				s.search.IndexDecision(search.DecisionRecord{
+					ID:         fmt.Sprintf("%d", entry.ID),
+					Rationale:  entry.Rationale,
+					Outcome:    entry.Outcome,
+					DocumentID: entry.DocumentID,
+					SpaceID:    document.SpaceID,
+				})
+			}
+		}
 	}
 
 	workspace, err := s.GetWorkspace(ctx, documentID, viewerIsExternal)
@@ -1803,25 +2209,25 @@ func (s *Service) GetWorkspace(ctx context.Context, documentID string, viewerIsE
 				reactions = []map[string]any{}
 			}
 			threads = append(threads, map[string]any{
-				"id":            thread.ID,
-				"initials":      initials(thread.Author),
-				"author":        thread.Author,
-				"time":          relative(thread.CreatedAt),
-				"anchor":        thread.Anchor,
-				"anchorNodeId":  thread.AnchorNodeID,
-				"anchorOffsets": anchorOffsets,
-				"text":          thread.Text,
-				"quote":         nilIfEmpty(strings.TrimSpace(quote)),
-				"votes":         voteTotals[thread.ID],
-				"voted":         false,
-				"reactions":     reactions,
-				"tone":          toneFromName(thread.Author),
-				"status":        thread.Status,
-				"type":          thread.Type,
-				"visibility":    thread.Visibility,
+				"id":              thread.ID,
+				"initials":        initials(thread.Author),
+				"author":          thread.Author,
+				"time":            relative(thread.CreatedAt),
+				"anchor":          thread.Anchor,
+				"anchorNodeId":    thread.AnchorNodeID,
+				"anchorOffsets":   anchorOffsets,
+				"text":            thread.Text,
+				"quote":           nilIfEmpty(strings.TrimSpace(quote)),
+				"votes":           voteTotals[thread.ID],
+				"voted":           false,
+				"reactions":       reactions,
+				"tone":            toneFromName(thread.Author),
+				"status":          thread.Status,
+				"type":            thread.Type,
+				"visibility":      thread.Visibility,
 				"resolvedOutcome": nilIfEmpty(thread.ResolvedOutcome),
-				"resolvedNote":  nilIfEmpty(thread.ResolvedNote),
-				"replies":       replies,
+				"resolvedNote":    nilIfEmpty(thread.ResolvedNote),
+				"replies":         replies,
 			})
 		}
 
@@ -2094,8 +2500,144 @@ func (s *Service) MoveDocument(ctx context.Context, documentID, newSpaceID strin
 	return map[string]any{"ok": true, "documentId": documentID, "spaceId": newSpaceID}, nil
 }
 
+// Document Tree Operations
+
+// ListDocumentTree returns hierarchical tree structure for a space
+func (s *Service) ListDocumentTree(ctx context.Context, spaceID string) ([]map[string]any, error) {
+	// Get root level documents
+	rootDocs, err := s.store.ListDocumentTree(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Recursively build tree
+	var buildTree func(docs []store.Document, depth int) ([]map[string]any, error)
+	buildTree = func(docs []store.Document, depth int) ([]map[string]any, error) {
+		items := make([]map[string]any, 0, len(docs))
+		for _, doc := range docs {
+			openThreads := 0
+			proposal, err := s.store.GetActiveProposal(ctx, doc.ID)
+			if err != nil {
+				return nil, err
+			}
+			if proposal != nil {
+				openThreads, err = s.store.OpenThreadCount(ctx, proposal.ID)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			// Get children
+			children, err := s.store.ListChildDocuments(ctx, doc.ID)
+			if err != nil {
+				return nil, err
+			}
+
+			childItems, err := buildTree(children, depth+1)
+			if err != nil {
+				return nil, err
+			}
+
+			items = append(items, map[string]any{
+				"id":          doc.ID,
+				"title":       doc.Title,
+				"status":      doc.Status,
+				"updatedBy":   doc.UpdatedBy,
+				"openThreads": openThreads,
+				"spaceId":     doc.SpaceID,
+				"parentId":    nilIfEmptyPtr(doc.ParentID),
+				"sortOrder":   doc.SortOrder,
+				"depth":       depth,
+				"children":    childItems,
+			})
+		}
+		return items, nil
+	}
+
+	return buildTree(rootDocs, 0)
+}
+
+// MoveDocumentInTree moves a document to a new parent within the tree
+func (s *Service) MoveDocumentInTree(ctx context.Context, documentID string, parentID *string, spaceID string) (map[string]any, error) {
+	// Verify document exists
+	doc, err := s.store.GetDocument(ctx, documentID)
+	if err != nil {
+		return nil, domainError(http.StatusNotFound, "NOT_FOUND", "document not found", nil)
+	}
+
+	// Verify space exists
+	if _, err := s.store.GetSpace(ctx, spaceID); err != nil {
+		return nil, domainError(http.StatusNotFound, "NOT_FOUND", "space not found", nil)
+	}
+
+	// If moving to a parent, verify parent exists and is not a descendant
+	if parentID != nil {
+		parent, err := s.store.GetDocument(ctx, *parentID)
+		if err != nil {
+			return nil, domainError(http.StatusNotFound, "NOT_FOUND", "parent document not found", nil)
+		}
+		// Prevent circular reference - parent must be in same space
+		if parent.SpaceID != spaceID {
+			return nil, domainError(http.StatusUnprocessableEntity, "VALIDATION_ERROR", "parent must be in same space", nil)
+		}
+		// Prevent moving a document under its own descendant
+		if doc.Path != "" && parent.Path != "" && strings.HasPrefix(parent.Path, doc.Path+"/") {
+			return nil, domainError(http.StatusUnprocessableEntity, "VALIDATION_ERROR", "cannot move document under its own descendant", nil)
+		}
+	}
+
+	if err := s.store.MoveDocumentToParent(ctx, documentID, parentID, spaceID); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"ok":         true,
+		"documentId": documentID,
+		"parentId":   nilIfEmptyPtr(parentID),
+		"spaceId":    spaceID,
+	}, nil
+}
+
+// ReorderDocument updates the sort order of a document
+func (s *Service) ReorderDocument(ctx context.Context, documentID string, newOrder int) (map[string]any, error) {
+	if err := s.store.ReorderDocument(ctx, documentID, newOrder); err != nil {
+		return nil, err
+	}
+	return map[string]any{"ok": true, "documentId": documentID, "sortOrder": newOrder}, nil
+}
+
+// ExportDocument exports a document to the requested format
+func (s *Service) ExportDocument(ctx context.Context, req export.Request) (*export.Result, error) {
+	result, err := s.export.Export(ctx, req)
+	if err == nil {
+		return result, nil
+	}
+
+	switch {
+	case errors.Is(err, export.ErrContentUnavailable):
+		return nil, domainError(http.StatusConflict, "EXPORT_CONTENT_UNAVAILABLE", "Document content is unavailable for export", nil)
+	case errors.Is(err, export.ErrPDFDependencyMissing), errors.Is(err, export.ErrDOCXDependencyMissing):
+		return nil, domainError(http.StatusServiceUnavailable, "EXPORT_DEPENDENCY_MISSING", "Export dependency is unavailable", nil)
+	default:
+		return nil, err
+	}
+}
+
+// nilIfEmptyPtr returns nil for nil pointer, otherwise the string value
+func nilIfEmptyPtr(s *string) interface{} {
+	if s == nil {
+		return nil
+	}
+	return *s
+}
+
 func (s *Service) SyncToken() string {
 	return s.cfg.SyncToken
+}
+
+// SMTPConfigured returns true if SMTP is configured for sending emails
+func (s *Service) SMTPConfigured() bool {
+	return s.cfg.SMTPHost != "" && s.cfg.SMTPUsername != "" && s.cfg.SMTPPassword != ""
 }
 
 // Ping checks the health of service dependencies (database, etc.)
@@ -2407,27 +2949,27 @@ func extractNodeIDsFromDoc(doc json.RawMessage) map[string]bool {
 	if len(doc) == 0 {
 		return nodeIDs
 	}
-	
+
 	var parsed struct {
 		Type    string `json:"type"`
 		Content []struct {
-			Type  string          `json:"type"`
+			Type  string `json:"type"`
 			Attrs struct {
 				NodeID string `json:"nodeId"`
 			} `json:"attrs"`
 			Content json.RawMessage `json:"content"`
 		} `json:"content"`
 	}
-	
+
 	if err := json.Unmarshal(doc, &parsed); err != nil {
 		return nodeIDs
 	}
-	
+
 	var walk func([]json.RawMessage)
 	walk = func(nodes []json.RawMessage) {
 		for _, rawNode := range nodes {
 			var node struct {
-				Type  string          `json:"type"`
+				Type  string `json:"type"`
 				Attrs struct {
 					NodeID string `json:"nodeId"`
 				} `json:"attrs"`
@@ -2448,7 +2990,7 @@ func extractNodeIDsFromDoc(doc json.RawMessage) map[string]bool {
 			}
 		}
 	}
-	
+
 	// Process top-level nodes
 	for _, node := range parsed.Content {
 		if node.Attrs.NodeID != "" {
@@ -2461,7 +3003,7 @@ func extractNodeIDsFromDoc(doc json.RawMessage) map[string]bool {
 			}
 		}
 	}
-	
+
 	return nodeIDs
 }
 
@@ -2470,22 +3012,22 @@ func (s *Service) detectAndOrphanThreads(ctx context.Context, proposalID string,
 	if len(doc) == 0 {
 		return nil
 	}
-	
+
 	// Get current node IDs from document
 	currentNodeIDs := extractNodeIDsFromDoc(doc)
-	
+
 	// Find all non-orphaned threads for this proposal
 	threads, err := s.store.ListThreads(ctx, proposalID, true)
 	if err != nil {
 		return fmt.Errorf("list threads for orphan detection: %w", err)
 	}
-	
+
 	for _, thread := range threads {
 		// Skip already orphaned or resolved threads
 		if thread.Status == "ORPHANED" || thread.Status == "RESOLVED" {
 			continue
 		}
-		
+
 		// Check if anchor node still exists
 		if thread.AnchorNodeID != "" && !currentNodeIDs[thread.AnchorNodeID] {
 			reason := fmt.Sprintf("Anchor node '%s' was removed from document", thread.AnchorNodeID)
@@ -2501,9 +3043,9 @@ func (s *Service) detectAndOrphanThreads(ctx context.Context, proposalID string,
 				ProposalID: proposalID,
 				ThreadID:   &thread.ID,
 				Payload: map[string]any{
-					"reason":         reason,
-					"anchorNodeId":   thread.AnchorNodeID,
-					"orphanedAt":     time.Now().Format(time.RFC3339),
+					"reason":       reason,
+					"anchorNodeId": thread.AnchorNodeID,
+					"orphanedAt":   time.Now().Format(time.RFC3339),
 				},
 			}
 			if err := s.store.InsertAuditEvent(ctx, auditEvent); err != nil {
@@ -2511,7 +3053,7 @@ func (s *Service) detectAndOrphanThreads(ctx context.Context, proposalID string,
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -2677,12 +3219,12 @@ func (s *Service) ListChangeReviewStates(ctx context.Context, proposalID, fromRe
 	result := make([]map[string]any, 0, len(states))
 	for _, state := range states {
 		item := map[string]any{
-			"changeId":     state.ChangeID,
-			"reviewState":  state.ReviewState,
-			"reviewedBy":   state.ReviewedBy,
-			"reviewedAt":   nil,
-			"fromRef":      state.FromRef,
-			"toRef":        state.ToRef,
+			"changeId":    state.ChangeID,
+			"reviewState": state.ReviewState,
+			"reviewedBy":  state.ReviewedBy,
+			"reviewedAt":  nil,
+			"fromRef":     state.FromRef,
+			"toRef":       state.ToRef,
 		}
 		if state.ReviewedAt != nil {
 			item["reviewedAt"] = state.ReviewedAt.Format(time.RFC3339)

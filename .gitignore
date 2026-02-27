@@ -2,3 +2,13 @@ node_modules/
 dist/
 test-results/
 .env
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Generated Vite config files (source is vite.config.ts)
+vite.config.js
+vite.config.d.ts
+
+# Claude Code worktrees and settings
+.claude/

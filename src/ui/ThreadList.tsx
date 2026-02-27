@@ -36,7 +36,7 @@ export function ThreadList({
   className = "",
 }: Props) {
   return (
-    <div className={`cm-panel-scroll ${className}`.trim()}>
+    <div className={`cm-thread-list ${className}`.trim()}>
       {threads.map((thread) => (
         <ThreadCard
           key={thread.id}

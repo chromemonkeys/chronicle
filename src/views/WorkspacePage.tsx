@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   approveProposalRole,
   connectWorkspaceRealtime,
+  createDocument,
   createProposal,
   createProposalThread,
   fetchDocuments,
   fetchDecisionLog,
+  fetchWorkspaces,
   sendWorkspaceRealtimeUpdate,
+  fetchDocumentBlame,
   fetchDocumentCompare,
   fetchDocumentHistory,
   fetchWorkspace,
   isApiError,
   mergeProposal,
+  moveDocument,
   reactProposalThread,
   reopenProposalThread,
   replyProposalThread,
@@ -25,21 +30,27 @@ import {
   updateChangeReviewState
 } from "../api/client";
 import type {
+  BlameEntry,
   CompareContentSnapshot,
   DecisionLogEntry,
   DocumentComparePayload,
   DocumentHistoryPayload,
   DocumentSummary,
   MergeGateRole,
+  Space,
+  TreeItemData,
   WorkspaceContent,
   WorkspacePayload
 } from "../api/types";
 import { ApprovalChain } from "../ui/ApprovalChain";
+import { BlameView } from "../ui/BlameView";
 import { DecisionLogTable } from "../ui/DecisionLogTable";
+import { DocumentTree } from "../ui/DocumentTree";
 import { EmptyStateError, EmptyState } from "../ui/EmptyState";
 import { Tabs } from "../ui/Tabs";
 import { ThreadComposer } from "../ui/ThreadComposer";
 import { ThreadList } from "../ui/ThreadList";
+import { ExportMenu } from "../components/ExportMenu";
 import { ChronicleEditor } from "../editor/ChronicleEditor";
 import { DiffNavigator } from "../ui/DiffNavigator";
 import { SideBySideDiff } from "../editor/SideBySideDiff";
@@ -60,7 +71,7 @@ import {
   trackMergeBlocked,
 } from "../lib/metrics";
 
-type PanelTab = "discussions" | "approvals" | "history" | "decisions" | "changes";
+type PanelTab = "discussions" | "approvals" | "history" | "decisions" | "changes" | "blame";
 type DiffMode = "split" | "unified";
 type ViewState = "success" | "loading" | "empty" | "error";
 type WorkspaceMode = "proposal" | "review";
@@ -172,6 +183,17 @@ const panelTabs: { id: PanelTab; label: string; ariaLabel: string; icon: JSX.Ele
       <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
         <path d="M4 6h12M4 10h12M4 14h8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         <path d="M15 12l2 2-2 2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    )
+  },
+  {
+    id: "blame",
+    label: "Blame",
+    ariaLabel: "Blame attribution",
+    icon: (
+      <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
+        <circle cx="10" cy="7" r="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M4 17c0-3 2.7-5 6-5s6 2 6 5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
     )
   },
@@ -367,6 +389,7 @@ export function WorkspacePage() {
   const [contentDraft, setContentDraft] = useState<WorkspaceContent | null>(null);
   const [docDraft, setDocDraft] = useState<DocumentContent | null>(null);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -383,6 +406,10 @@ export function WorkspacePage() {
   const [decisionAuthor, setDecisionAuthor] = useState("");
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  // Blame view state
+  const [blameEntries, setBlameEntries] = useState<BlameEntry[]>([]);
+  const [blameLoading, setBlameLoading] = useState(false);
+  const [blameError, setBlameError] = useState<string | null>(null);
   const [compareSummary, setCompareSummary] = useState<string | null>(null);
   const [compareFromHash, setCompareFromHash] = useState("");
   const [compareToHash, setCompareToHash] = useState("");
@@ -655,6 +682,91 @@ export function WorkspacePage() {
     }
     return [];
   }, [documentIndex, openReviewDocuments, mergedDocuments, sidebarSection]);
+
+  // Fetch spaces for folder hierarchy
+  const [spaces, setSpaces] = useState<Space[]>([]);
+  useEffect(() => {
+    fetchWorkspaces()
+      .then((response) => setSpaces(response.spaces))
+      .catch(() => setSpaces([]));
+  }, []);
+
+  // Transform documents to hierarchical tree items (spaces as folders with nested children)
+  const treeItems: TreeItemData[] = useMemo(() => {
+    // Group documents by space
+    const docsBySpace = new Map<string, DocumentSummary[]>();
+    for (const doc of sidebarDocuments) {
+      const spaceDocs = docsBySpace.get(doc.spaceId) ?? [];
+      spaceDocs.push(doc);
+      docsBySpace.set(doc.spaceId, spaceDocs);
+    }
+    
+    // Create space folders with nested documents as children
+    const items: TreeItemData[] = [];
+    
+    for (const space of spaces) {
+      const spaceDocs = docsBySpace.get(space.id) ?? [];
+      
+      // Create children array (nested documents)
+      const children: TreeItemData[] = spaceDocs.map((doc) => ({
+        id: doc.id,
+        label: doc.title,
+        icon: "📄",
+        badge: doc.openThreads > 0 ? "pending" : doc.status === "Approved" ? "approved" : undefined,
+        status: doc.status,
+        openThreads: doc.openThreads,
+      }));
+      
+      // Add space as folder with children
+      items.push({
+        id: `space-${space.id}`,
+        label: space.name,
+        icon: "📂",
+        isFolder: true,
+        children,
+      });
+    }
+    
+    // Add documents with unknown space (at root level, not in folder)
+    const unknownSpaceDocs = sidebarDocuments.filter((d) => !spaces.some((s) => s.id === d.spaceId));
+    for (const doc of unknownSpaceDocs) {
+      items.push({
+        id: doc.id,
+        label: doc.title,
+        icon: "📄",
+        badge: doc.openThreads > 0 ? "pending" : doc.status === "Approved" ? "approved" : undefined,
+        status: doc.status,
+        openThreads: doc.openThreads,
+      });
+    }
+    
+    return items;
+  }, [sidebarDocuments, spaces]);
+
+  // Handle creating a new document
+  const handleCreateDocument = useCallback(async (spaceId?: string) => {
+    try {
+      const result = await createDocument("Untitled Document", "", spaceId);
+      navigate(`/workspace/${result.document.id}`);
+    } catch (error) {
+      const message = isApiError(error) ? error.message : "Failed to create document";
+      setActionError(message);
+    }
+  }, [navigate]);
+
+  // Handle moving a document
+  const handleMoveDocument = useCallback(async (documentId: string, targetSpaceId: string) => {
+    try {
+      await moveDocument(documentId, targetSpaceId);
+      // Refresh the document index to reflect the move
+      const docs = await fetchDocuments();
+      setDocumentIndex(docs);
+    } catch (error) {
+      const message = isApiError(error) ? error.message : "Failed to move document";
+      setActionError(message);
+    }
+  }, []);
+
   const sidebarAllCount = documentIndexState === "loading" ? (workspace?.counts.allDocuments ?? 0) : documentIndex.length;
   const sidebarOpenReviewCount =
     documentIndexState === "loading" ? (workspace?.counts.openReviews ?? 0) : openReviewDocuments.length;
@@ -757,6 +869,31 @@ export function WorkspacePage() {
       active = false;
     };
   }, [activeTab, workspace?.document.id, workspace?.document.proposalId, decisionOutcomeFilter, decisionQuery, decisionAuthor]);
+
+  // Blame view data fetching
+  useEffect(() => {
+    if (activeTab !== "blame" || !workspace) {
+      return;
+    }
+    let active = true;
+    setBlameLoading(true);
+    setBlameError(null);
+    fetchDocumentBlame(workspace.document.id, workspace.document.proposalId)
+      .then((response) => {
+        if (!active) return;
+        setBlameEntries(response.entries);
+        setBlameLoading(false);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setBlameEntries([]);
+        setBlameError(isApiError(error) ? error.message : "Failed to load blame data.");
+        setBlameLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeTab, workspace?.document.id, workspace?.document.proposalId]);
 
   useEffect(() => {
     if (!workspace?.document.proposalId) {
@@ -1114,6 +1251,10 @@ export function WorkspacePage() {
       }
     }
   }, [workspace?.threads]);
+
+  const handleHoverBlockChange = useCallback((nodeId: string | null) => {
+    setHoveredNodeId(nodeId);
+  }, []);
 
   function getCurrentAnchorOffsets() {
     if (!editorInstance) {
@@ -1954,11 +2095,12 @@ export function WorkspacePage() {
             </button>
           </div>
 
-          <div className="cm-action-group cm-action-group--document">
-            <button
-              className="cm-action-btn"
-              type="button"
-              disabled={!workspace.document.proposalId}
+	          <div className="cm-action-group cm-action-group--document">
+	            <ExportMenu documentId={workspace.document.id} documentTitle={content.title} />
+	            <button
+	              className="cm-action-btn"
+	              type="button"
+	              disabled={!workspace.document.proposalId}
               onClick={() => void createNamedVersion()}
               title="Save named version"
             >
@@ -2052,32 +2194,33 @@ export function WorkspacePage() {
             </button>
           </div>
           {sidebarSection !== "decisions" && (
-            <div className="cm-doc-tree">
+            <>
               <div className="cm-sidebar-label">
                 {sidebarSection === "all" ? "All Documents" : sidebarSection === "open" ? "Open Reviews" : "Merged"}
               </div>
               {documentIndexState === "loading" && <div className="cm-sidebar-hint">Loading documents...</div>}
               {documentIndexState === "error" && <div className="cm-sidebar-hint">Could not load document list.</div>}
-              {documentIndexState !== "loading" && documentIndexState !== "error" && sidebarDocuments.length === 0 && (
-                <div className="cm-sidebar-hint">No documents in this section.</div>
-              )}
-              {sidebarDocuments.map((doc) => (
-                <button
-                  key={doc.id}
-                  className={`cm-tree-item ${doc.id === workspace.document.id ? "active" : ""}`.trim()}
-                  type="button"
-                  onClick={() => {
-                    if (doc.id !== workspace.document.id) {
-                      navigate(`/workspace/${doc.id}`);
+              {documentIndexState !== "loading" && documentIndexState !== "error" && (
+                <DocumentTree
+                  items={treeItems}
+                  activeId={workspace?.document.id ?? ""}
+                  onSelect={(id) => {
+                    if (id !== workspace?.document.id) {
+                      navigate(`/workspace/${id}`);
                     }
                   }}
-                >
-                  <span className="cm-tree-icon">•</span>
-                  <span>{doc.title}</span>
-                  {doc.openThreads > 0 ? <span className="cm-tree-badge pending" /> : null}
-                </button>
-              ))}
-            </div>
+                  onCreateDocument={handleCreateDocument}
+                  onMoveDocument={handleMoveDocument}
+                  emptyMessage={
+                    sidebarSection === "all"
+                      ? "No documents yet. Create your first document to get started."
+                      : sidebarSection === "open"
+                      ? "No open reviews. Start a proposal to begin a review."
+                      : "No merged documents yet."
+                  }
+                />
+              )}
+            </>
           )}
           {sidebarSection === "decisions" && (
             <div className="cm-doc-tree">
@@ -2202,6 +2345,7 @@ export function WorkspacePage() {
                     editable={proposalMode && !compareActive}
                     onUpdate={handleEditorUpdate}
                     onSelectionChange={handleSelectionChange}
+                    onHoverBlockChange={handleHoverBlockChange}
                     onEditorReady={setEditorInstance}
                     diffManifest={compareActive ? compareManifest : diffManifest}
                     diffVisible={diffVisible}
@@ -2209,6 +2353,8 @@ export function WorkspacePage() {
                     activeChangeNodeId={compareActive ? activeCompareNodeId : null}
                     threadAnchors={threadAnchors}
                     className="cm-editor-wrapper"
+                    enableHoverAttribution={activeTab === "blame"}
+                    blameEntries={blameEntries}
                   />
                 ) : null}
               </div>
@@ -2860,6 +3006,35 @@ export function WorkspacePage() {
                 onChangeClick={focusCompareChange}
                 onStepChange={stepCompareChange}
                 onReviewAction={(changeId, action) => void handleChangeReviewAction(changeId, action)}
+              />
+            </div>
+          )}
+
+          {activeTab === "blame" && (
+            <div className="cm-panel-content active">
+              <BlameView
+                entries={blameEntries}
+                nodeId={hoveredNodeId}
+                onSelectCommit={(commitHash) => {
+                  setActiveTab("history");
+                  const commitElement = document.querySelector(`[data-commit-hash="${commitHash}"]`);
+                  if (commitElement) {
+                    commitElement.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }
+                }}
+                onSelectThread={(threadId) => {
+                  setActiveTab("discussions");
+                  setActiveThread(threadId);
+                  // Scroll to thread
+                  setTimeout(() => {
+                    const threadElement = document.querySelector(`[data-thread-id="${threadId}"]`);
+                    if (threadElement) {
+                      threadElement.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }
+                  }, 100);
+                }}
+                loading={blameLoading}
+                error={blameError}
               />
             </div>
           )}

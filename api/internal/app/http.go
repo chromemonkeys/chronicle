@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"chronicle/api/internal/auth"
+	"chronicle/api/internal/authpw"
+	"chronicle/api/internal/export"
 	"chronicle/api/internal/rbac"
 )
 
@@ -67,6 +69,32 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 			"status": status,
 			"checks": checks,
 		})
+		return
+	}
+
+	// Auth routes (no session required)
+	if r.Method == http.MethodPost && r.URL.Path == "/api/auth/signup" {
+		s.handleAuthSignUp(w, r)
+		return
+	}
+
+	if r.Method == http.MethodPost && r.URL.Path == "/api/auth/signin" {
+		s.handleAuthSignIn(w, r)
+		return
+	}
+
+	if r.Method == http.MethodPost && r.URL.Path == "/api/auth/verify-email" {
+		s.handleAuthVerifyEmail(w, r)
+		return
+	}
+
+	if r.Method == http.MethodPost && r.URL.Path == "/api/auth/reset-password/request" {
+		s.handleAuthRequestReset(w, r)
+		return
+	}
+
+	if r.Method == http.MethodPost && r.URL.Path == "/api/auth/reset-password" {
+		s.handleAuthResetPassword(w, r)
 		return
 	}
 
@@ -192,6 +220,43 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Method == http.MethodGet && r.URL.Path == "/api/search" {
+		if !s.service.Can(session.Role, rbac.ActionRead) {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
+			return
+		}
+		q := strings.TrimSpace(r.URL.Query().Get("q"))
+		filterType := strings.TrimSpace(r.URL.Query().Get("type"))
+		spaceID := strings.TrimSpace(r.URL.Query().Get("spaceId"))
+		limit := 20
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil {
+				writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "limit must be an integer", nil)
+				return
+			}
+			limit = parsed
+		}
+		offset := 0
+		if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil {
+				writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "offset must be an integer", nil)
+				return
+			}
+			offset = parsed
+		}
+
+		payload, err := s.service.Search(r.Context(), q, filterType, spaceID, limit, offset, session.IsExternal)
+		if err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+
 	if r.Method == http.MethodGet && r.URL.Path == "/api/documents" {
 		if !s.service.Can(session.Role, rbac.ActionRead) {
 			writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
@@ -284,6 +349,16 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "spaces" && parts[3] == "documents" {
 		spaceID := parts[2]
 		if r.Method == http.MethodGet {
+			// Check for tree view query param
+			if r.URL.Query().Get("tree") == "true" {
+				items, err := s.service.ListDocumentTree(r.Context(), spaceID)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "SERVER_ERROR", "Could not list document tree", nil)
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"tree": items})
+				return
+			}
 			items, err := s.service.ListDocumentsBySpace(r.Context(), spaceID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "SERVER_ERROR", "Could not list documents", nil)
@@ -294,6 +369,107 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", nil)
 		return
+	}
+
+	// Document tree move endpoint
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "documents" && parts[3] == "tree-move" {
+		if r.Method == http.MethodPost {
+			if !s.service.Can(session.Role, rbac.ActionWrite) {
+				writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
+				return
+			}
+			documentID := parts[2]
+			var body struct {
+				ParentID *string `json:"parentId"`
+				SpaceID  string  `json:"spaceId"`
+			}
+			if err := decodeBody(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+				return
+			}
+			payload, err := s.service.MoveDocumentInTree(r.Context(), documentID, body.ParentID, body.SpaceID)
+			if err != nil {
+				status, code, message, details := mapError(err)
+				writeError(w, status, code, message, details)
+				return
+			}
+			writeJSON(w, http.StatusOK, payload)
+			return
+		}
+	}
+
+	// Document reorder endpoint
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "documents" && parts[3] == "reorder" {
+		if r.Method == http.MethodPost {
+			if !s.service.Can(session.Role, rbac.ActionWrite) {
+				writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
+				return
+			}
+			documentID := parts[2]
+			var body struct {
+				SortOrder int `json:"sortOrder"`
+			}
+			if err := decodeBody(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+				return
+			}
+			payload, err := s.service.ReorderDocument(r.Context(), documentID, body.SortOrder)
+			if err != nil {
+				status, code, message, details := mapError(err)
+				writeError(w, status, code, message, details)
+				return
+			}
+			writeJSON(w, http.StatusOK, payload)
+			return
+		}
+	}
+
+	// Document export endpoint
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "documents" && parts[3] == "export" {
+		if r.Method == http.MethodPost {
+			// Export requires read permission
+			if !s.service.Can(session.Role, rbac.ActionRead) {
+				writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
+				return
+			}
+			documentID := parts[2]
+			var body struct {
+				Format         string `json:"format"`  // "pdf" or "docx"
+				Version        string `json:"version"` // "latest" or commit hash
+				IncludeThreads bool   `json:"includeThreads"`
+			}
+			if err := decodeBody(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+				return
+			}
+
+			// Validate format
+			format := export.Format(body.Format)
+			if format != export.FormatPDF && format != export.FormatDOCX {
+				writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "format must be 'pdf' or 'docx'", nil)
+				return
+			}
+
+			// Call export service
+			result, err := s.service.ExportDocument(r.Context(), export.Request{
+				DocumentID:       documentID,
+				Version:          body.Version,
+				Format:           format,
+				IncludeThreads:   body.IncludeThreads,
+				ViewerIsExternal: session.IsExternal,
+			})
+			if err != nil {
+				status, code, message, details := mapError(err)
+				writeError(w, status, code, message, details)
+				return
+			}
+
+			// Return as downloadable file
+			w.Header().Set("Content-Disposition", "attachment; filename=\""+result.Filename+"\"")
+			w.Header().Set("Content-Type", result.MimeType)
+			w.Write(result.Data)
+			return
+		}
 	}
 
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "documents" && parts[3] == "move" {
@@ -811,10 +987,10 @@ func (s *HTTPServer) handleProposalAction(w http.ResponseWriter, r *http.Request
 			return
 		}
 		var body struct {
-			ReviewState      string `json:"reviewState"`
+			ReviewState       string `json:"reviewState"`
 			RejectedRationale string `json:"rejectedRationale"`
-			FromRef          string `json:"fromRef"`
-			ToRef            string `json:"toRef"`
+			FromRef           string `json:"fromRef"`
+			ToRef             string `json:"toRef"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
@@ -963,4 +1139,185 @@ func mapError(err error) (status int, code, message string, details any) {
 		return http.StatusUnauthorized, "UNAUTHORIZED", "Unauthorized", nil
 	}
 	return http.StatusInternalServerError, "SERVER_ERROR", "Server error", nil
+}
+
+// Auth handlers for email/password authentication
+
+func (s *HTTPServer) handleAuthSignUp(w http.ResponseWriter, r *http.Request) {
+	authSvc := s.service.AuthPasswordService()
+	if authSvc == nil {
+		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "Authentication service not configured", nil)
+		return
+	}
+
+	var body struct {
+		Email       string `json:"email"`
+		Password    string `json:"password"`
+		DisplayName string `json:"displayName"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+		return
+	}
+
+	resp, err := authSvc.SignUp(r.Context(), authpw.SignUpRequest{
+		Email:       body.Email,
+		Password:    body.Password,
+		DisplayName: body.DisplayName,
+	})
+	if err != nil {
+		if err.Error() == "email already registered" {
+			writeError(w, http.StatusConflict, "EMAIL_EXISTS", "Email already registered", nil)
+			return
+		}
+		writeError(w, http.StatusBadRequest, "SIGNUP_FAILED", err.Error(), nil)
+		return
+	}
+
+	// Check if email service is configured for dev bypass
+	emailConfigured := s.service.SMTPConfigured()
+
+	response := map[string]any{
+		"userId":  resp.UserID,
+		"message": "Please check your email to verify your account",
+	}
+	// Dev bypass: include verification token in response when email not configured
+	if !emailConfigured {
+		response["devVerificationToken"] = resp.VerificationToken
+		response["message"] = "Account created. Verify your email to continue."
+	}
+
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func (s *HTTPServer) handleAuthSignIn(w http.ResponseWriter, r *http.Request) {
+	authSvc := s.service.AuthPasswordService()
+	if authSvc == nil {
+		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "Authentication service not configured", nil)
+		return
+	}
+
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+		return
+	}
+
+	resp, err := authSvc.SignIn(r.Context(), authpw.SignInRequest{
+		Email:    body.Email,
+		Password: body.Password,
+	})
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Invalid email or password", nil)
+		return
+	}
+
+	if resp.RequiresVerify {
+		writeError(w, http.StatusForbidden, "EMAIL_NOT_VERIFIED", "Please verify your email before signing in", nil)
+		return
+	}
+
+	// Create session
+	session, err := s.service.CreateSession(r.Context(), resp.User.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "SESSION_FAILED", "Failed to create session", nil)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"accessToken":  session.Token,
+		"refreshToken": session.RefreshToken,
+		"userId":       session.UserID,
+		"userName":     session.UserName,
+		"role":         session.Role,
+		"expiresAt":    session.ExpiresAt.Unix(),
+	})
+}
+
+func (s *HTTPServer) handleAuthVerifyEmail(w http.ResponseWriter, r *http.Request) {
+	authSvc := s.service.AuthPasswordService()
+	if authSvc == nil {
+		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "Authentication service not configured", nil)
+		return
+	}
+
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+		return
+	}
+
+	if err := authSvc.VerifyEmail(r.Context(), body.Token); err != nil {
+		writeError(w, http.StatusBadRequest, "VERIFICATION_FAILED", err.Error(), nil)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "Email verified successfully",
+	})
+}
+
+func (s *HTTPServer) handleAuthRequestReset(w http.ResponseWriter, r *http.Request) {
+	authSvc := s.service.AuthPasswordService()
+	if authSvc == nil {
+		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "Authentication service not configured", nil)
+		return
+	}
+
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+		return
+	}
+
+	token, _ := authSvc.RequestPasswordReset(r.Context(), body.Email)
+
+	// Check if email service is configured for dev bypass
+	emailConfigured := s.service.SMTPConfigured()
+
+	response := map[string]any{
+		"message": "If an account exists, a reset email has been sent",
+	}
+	// Dev bypass: include reset token in response when email not configured and token was created
+	if !emailConfigured && token != "" {
+		response["devResetToken"] = token
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *HTTPServer) handleAuthResetPassword(w http.ResponseWriter, r *http.Request) {
+	authSvc := s.service.AuthPasswordService()
+	if authSvc == nil {
+		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "Authentication service not configured", nil)
+		return
+	}
+
+	var body struct {
+		Token       string `json:"token"`
+		NewPassword string `json:"newPassword"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+		return
+	}
+
+	if err := authSvc.ResetPassword(r.Context(), authpw.ResetPasswordRequest{
+		Token:       body.Token,
+		NewPassword: body.NewPassword,
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, "RESET_FAILED", err.Error(), nil)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "Password reset successfully",
+	})
 }

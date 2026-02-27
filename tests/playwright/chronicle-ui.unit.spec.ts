@@ -415,7 +415,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
         return false;
       }
       const url = new URL(response.url());
-      return response.status() === 200 && url.searchParams.get("to") === "pw-0001";
+      return response.status() === 200 && url.searchParams.get("from") === "pw-0001";
     });
 
     await Promise.all([compareRequest, page.locator(".cm-commit-row", { hasText: "Initial proposal branch commit" }).first().click()]);
@@ -503,7 +503,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await page.goto("/workspace/rfc-auth");
 
     await page.getByRole("button", { name: /History/ }).click();
-    await expect(page.getByText("History service request failed.")).toBeVisible();
+    await expect(page.getByText("Chronicle API is unavailable right now. Please retry.")).toBeVisible();
   });
 
   test("start proposal action creates proposal when document has no active proposal", async ({ page }) => {
@@ -704,6 +704,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await installAndSignIn(page);
     await page.goto("/workspace/rfc-auth");
 
+    await page.getByRole("tab", { name: "Required approvals" }).click();
     await page
       .locator(".cm-approver-row", { hasText: "Security" })
       .getByRole("button", { name: "Approve" })
@@ -716,6 +717,8 @@ test.describe("Chronicle frontend Playwright coverage", () => {
       .locator(".cm-approver-row", { hasText: "Legal" })
       .getByRole("button", { name: "Approve" })
       .click();
+
+    await page.getByRole("tab", { name: "Discussion" }).click();
 
     const resolveRequest = page.waitForResponse((response) => {
       return (
@@ -747,12 +750,29 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     ]);
 
     await expect(page.getByText("Merge Gate Blocked")).toBeVisible();
+    await page.getByRole("tab", { name: "Required approvals" }).click();
     await expect(page.getByRole("button", { name: "Resolve open threads" })).toBeDisabled();
   });
 
   test("workspace merge remains blocked until approvals and thread resolution complete", async ({ page }) => {
     await installAndSignIn(page);
     await page.goto("/workspace/rfc-auth");
+
+    const startProposalButton = page.getByRole("button", { name: "Start Proposal" }).first();
+    if (await startProposalButton.isVisible()) {
+      const createProposalRequest = page.waitForResponse((response) => {
+        return (
+          response.url().includes("/api/documents/rfc-auth/proposals") &&
+          !response.url().includes("/submit") &&
+          response.request().method() === "POST" &&
+          response.status() === 200
+        );
+      });
+      await Promise.all([
+        createProposalRequest,
+        startProposalButton.click()
+      ]);
+    }
 
     await expect(page.getByText("Merge Gate Blocked")).toBeVisible();
     await page.getByRole("tab", { name: "Required approvals" }).click();

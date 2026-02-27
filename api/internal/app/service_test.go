@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"chronicle/api/internal/config"
+	"chronicle/api/internal/export"
 	"chronicle/api/internal/gitrepo"
 	"chronicle/api/internal/store"
 )
@@ -286,6 +287,32 @@ func (f *fakeStore) FindThreadsByAnchorNodeIDs(context.Context, string, []string
 	return nil, nil
 }
 
+// Auth-related dataStore methods
+func (f *fakeStore) GetUserByEmail(context.Context, string) (store.User, error) {
+	return store.User{}, sql.ErrNoRows
+}
+func (f *fakeStore) CreateUser(context.Context, store.User) error { return nil }
+func (f *fakeStore) UpdateUserVerificationToken(context.Context, string, string, time.Time) error {
+	return nil
+}
+func (f *fakeStore) VerifyUserEmail(context.Context, string) error { return nil }
+func (f *fakeStore) UpdateUserPassword(context.Context, string, string) error {
+	return nil
+}
+func (f *fakeStore) CreatePasswordReset(context.Context, string, string, time.Time) error {
+	return nil
+}
+func (f *fakeStore) GetPasswordReset(context.Context, string) (string, error) {
+	return "", sql.ErrNoRows
+}
+func (f *fakeStore) MarkPasswordResetUsed(context.Context, string) error { return nil }
+
+// Document Tree methods
+func (f *fakeStore) ListDocumentTree(context.Context, string) ([]store.Document, error)       { return nil, nil }
+func (f *fakeStore) ListChildDocuments(context.Context, string) ([]store.Document, error)     { return nil, nil }
+func (f *fakeStore) MoveDocumentToParent(context.Context, string, *string, string) error      { return nil }
+func (f *fakeStore) ReorderDocument(context.Context, string, int) error                      { return nil }
+
 type fakeGit struct {
 	historyFn            func(string, string, int) ([]store.CommitInfo, error)
 	getHeadContentFn     func(string, string) (gitrepo.Content, store.CommitInfo, error)
@@ -363,9 +390,112 @@ func newTestService(fs *fakeStore, fg *fakeGit) *Service {
 	return &Service{
 		cfg:            config.Config{},
 		store:          fs,
+		sessionStore:   fs,
 		git:            fg,
 		syncSessionTTL: 15 * time.Minute,
 		syncSessions:   make(map[string]syncSessionRecord),
+	}
+}
+
+func newExportTestService(fs *fakeStore, fg *fakeGit) *Service {
+	svc := newTestService(fs, fg)
+	svc.export = export.NewService(&exportStoreAdapter{store: fs, git: fg})
+	return svc
+}
+
+func TestExportStoreAdapterGetDocumentContent(t *testing.T) {
+	docJSON := json.RawMessage(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Hello"}]}]}`)
+	adapter := &exportStoreAdapter{
+		store: &fakeStore{},
+		git: &fakeGit{
+			getHeadContentFn: func(documentID, branchName string) (gitrepo.Content, store.CommitInfo, error) {
+				if branchName != "main" {
+					t.Fatalf("expected main branch, got %q", branchName)
+				}
+				return gitrepo.Content{Doc: docJSON}, store.CommitInfo{}, nil
+			},
+		},
+	}
+
+	content, err := adapter.GetDocumentContent(context.Background(), "doc-1", "latest")
+	if err != nil {
+		t.Fatalf("GetDocumentContent() error = %v", err)
+	}
+	root, ok := content.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any content, got %T", content)
+	}
+	if root["type"] != "doc" {
+		t.Fatalf("expected doc root type, got %v", root["type"])
+	}
+}
+
+func TestExportStoreAdapterGetDocumentContentFallsBackToLegacyFields(t *testing.T) {
+	adapter := &exportStoreAdapter{
+		store: &fakeStore{},
+		git: &fakeGit{
+			getHeadContentFn: func(documentID, branchName string) (gitrepo.Content, store.CommitInfo, error) {
+				return gitrepo.Content{
+					Title:    "RFC: OAuth and Magic Link Session Flow",
+					Subtitle: "Authentication and session lifecycle proposal.",
+					Purpose:  "Rate limiting protects infrastructure from abuse.",
+					Tiers:    "Standard tier consumers are limited to 2,000 requests per minute.",
+					Enforce:  "Exceeded limits return 429 with retry guidance.",
+				}, store.CommitInfo{}, nil
+			},
+		},
+	}
+
+	content, err := adapter.GetDocumentContent(context.Background(), "rfc-auth", "latest")
+	if err != nil {
+		t.Fatalf("GetDocumentContent() error = %v", err)
+	}
+	root, ok := content.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any content, got %T", content)
+	}
+	if root["type"] != "doc" {
+		t.Fatalf("expected doc root type, got %v", root["type"])
+	}
+	nodes, ok := root["content"].([]any)
+	if !ok || len(nodes) == 0 {
+		t.Fatalf("expected non-empty doc content, got %T (%v)", root["content"], root["content"])
+	}
+}
+
+func TestExportDocumentMapsContentUnavailable(t *testing.T) {
+	fs := &fakeStore{
+		getDocumentFn: func(_ context.Context, documentID string) (store.Document, error) {
+			return store.Document{
+				ID:        documentID,
+				Title:     "Export Test",
+				Subtitle:  "Subtitle",
+				SpaceID:   "space-1",
+				UpdatedBy: "Avery",
+			}, nil
+		},
+	}
+	fg := &fakeGit{
+		getHeadContentFn: func(string, string) (gitrepo.Content, store.CommitInfo, error) {
+			return gitrepo.Content{}, store.CommitInfo{}, nil
+		},
+	}
+	svc := newExportTestService(fs, fg)
+
+	_, err := svc.ExportDocument(context.Background(), export.Request{
+		DocumentID: "doc-1",
+		Version:    "latest",
+		Format:     export.FormatPDF,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var domainErr *DomainError
+	if !errors.As(err, &domainErr) {
+		t.Fatalf("expected DomainError, got %T (%v)", err, err)
+	}
+	if domainErr.Code != "EXPORT_CONTENT_UNAVAILABLE" {
+		t.Fatalf("expected EXPORT_CONTENT_UNAVAILABLE, got %s", domainErr.Code)
 	}
 }
 

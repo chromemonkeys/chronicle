@@ -64,6 +64,7 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
   return (
     <div
       ref={ref}
+      data-thread-id={thread.id}
       className={`cm-thread-card ${isActive ? "active" : ""} ${className}`.trim()}
       onClick={() => onSelect(thread.id)}
       role="button"
