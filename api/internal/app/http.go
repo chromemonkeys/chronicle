@@ -495,6 +495,28 @@ func (s *HTTPServer) handleDocuments(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 
+	if len(parts) == 4 && parts[3] == "audit-events" && r.Method == http.MethodGet {
+		if !s.service.Can(session.Role, rbac.ActionRead) {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
+			return
+		}
+		limit := 100
+		if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+			if parsedLimit, err := strconv.Atoi(rawLimit); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+		proposalID := strings.TrimSpace(r.URL.Query().Get("proposalId"))
+		events, err := s.service.ListAuditEvents(r.Context(), documentID, proposalID, limit)
+		if err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"events": events})
+		return
+	}
+
 	if len(parts) == 4 && parts[3] == "proposals" && r.Method == http.MethodPost {
 		if !s.service.Can(session.Role, rbac.ActionWrite) {
 			writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
@@ -757,6 +779,49 @@ func (s *HTTPServer) handleProposalAction(w http.ResponseWriter, r *http.Request
 		}
 		threadID := parts[6]
 		payload, err := s.service.SetThreadVisibility(r.Context(), documentID, proposalID, threadID, session.IsExternal, body)
+		if err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+
+	if action == "changes" && r.Method == http.MethodGet && len(parts) == 7 && parts[6] == "review-states" {
+		if !s.service.Can(session.Role, rbac.ActionRead) {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
+			return
+		}
+		fromRef := strings.TrimSpace(r.URL.Query().Get("fromRef"))
+		toRef := strings.TrimSpace(r.URL.Query().Get("toRef"))
+		states, err := s.service.ListChangeReviewStates(r.Context(), proposalID, fromRef, toRef)
+		if err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"states": states})
+		return
+	}
+
+	if action == "changes" && len(parts) == 8 && parts[7] == "review" {
+		if !s.service.Can(session.Role, rbac.ActionWrite) {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
+			return
+		}
+		var body struct {
+			ReviewState      string `json:"reviewState"`
+			RejectedRationale string `json:"rejectedRationale"`
+			FromRef          string `json:"fromRef"`
+			ToRef            string `json:"toRef"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+			return
+		}
+		changeID := parts[6]
+		payload, err := s.service.UpdateChangeReviewState(r.Context(), documentID, proposalID, changeID, session.UserName, session.IsExternal, body.ReviewState, body.RejectedRationale, body.FromRef, body.ToRef)
 		if err != nil {
 			status, code, message, details := mapError(err)
 			writeError(w, status, code, message, details)

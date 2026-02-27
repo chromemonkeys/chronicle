@@ -21,7 +21,8 @@ import {
   setProposalThreadVisibility,
   saveNamedVersion,
   saveWorkspace,
-  voteProposalThread
+  voteProposalThread,
+  updateChangeReviewState
 } from "../api/client";
 import type {
   CompareContentSnapshot,
@@ -1373,6 +1374,48 @@ export function WorkspacePage() {
     }
   }
 
+  async function handleChangeReviewAction(changeId: string, action: "accepted" | "rejected" | "deferred") {
+    if (!workspace?.document.proposalId || !compareActive) {
+      return;
+    }
+    const change = compareChanges.find((c) => c.id === changeId);
+    if (!change) {
+      return;
+    }
+
+    // Optimistic update
+    const previousState = change.reviewState;
+    setCompareChanges((prev) =>
+      prev.map((c) =>
+        c.id === changeId ? { ...c, reviewState: action } : c
+      )
+    );
+
+    try {
+      await updateChangeReviewState(
+        workspace.document.id,
+        workspace.document.proposalId,
+        changeId,
+        {
+          reviewState: action,
+          fromRef: change.fromRef,
+          toRef: change.toRef,
+          ...(action === "rejected" ? { rejectedRationale: "" } : {})
+        }
+      );
+      // Success - keep the optimistic update
+    } catch (error) {
+      // Revert optimistic update on error
+      setCompareChanges((prev) =>
+        prev.map((c) =>
+          c.id === changeId ? { ...c, reviewState: previousState } : c
+        )
+      );
+      const message = isApiError(error) ? error.message : "Failed to update review state";
+      setActionError(message);
+    }
+  }
+
   async function retryApprovalsPanel() {
     if (!workspace) {
       return;
@@ -2409,6 +2452,34 @@ export function WorkspacePage() {
                                 {change.blockers.length > 0 ? <span>Blockers {change.blockers.length}</span> : null}
                               </div>
                             ) : null}
+                            {change.reviewState === "pending" && workspace?.document.proposalId && (
+                              <div className="cm-change-actions">
+                                <button
+                                  className="cm-thread-action-btn"
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); void handleChangeReviewAction(change.id, "accepted"); }}
+                                  title="Accept this change"
+                                >
+                                  Accept
+                                </button>
+                                <button
+                                  className="cm-thread-action-btn"
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); void handleChangeReviewAction(change.id, "rejected"); }}
+                                  title="Reject this change"
+                                >
+                                  Reject
+                                </button>
+                                <button
+                                  className="cm-thread-action-btn"
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); void handleChangeReviewAction(change.id, "deferred"); }}
+                                  title="Defer this change"
+                                >
+                                  Defer
+                                </button>
+                              </div>
+                            )}
                           </button>
                         ))}
                       </div>

@@ -117,3 +117,30 @@ type CommitInfo struct {
 	Added     int
 	Removed   int
 }
+
+type ChangeReviewState struct {
+	ID               int64
+	ChangeID         string
+	ProposalID       string
+	DocumentID       string
+	FromRef          string
+	ToRef            string
+	ReviewState      string
+	RejectedRationale string
+	ReviewedBy       string
+	ReviewedAt       *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type AuditEvent struct {
+	ID         int64
+	EventType  string
+	ActorName  string
+	DocumentID string
+	ProposalID string
+	ChangeID   *string
+	ThreadID   *string
+	Payload    map[string]any
+	CreatedAt  time.Time
+}

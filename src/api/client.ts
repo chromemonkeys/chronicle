@@ -617,3 +617,62 @@ export function sendWorkspaceRealtimeUpdate(socket: WebSocket | null, content: W
     })
   );
 }
+
+export async function updateChangeReviewState(
+  documentId: string,
+  proposalId: string,
+  changeId: string,
+  data: {
+    reviewState: "accepted" | "rejected" | "deferred";
+    rejectedRationale?: string;
+    fromRef: string;
+    toRef: string;
+  }
+) {
+  return apiRequest<WorkspacePayload>(
+    `/api/documents/${documentId}/proposals/${proposalId}/changes/${changeId}/review`,
+    {
+      method: "POST",
+      body: data
+    }
+  );
+}
+
+export async function fetchChangeReviewStates(
+  documentId: string,
+  proposalId: string,
+  fromRef: string,
+  toRef: string
+) {
+  const params = new URLSearchParams({ fromRef, toRef });
+  return apiRequest<{ states: Array<{
+    changeId: string;
+    reviewState: "pending" | "accepted" | "rejected" | "deferred";
+    reviewedBy?: string;
+    reviewedAt?: string;
+    rejectedRationale?: string;
+    fromRef: string;
+    toRef: string;
+  }> }>(`/api/documents/${documentId}/proposals/${proposalId}/changes/review-states?${params.toString()}`);
+}
+
+export async function fetchAuditEvents(
+  documentId: string,
+  proposalId?: string | null,
+  limit = 100
+) {
+  const params = new URLSearchParams();
+  if (proposalId) params.set("proposalId", proposalId);
+  params.set("limit", String(limit));
+  return apiRequest<{ events: Array<{
+    id: number;
+    eventType: string;
+    actorName: string;
+    documentId: string;
+    proposalId: string;
+    changeId?: string;
+    threadId?: string;
+    payload: Record<string, unknown>;
+    createdAt: string;
+  }> }>(`/api/documents/${documentId}/audit-events?${params.toString()}`);
+}

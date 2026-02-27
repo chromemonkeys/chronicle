@@ -153,6 +153,12 @@ type dataStore interface {
 	MoveDocument(context.Context, string, string) error
 	SpaceDocumentCount(context.Context, string) (int, error)
 	Ping(ctx context.Context) error
+	UpsertChangeReviewState(context.Context, store.ChangeReviewState) error
+	ListChangeReviewStates(context.Context, string, string, string) ([]store.ChangeReviewState, error)
+	GetChangeReviewState(context.Context, string, string, string, string) (store.ChangeReviewState, error)
+	InsertAuditEvent(context.Context, store.AuditEvent) error
+	ListAuditEvents(context.Context, string, string, int) ([]store.AuditEvent, error)
+	ListAuditEventsForChange(context.Context, string, int) ([]store.AuditEvent, error)
 }
 
 type gitService interface {
@@ -2448,4 +2454,136 @@ func SortedKeys(input map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// UpdateChangeReviewState updates the review state for a specific change and emits an audit event
+func (s *Service) UpdateChangeReviewState(ctx context.Context, documentID, proposalID, changeID, userName string, viewerIsExternal bool, reviewState, rejectedRationale, fromRef, toRef string) (map[string]any, error) {
+	proposal, err := s.store.GetProposal(ctx, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	if proposal.DocumentID != documentID {
+		return nil, sql.ErrNoRows
+	}
+
+	// Validate review state
+	validStates := map[string]struct{}{"pending": {}, "accepted": {}, "rejected": {}, "deferred": {}}
+	if _, ok := validStates[reviewState]; !ok {
+		return nil, fmt.Errorf("invalid review state: %s", reviewState)
+	}
+
+	// Get previous state for audit trail
+	previousState, _ := s.store.GetChangeReviewState(ctx, proposalID, changeID, fromRef, toRef)
+	previousReviewState := "pending"
+	if previousState.ID != 0 {
+		previousReviewState = previousState.ReviewState
+	}
+
+	now := time.Now()
+	state := store.ChangeReviewState{
+		ChangeID:          changeID,
+		ProposalID:        proposalID,
+		DocumentID:        documentID,
+		FromRef:           fromRef,
+		ToRef:             toRef,
+		ReviewState:       reviewState,
+		RejectedRationale: rejectedRationale,
+		ReviewedBy:        userName,
+		ReviewedAt:        &now,
+	}
+
+	if err := s.store.UpsertChangeReviewState(ctx, state); err != nil {
+		return nil, fmt.Errorf("update change review state: %w", err)
+	}
+
+	// Determine event type based on state transition
+	eventType := "change_" + reviewState
+	if reviewState == previousReviewState {
+		eventType = "change_reopened"
+	}
+
+	// Emit audit event
+	auditEvent := store.AuditEvent{
+		EventType:  eventType,
+		ActorName:  userName,
+		DocumentID: documentID,
+		ProposalID: proposalID,
+		ChangeID:   &changeID,
+		Payload: map[string]any{
+			"previousState":     previousReviewState,
+			"newState":          reviewState,
+			"rejectedRationale": rejectedRationale,
+			"fromRef":           fromRef,
+			"toRef":             toRef,
+			"reviewedAt":        now.Format(time.RFC3339),
+		},
+	}
+	if err := s.store.InsertAuditEvent(ctx, auditEvent); err != nil {
+		// Log but don't fail the operation if audit fails
+		log.Printf("failed to insert audit event for change review: %v", err)
+	}
+
+	workspace, err := s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	if err != nil {
+		return nil, err
+	}
+	return workspace, nil
+}
+
+// ListChangeReviewStates returns all review states for a proposal/compare range
+func (s *Service) ListChangeReviewStates(ctx context.Context, proposalID, fromRef, toRef string) ([]map[string]any, error) {
+	states, err := s.store.ListChangeReviewStates(ctx, proposalID, fromRef, toRef)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]map[string]any, 0, len(states))
+	for _, state := range states {
+		item := map[string]any{
+			"changeId":     state.ChangeID,
+			"reviewState":  state.ReviewState,
+			"reviewedBy":   state.ReviewedBy,
+			"reviewedAt":   nil,
+			"fromRef":      state.FromRef,
+			"toRef":        state.ToRef,
+		}
+		if state.ReviewedAt != nil {
+			item["reviewedAt"] = state.ReviewedAt.Format(time.RFC3339)
+		}
+		if state.RejectedRationale != "" {
+			item["rejectedRationale"] = state.RejectedRationale
+		}
+		result = append(result, item)
+	}
+	return result, nil
+}
+
+// ListAuditEvents returns audit events for a document/proposal
+func (s *Service) ListAuditEvents(ctx context.Context, documentID, proposalID string, limit int) ([]map[string]any, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	events, err := s.store.ListAuditEvents(ctx, documentID, proposalID, limit)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]map[string]any, 0, len(events))
+	for _, event := range events {
+		item := map[string]any{
+			"id":         event.ID,
+			"eventType":  event.EventType,
+			"actorName":  event.ActorName,
+			"documentId": event.DocumentID,
+			"proposalId": event.ProposalID,
+			"payload":    event.Payload,
+			"createdAt":  event.CreatedAt.Format(time.RFC3339),
+		}
+		if event.ChangeID != nil {
+			item["changeId"] = *event.ChangeID
+		}
+		if event.ThreadID != nil {
+			item["threadId"] = *event.ThreadID
+		}
+		result = append(result, item)
+	}
+	return result, nil
 }

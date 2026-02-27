@@ -1041,3 +1041,177 @@ func (s *PostgresStore) SpaceDocumentCount(ctx context.Context, spaceID string) 
 func (s *PostgresStore) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
+
+// UpsertChangeReviewState inserts or updates a change review state
+func (s *PostgresStore) UpsertChangeReviewState(ctx context.Context, state ChangeReviewState) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO change_review_states (change_id, proposal_id, document_id, from_ref, to_ref, review_state, rejected_rationale, reviewed_by_name, reviewed_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (proposal_id, change_id, from_ref, to_ref) DO UPDATE
+		SET review_state = EXCLUDED.review_state,
+		    rejected_rationale = EXCLUDED.rejected_rationale,
+		    reviewed_by_name = EXCLUDED.reviewed_by_name,
+		    reviewed_at = EXCLUDED.reviewed_at,
+		    updated_at = NOW()
+	`, state.ChangeID, state.ProposalID, state.DocumentID, state.FromRef, state.ToRef,
+		state.ReviewState, state.RejectedRationale, state.ReviewedBy, state.ReviewedAt)
+	if err != nil {
+		return fmt.Errorf("upsert change review state: %w", err)
+	}
+	return nil
+}
+
+// ListChangeReviewStates returns all review states for a proposal/compare range
+func (s *PostgresStore) ListChangeReviewStates(ctx context.Context, proposalID, fromRef, toRef string) ([]ChangeReviewState, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, change_id, proposal_id, document_id, from_ref, to_ref, review_state, rejected_rationale, reviewed_by_name, reviewed_at, created_at, updated_at
+		FROM change_review_states
+		WHERE proposal_id = $1 AND from_ref = $2 AND to_ref = $3
+		ORDER BY created_at ASC
+	`, proposalID, fromRef, toRef)
+	if err != nil {
+		return nil, fmt.Errorf("list change review states: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]ChangeReviewState, 0)
+	for rows.Next() {
+		var item ChangeReviewState
+		if err := rows.Scan(
+			&item.ID, &item.ChangeID, &item.ProposalID, &item.DocumentID, &item.FromRef, &item.ToRef,
+			&item.ReviewState, &item.RejectedRationale, &item.ReviewedBy, &item.ReviewedAt,
+			&item.CreatedAt, &item.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan change review state: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate change review states: %w", err)
+	}
+	return items, nil
+}
+
+// GetChangeReviewState returns a specific change review state
+func (s *PostgresStore) GetChangeReviewState(ctx context.Context, proposalID, changeID, fromRef, toRef string) (ChangeReviewState, error) {
+	var item ChangeReviewState
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, change_id, proposal_id, document_id, from_ref, to_ref, review_state, rejected_rationale, reviewed_by_name, reviewed_at, created_at, updated_at
+		FROM change_review_states
+		WHERE proposal_id = $1 AND change_id = $2 AND from_ref = $3 AND to_ref = $4
+	`, proposalID, changeID, fromRef, toRef).Scan(
+		&item.ID, &item.ChangeID, &item.ProposalID, &item.DocumentID, &item.FromRef, &item.ToRef,
+		&item.ReviewState, &item.RejectedRationale, &item.ReviewedBy, &item.ReviewedAt,
+		&item.CreatedAt, &item.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ChangeReviewState{}, sql.ErrNoRows
+		}
+		return ChangeReviewState{}, fmt.Errorf("get change review state: %w", err)
+	}
+	return item, nil
+}
+
+// InsertAuditEvent inserts an immutable audit event
+func (s *PostgresStore) InsertAuditEvent(ctx context.Context, event AuditEvent) error {
+	payloadJSON, err := json.Marshal(event.Payload)
+	if err != nil {
+		return fmt.Errorf("marshal audit payload: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO audit_events (event_type, actor_name, document_id, proposal_id, change_id, thread_id, payload)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+	`, event.EventType, event.ActorName, event.DocumentID, event.ProposalID, event.ChangeID, event.ThreadID, string(payloadJSON))
+	if err != nil {
+		return fmt.Errorf("insert audit event: %w", err)
+	}
+	return nil
+}
+
+// ListAuditEvents returns audit events for a document or proposal
+func (s *PostgresStore) ListAuditEvents(ctx context.Context, documentID, proposalID string, limit int) ([]AuditEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	query := `
+		SELECT id, event_type, actor_name, document_id, proposal_id, change_id, thread_id, payload, created_at
+		FROM audit_events
+		WHERE document_id = $1 AND ($2 = '' OR proposal_id = $2)
+		ORDER BY created_at DESC
+		LIMIT $3
+	`
+	rows, err := s.db.QueryContext(ctx, query, documentID, proposalID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list audit events: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]AuditEvent, 0)
+	for rows.Next() {
+		var item AuditEvent
+		var payloadRaw []byte
+		var changeID, threadID sql.NullString
+		if err := rows.Scan(
+			&item.ID, &item.EventType, &item.ActorName, &item.DocumentID, &item.ProposalID,
+			&changeID, &threadID, &payloadRaw, &item.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan audit event: %w", err)
+		}
+		if changeID.Valid {
+			item.ChangeID = &changeID.String
+		}
+		if threadID.Valid {
+			item.ThreadID = &threadID.String
+		}
+		_ = json.Unmarshal(payloadRaw, &item.Payload)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate audit events: %w", err)
+	}
+	return items, nil
+}
+
+// ListAuditEventsForChange returns audit events for a specific change
+func (s *PostgresStore) ListAuditEventsForChange(ctx context.Context, changeID string, limit int) ([]AuditEvent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, event_type, actor_name, document_id, proposal_id, change_id, thread_id, payload, created_at
+		FROM audit_events
+		WHERE change_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, changeID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list audit events for change: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]AuditEvent, 0)
+	for rows.Next() {
+		var item AuditEvent
+		var payloadRaw []byte
+		var changeIDPtr, threadID sql.NullString
+		if err := rows.Scan(
+			&item.ID, &item.EventType, &item.ActorName, &item.DocumentID, &item.ProposalID,
+			&changeIDPtr, &threadID, &payloadRaw, &item.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan audit event: %w", err)
+		}
+		if changeIDPtr.Valid {
+			item.ChangeID = &changeIDPtr.String
+		}
+		if threadID.Valid {
+			item.ThreadID = &threadID.String
+		}
+		_ = json.Unmarshal(payloadRaw, &item.Payload)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate audit events for change: %w", err)
+	}
+	return items, nil
+}
