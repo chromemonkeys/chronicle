@@ -41,15 +41,26 @@ import { Tabs } from "../ui/Tabs";
 import { ThreadComposer } from "../ui/ThreadComposer";
 import { ThreadList } from "../ui/ThreadList";
 import { ChronicleEditor } from "../editor/ChronicleEditor";
+import { DiffNavigator } from "../ui/DiffNavigator";
 import { SideBySideDiff } from "../editor/SideBySideDiff";
+import { UnifiedDiff } from "../editor/UnifiedDiff";
 import { EditorToolbar } from "../editor/EditorToolbar";
 import type { DocumentContent } from "../editor/schema";
 import { docToLegacyContent, legacyContentToDoc } from "../editor/schema";
 import { diffDocs } from "../editor/diff";
 import type { DiffManifest } from "../editor/diff";
 import type { Editor } from "@tiptap/react";
+import {
+  startReviewSession,
+  endReviewSession,
+  trackNavigatorChangeClick,
+  trackChangeAction,
+  trackMergeAttempt,
+  trackMergeCompleted,
+  trackMergeBlocked,
+} from "../lib/metrics";
 
-type PanelTab = "discussions" | "approvals" | "history" | "decisions";
+type PanelTab = "discussions" | "approvals" | "history" | "decisions" | "changes";
 type DiffMode = "split" | "unified";
 type ViewState = "success" | "loading" | "empty" | "error";
 type WorkspaceMode = "proposal" | "review";
@@ -150,6 +161,17 @@ const panelTabs: { id: PanelTab; label: string; ariaLabel: string; icon: JSX.Ele
         <path d="M5 3.5h7.5l2.5 2.5v10.5H5V3.5Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
         <path d="M12.5 3.5V6h2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
         <path d="M7.5 9h5M7.5 11.8h5M7.5 14.6h3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    )
+  },
+  {
+    id: "changes",
+    label: "Changes",
+    ariaLabel: "Changes",
+    icon: (
+      <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
+        <path d="M4 6h12M4 10h12M4 14h8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M15 12l2 2-2 2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     )
   },
@@ -396,6 +418,12 @@ export function WorkspacePage() {
   const handleDiffModeChange = useCallback((mode: DiffMode) => {
     setDiffMode(mode);
     setDiffVisible(true);
+    // Persist user preference
+    try {
+      localStorage.setItem("chronicle-diff-mode", mode);
+    } catch {
+      // Ignore storage errors
+    }
   }, []);
   const applyWorkspacePayload = useCallback((payload: WorkspacePayload) => {
     setWorkspace(payload);
@@ -503,6 +531,18 @@ export function WorkspacePage() {
     return () => mediaQuery.removeEventListener("change", onChange);
   }, []);
 
+  // Load persisted diff mode preference
+  useEffect(() => {
+    try {
+      const persisted = localStorage.getItem("chronicle-diff-mode");
+      if (persisted === "unified" || persisted === "split") {
+        setDiffMode(persisted);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
+
   const nodeLabelMap = useMemo(() => buildNodeLabelMap(docDraft), [docDraft]);
   const compareAuthorOptions = useMemo(() => {
     const options = new Set<string>();
@@ -581,14 +621,19 @@ export function WorkspacePage() {
     const pendingApprovals = workspace.document.proposalId
       ? Object.values(workspace.approvals).filter((value) => value === "Pending").length
       : 0;
-    return panelTabs.map((tab) =>
+    const tabs = compareActive
+      ? panelTabs
+      : panelTabs.filter((tab) => tab.id !== "changes");
+    return tabs.map((tab) =>
       tab.id === "discussions"
         ? { ...tab, count: openThreadCount }
         : tab.id === "approvals"
           ? { ...tab, count: pendingApprovals > 0 ? pendingApprovals : undefined }
-          : { ...tab, count: undefined }
+          : tab.id === "changes"
+            ? { ...tab, count: compareChanges.length > 0 ? compareChanges.length : undefined }
+            : { ...tab, count: undefined }
     );
-  }, [workspace]);
+  }, [workspace, compareActive, compareChanges.length]);
 
   const openReviewDocuments = useMemo(
     () => documentIndex.filter((doc) => doc.status === "In review" || doc.status === "Ready for approval"),
@@ -960,10 +1005,22 @@ export function WorkspacePage() {
     setActiveTab("approvals");
   }
 
-  const focusCompareChange = useCallback((change: CompareChangeRow) => {
+  const focusCompareChange = useCallback((change: CompareChangeRow, navigationMethod: "click" | "keyboard" | "step" = "click") => {
     setActiveCompareChangeId(change.id);
     setActiveNodeId(change.anchor.nodeId);
     setComposerAnchorNodeId(change.anchor.nodeId);
+    
+    // Track navigator usage
+    if (workspace) {
+      trackNavigatorChangeClick({
+        documentId: workspace.document.id,
+        proposalId: workspace.document.proposalId,
+        changeId: change.id,
+        changeType: change.type,
+        navigationMethod,
+      });
+    }
+    
     const nodeSelector = `[data-node-id="${change.anchor.nodeId}"]`;
     const target =
       document.querySelector<HTMLElement>(`.cm-doc-body ${nodeSelector}`) ??
@@ -977,7 +1034,7 @@ export function WorkspacePage() {
     window.setTimeout(() => {
       target.classList.remove("cm-compare-anchor-focus");
     }, 900);
-  }, []);
+  }, [workspace]);
 
   const stepCompareChange = useCallback((direction: 1 | -1) => {
     if (!compareActive || filteredCompareChanges.length === 0) {
@@ -986,7 +1043,7 @@ export function WorkspacePage() {
     const currentIndex = filteredCompareChanges.findIndex((item) => item.id === activeCompareChangeId);
     const startIndex = currentIndex < 0 ? (direction > 0 ? -1 : 0) : currentIndex;
     const nextIndex = (startIndex + direction + filteredCompareChanges.length) % filteredCompareChanges.length;
-    focusCompareChange(filteredCompareChanges[nextIndex]);
+    focusCompareChange(filteredCompareChanges[nextIndex], "step");
   }, [activeCompareChangeId, compareActive, filteredCompareChanges, focusCompareChange]);
 
   useEffect(() => {
@@ -1000,15 +1057,37 @@ export function WorkspacePage() {
       }
       if (event.key === "ArrowDown" || event.key.toLowerCase() === "n" || (event.altKey && event.key === "]")) {
         event.preventDefault();
+        // Track keyboard navigation
+        const currentChange = filteredCompareChanges.find(c => c.id === activeCompareChangeId);
+        if (currentChange && workspace) {
+          trackNavigatorChangeClick({
+            documentId: workspace.document.id,
+            proposalId: workspace.document.proposalId,
+            changeId: currentChange.id,
+            changeType: currentChange.type,
+            navigationMethod: "keyboard",
+          });
+        }
         stepCompareChange(1);
       } else if (event.key === "ArrowUp" || event.key.toLowerCase() === "p" || (event.altKey && event.key === "[")) {
         event.preventDefault();
+        // Track keyboard navigation
+        const currentChange = filteredCompareChanges.find(c => c.id === activeCompareChangeId);
+        if (currentChange && workspace) {
+          trackNavigatorChangeClick({
+            documentId: workspace.document.id,
+            proposalId: workspace.document.proposalId,
+            changeId: currentChange.id,
+            changeType: currentChange.type,
+            navigationMethod: "keyboard",
+          });
+        }
         stepCompareChange(-1);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [compareActive, stepCompareChange]);
+  }, [compareActive, stepCompareChange, filteredCompareChanges, activeCompareChangeId, workspace]);
 
   const handleEditorUpdate = useCallback((doc: DocumentContent) => {
     const nextContent = docToLegacyContent(doc);
@@ -1313,6 +1392,22 @@ export function WorkspacePage() {
     setActionError(null);
     setApprovalError(null);
     setApprovalStateOverride(null);
+    
+    // Calculate metrics for tracking
+    const pendingChanges = compareChanges.filter(c => c.reviewState === "pending").length;
+    const deferredChanges = compareChanges.filter(c => c.reviewState === "deferred").length;
+    
+    // Track merge attempt
+    trackMergeAttempt({
+      documentId: workspace.document.id,
+      proposalId: workspace.document.proposalId,
+      changeCount: compareChanges.length,
+      pendingChanges,
+      deferredChanges,
+      openThreads: openThreads,
+      pendingApprovals: pendingApprovals,
+    });
+    
     try {
       const updated = await mergeProposal(workspace.document.id, workspace.document.proposalId, {
         policy: mergeGatePolicy ?? {
@@ -1337,6 +1432,19 @@ export function WorkspacePage() {
         )
       );
       void refreshDocumentIndex("background");
+      
+      // Track successful merge
+      const acceptedChanges = compareChanges.filter(c => c.reviewState === "accepted").length;
+      const rejectedChanges = compareChanges.filter(c => c.reviewState === "rejected").length;
+      trackMergeCompleted({
+        documentId: workspace.document.id,
+        proposalId: workspace.document.proposalId,
+        changeCount: compareChanges.length,
+        acceptedChanges,
+        rejectedChanges,
+        deferredChanges,
+        deferredCarryover: deferredChanges > 0,
+      });
     } catch (error) {
       if (isApiError(error) && error.code === "MERGE_GATE_BLOCKED") {
         const details = error.details as {
@@ -1362,6 +1470,18 @@ export function WorkspacePage() {
         const message = `Merge gate is blocked. Pending approvals: ${pending}, open threads: ${open}.`;
         setActionError(message);
         setApprovalError(message);
+        
+        // Track blocked merge
+        const blockerRows = normalizeMergeGateBlockers(details?.blockers);
+        const blockerTypes = Array.from(new Set(blockerRows.map(b => b.type)));
+        trackMergeBlocked({
+          documentId: workspace.document.id,
+          proposalId: workspace.document.proposalId,
+          reason: message,
+          blockerTypes: blockerTypes as Array<"approval" | "thread" | "change">,
+          blockerCount: blockerRows.length,
+          explicitBlockers: blockerRows.filter(b => b.type === "change" || b.type === "thread").length,
+        });
       } else {
         setMergeGateBlockers([]);
         setMergeGatePolicy(null);
@@ -1403,7 +1523,17 @@ export function WorkspacePage() {
           ...(action === "rejected" ? { rejectedRationale: "" } : {})
         }
       );
-      // Success - keep the optimistic update
+      // Success - keep the optimistic update and track the action
+      trackChangeAction({
+        documentId: workspace.document.id,
+        proposalId: workspace.document.proposalId,
+        changeId,
+        changeType: change.type,
+        action,
+        fromRef: change.fromRef,
+        toRef: change.toRef,
+        previousState,
+      });
     } catch (error) {
       // Revert optimistic update on error
       setCompareChanges((prev) =>
@@ -1458,6 +1588,9 @@ export function WorkspacePage() {
   }
 
   function clearCompare() {
+    // End review session metrics if active
+    endReviewSession({ merged: false });
+    
     setCompareActive(false);
     setCompareDoc(null);
     setCompareManifest(null);
@@ -1477,7 +1610,7 @@ export function WorkspacePage() {
       setCompareSummary("Select two commits to compare.");
       return null;
     }
-    if (fromHash === toHash) {
+    if (fromHash === toHash && !statusLabel.startsWith("Viewing ")) {
       setCompareSummary("Select two different commits.");
       return null;
     }
@@ -1517,6 +1650,26 @@ export function WorkspacePage() {
       const normalizedChanges = normalizeCompareChanges(comparison);
       setCompareChanges(normalizedChanges);
       setActiveCompareChangeId(normalizedChanges[0]?.id ?? "");
+      
+      // Start review session metrics
+      if (normalizedChanges.length > 0) {
+        // Estimate word count from context snippets
+        const wordCountEstimate = normalizedChanges.reduce((sum, change) => {
+          const beforeWords = change.context?.before?.split(/\s+/).length ?? 0;
+          const afterWords = change.context?.after?.split(/\s+/).length ?? 0;
+          return sum + Math.max(beforeWords, afterWords);
+        }, 0) || 1000;
+        
+        startReviewSession({
+          documentId: workspace.document.id,
+          proposalId: workspace.document.proposalId,
+          changeCount: normalizedChanges.length,
+          wordCountEstimate,
+          fromRef: fromHash,
+          toRef: toHash,
+        });
+      }
+      
       if (comparison.changedFields.length === 0) {
         setCompareSummary("No field-level differences between selected commits.");
         return normalizedChanges;
@@ -1557,7 +1710,7 @@ export function WorkspacePage() {
       return;
     }
     if (hash === currentHash) {
-      setCompareSummary(`${label} is the current version.`);
+      await compareCommits(hash, currentHash, `Viewing ${label}`);
       return;
     }
     await compareCommits(hash, currentHash, `Comparing ${label} against current version...`);
@@ -2020,16 +2173,29 @@ export function WorkspacePage() {
 
               <div className="cm-doc-body">
                 {compareActive && compareBeforeDoc && compareAfterDoc ? (
-                  <SideBySideDiff
-                    beforeDoc={compareBeforeDoc}
-                    afterDoc={compareAfterDoc}
-                    beforeLabel={compareFromHash ? `From ${compareFromHash.slice(0, 7)}` : "Before"}
-                    afterLabel={compareToHash ? `To ${compareToHash.slice(0, 7)}` : "After"}
-                    beforeHash={compareFromHash}
-                    afterHash={compareToHash}
-                    scrollToNodeId={activeCompareNodeId}
-                    activeChangeNodeId={activeCompareNodeId}
-                  />
+                  diffMode === "split" ? (
+                    <SideBySideDiff
+                      beforeDoc={compareBeforeDoc}
+                      afterDoc={compareAfterDoc}
+                      beforeLabel={compareFromHash ? `From ${compareFromHash.slice(0, 7)}` : "Before"}
+                      afterLabel={compareToHash ? `To ${compareToHash.slice(0, 7)}` : "After"}
+                      beforeHash={compareFromHash}
+                      afterHash={compareToHash}
+                      scrollToNodeId={activeCompareNodeId}
+                      activeChangeNodeId={activeCompareNodeId}
+                    />
+                  ) : (
+                    <UnifiedDiff
+                      beforeDoc={compareBeforeDoc}
+                      afterDoc={compareAfterDoc}
+                      fromLabel={compareFromHash ? `From ${compareFromHash.slice(0, 7)}` : "Before"}
+                      toLabel={compareToHash ? `To ${compareToHash.slice(0, 7)}` : "After"}
+                      fromHash={compareFromHash}
+                      toHash={compareToHash}
+                      scrollToNodeId={activeCompareNodeId}
+                      activeChangeNodeId={activeCompareNodeId}
+                    />
+                  )
                 ) : (compareDoc ?? docDraft) ? (
                   <ChronicleEditor
                     content={compareDoc ?? docDraft!}
@@ -2682,6 +2848,19 @@ export function WorkspacePage() {
                   className="cm-panel-scroll"
                 />
               )}
+            </div>
+          )}
+
+          {activeTab === "changes" && (
+            <div className="cm-panel-content active">
+              <DiffNavigator
+                changes={compareChanges}
+                activeChangeId={activeCompareChangeId}
+                diffMode={diffMode}
+                onChangeClick={focusCompareChange}
+                onStepChange={stepCompareChange}
+                onReviewAction={(changeId, action) => void handleChangeReviewAction(changeId, action)}
+              />
             </div>
           )}
 
