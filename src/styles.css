@@ -1619,7 +1619,7 @@ label {
 }
 
 .cm-panel-tabs-rail {
-  width: 124px;
+  width: 56px;
   flex-direction: column;
   border-bottom: 0;
   border-right: 0;
@@ -1631,12 +1631,13 @@ label {
 .cm-panel-tabs-rail .cm-panel-tab {
   flex: 0;
   width: 100%;
-  min-height: 44px;
+  min-height: 48px;
   border-bottom: 0;
   border-left: 2px solid transparent;
-  justify-content: flex-start;
-  padding: 10px;
+  justify-content: center;
+  padding: 10px 8px;
   font-size: 12px;
+  position: relative;
 }
 
 .cm-panel-tabs-rail .cm-panel-tab.active,
@@ -1654,6 +1655,10 @@ label {
   color: var(--ink-2);
 }
 
+.cm-panel-tabs-rail .cm-panel-tab .cm-panel-tab-label {
+  display: none;
+}
+
 .cm-panel-main {
   display: flex;
   flex-direction: column;
@@ -1661,7 +1666,7 @@ label {
   flex: 1;
   overflow: hidden;
   order: 1;
-  max-width: calc(var(--panel-w) - 110px);
+  max-width: calc(var(--panel-w) - 56px);
 }
 
 .cm-panel-tab {
@@ -1681,6 +1686,15 @@ label {
   gap: 5px;
 }
 
+.cm-panel-tab-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
 .cm-panel-tab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
@@ -1690,13 +1704,21 @@ label {
 .cm-panel-tab-count {
   background: var(--accent);
   color: white;
-  font-size: 9px;
-  width: 15px;
-  height: 15px;
+  font-size: 10px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  line-height: 1;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.cm-panel-tabs-rail .cm-panel-tab-count {
+  position: absolute;
+  top: 6px;
+  right: 6px;
 }
 
 .cm-panel-content {
@@ -2462,6 +2484,7 @@ label {
 
   .cm-panel-tabs-rail .cm-panel-tab {
     flex: 1;
+    min-width: 64px;
     border-left: 0;
     border-bottom: 2px solid transparent;
   }
@@ -2521,13 +2544,35 @@ label {
   outline-offset: 4px;
 }
 
-/* Make block-active highlighting more subtle - shows cursor position without being distracting */
+/* Block-active: shows where cursor is typing - use dashed border */
 .cm-editor-wrapper .tiptap [data-node-id].block-active {
-  border-left: 2px solid var(--accent);
+  border-left: 3px dashed var(--accent);
   padding-left: 10px;
   margin-left: -12px;
-  /* Remove background highlight - keep only the left border */
   background: transparent;
+}
+
+/* Has-thread: shows blocks with discussion threads - use solid border + subtle background */
+.cm-editor-wrapper .tiptap [data-node-id].has-thread {
+  border-left: 4px solid var(--accent);
+  padding-left: 10px;
+  margin-left: -12px;
+  background: var(--accent-soft);
+}
+
+/* Both active AND has-thread: emphasize the thread but show active with dash */
+.cm-editor-wrapper .tiptap [data-node-id].has-thread.block-active {
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+
+/* Selected: distinct selection state */
+.cm-editor-wrapper .tiptap [data-node-id].selected {
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+  margin-left: -12px;
 }
 
 .cm-editor-wrapper .tiptap h1 {
@@ -2630,17 +2675,6 @@ label {
   color: var(--ink-4);
   pointer-events: none;
   height: 0;
-}
-
-/* Node highlighting for active/selected blocks */
-.cm-editor-wrapper .tiptap [data-node-id].has-thread {
-  border-left: 2px solid var(--accent);
-  padding-left: 10px;
-  margin-left: -12px;
-}
-
-.cm-editor-wrapper .tiptap [data-node-id].selected {
-  background: var(--accent-soft);
 }
 
 .cm-editor-wrapper .tiptap [data-node-id].diff-added {
