@@ -24,6 +24,12 @@ export function DocumentsPage() {
   const [workspaceName, setWorkspaceName] = useState<string>("");
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [isCreateDocFormOpen, setIsCreateDocFormOpen] = useState(false);
+  const [newDocumentTitle, setNewDocumentTitle] = useState("");
+  const [isCreateSpaceFormOpen, setIsCreateSpaceFormOpen] = useState(false);
+  const [newSpaceName, setNewSpaceName] = useState("");
+  const [spaceError, setSpaceError] = useState<string | null>(null);
+  const [isCreatingSpace, setIsCreatingSpace] = useState(false);
 
   useEffect(() => {
     fetchWorkspaces()
@@ -68,12 +74,13 @@ export function DocumentsPage() {
   }
 
   async function createNewDocument() {
-    const title = window.prompt("Document title", "Untitled Document");
-    if (title === null) return;
+    const title = newDocumentTitle.trim() || "Untitled Document";
     setIsCreating(true);
     setCreateError(null);
     try {
-      const workspace = await createDocument(title.trim() || "Untitled Document", "", spaceId);
+      const workspace = await createDocument(title, "", spaceId);
+      setIsCreateDocFormOpen(false);
+      setNewDocumentTitle("");
       navigate(`/workspace/${workspace.document.id}`);
     } catch (error) {
       if (isApiError(error)) {
@@ -87,13 +94,26 @@ export function DocumentsPage() {
   }
 
   async function handleCreateSpace() {
-    const name = window.prompt("Space name");
-    if (!name) return;
+    const trimmedName = newSpaceName.trim();
+    if (!trimmedName) {
+      setSpaceError("Space name is required.");
+      return;
+    }
+    setIsCreatingSpace(true);
+    setSpaceError(null);
     try {
-      const data = await createSpace(name.trim());
+      const data = await createSpace(trimmedName);
       setSpaces(data.spaces);
-    } catch {
-      // Silently fail — user can retry
+      setIsCreateSpaceFormOpen(false);
+      setNewSpaceName("");
+    } catch (error) {
+      if (isApiError(error)) {
+        setSpaceError(error.message);
+      } else {
+        setSpaceError("Could not create space.");
+      }
+    } finally {
+      setIsCreatingSpace(false);
     }
   }
 
@@ -124,21 +144,96 @@ export function DocumentsPage() {
             </Link>
           ))}
         </nav>
-        <button className="space-sidebar-create" onClick={() => void handleCreateSpace()}>
-          + Create Space
-        </button>
       </aside>
       <section className="documents-content">
         <div className="section-head">
-          <h1>{pageTitle}</h1>
-          <p className="muted">
-            {activeSpace ? activeSpace.description : "Primary browser journey backed by Chronicle API."}
-          </p>
-          <div>
-            <Button onClick={() => void createNewDocument()} disabled={isCreating}>
-              {isCreating ? "Creating..." : "Create document"}
-            </Button>
+          <div className="documents-head-row">
+            <div>
+              <h1>{pageTitle}</h1>
+              <p className="muted">
+                {activeSpace ? activeSpace.description : "Primary browser journey backed by Chronicle API."}
+              </p>
+            </div>
+            <div className="documents-head-actions">
+              <Button
+                variant={isCreateSpaceFormOpen ? "ghost" : "primary"}
+                onClick={() => {
+                  setIsCreateSpaceFormOpen((value) => !value);
+                  setSpaceError(null);
+                }}
+                disabled={isCreatingSpace}
+              >
+                {isCreateSpaceFormOpen ? "Cancel space" : "Create space"}
+              </Button>
+              <Button
+                variant={isCreateDocFormOpen ? "ghost" : "primary"}
+                onClick={() => {
+                  setIsCreateDocFormOpen((value) => !value);
+                  setCreateError(null);
+                }}
+                disabled={isCreating}
+              >
+                {isCreateDocFormOpen ? "Cancel document" : "Create document"}
+              </Button>
+            </div>
           </div>
+          {isCreateSpaceFormOpen ? (
+            <form
+              className="inline-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleCreateSpace();
+              }}
+            >
+              <label htmlFor="new-space-name">Space name</label>
+              <input
+                id="new-space-name"
+                value={newSpaceName}
+                onChange={(event) => {
+                  setNewSpaceName(event.target.value);
+                  if (spaceError) {
+                    setSpaceError(null);
+                  }
+                }}
+                placeholder="Engineering"
+                disabled={isCreatingSpace}
+              />
+              <div className="button-row">
+                <Button type="submit" disabled={isCreatingSpace || !newSpaceName.trim()}>
+                  {isCreatingSpace ? "Creating space..." : "Create space"}
+                </Button>
+              </div>
+              {spaceError ? <p className="muted">{spaceError}</p> : null}
+            </form>
+          ) : null}
+          {isCreateDocFormOpen ? (
+            <form
+              className="inline-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void createNewDocument();
+              }}
+            >
+              <label htmlFor="new-document-title">Document title</label>
+              <input
+                id="new-document-title"
+                value={newDocumentTitle}
+                onChange={(event) => {
+                  setNewDocumentTitle(event.target.value);
+                  if (createError) {
+                    setCreateError(null);
+                  }
+                }}
+                placeholder="Untitled Document"
+                disabled={isCreating}
+              />
+              <div className="button-row">
+                <Button type="submit" disabled={isCreating}>
+                  {isCreating ? "Creating document..." : "Create document"}
+                </Button>
+              </div>
+            </form>
+          ) : null}
           {createError ? <p className="muted">{createError}</p> : null}
         </div>
         {viewState === "loading" && (
@@ -161,7 +256,7 @@ export function DocumentsPage() {
                 : "Create your first RFC, ADR, or policy draft to begin collaboration."
             }
             actionLabel={isCreating ? "Creating..." : "Create document"}
-            onAction={createNewDocument}
+            onAction={() => setIsCreateDocFormOpen(true)}
           />
         )}
         {viewState === "error" && (
