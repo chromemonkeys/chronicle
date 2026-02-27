@@ -714,6 +714,11 @@ test.describe("Chronicle frontend Playwright coverage", () => {
 
     await expect(page.getByText("Merge Gate Blocked")).toBeVisible();
     await page.getByRole("tab", { name: "Required approvals" }).click();
+    await expect(page.getByText("Merge blockers: 3 pending approvals, 1 open thread.")).toBeVisible();
+
+    await page.getByRole("button", { name: "View open threads" }).click();
+    await expect(page.getByRole("tab", { name: "Discussion" })).toHaveAttribute("aria-selected", "true");
+    await page.getByRole("tab", { name: "Required approvals" }).click();
 
     const legalRow = page.locator(".cm-approver-row", { hasText: "Legal" });
     await expect(legalRow.getByRole("button", { name: "Blocked" })).toBeDisabled();
@@ -730,10 +735,12 @@ test.describe("Chronicle frontend Playwright coverage", () => {
 
     await expect(legalRow.getByRole("button", { name: "Approve" })).toBeEnabled();
     await legalRow.getByRole("button", { name: "Approve" }).click();
+    await expect(page.getByText("Merge blockers: 0 pending approvals, 1 open thread.")).toBeVisible();
 
     const mergeButton = page.getByRole("button", { name: "Resolve open threads" });
     await expect(mergeButton).toBeDisabled();
 
+    await page.getByRole("tab", { name: "Discussion" }).click();
     const resolveRequest = page.waitForResponse((response) => {
       return (
         response.url().includes("/api/documents/rfc-auth/proposals/proposal-rfc-auth/threads/purpose/resolve") &&
@@ -752,6 +759,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     ]);
 
     await expect(page.getByText(/Resolved by/i)).toBeVisible();
+    await page.getByRole("tab", { name: "Required approvals" }).click();
     const readyMergeButton = page.getByRole("button", { name: "Ready to merge" });
     await expect(readyMergeButton).toBeEnabled();
     await readyMergeButton.click();

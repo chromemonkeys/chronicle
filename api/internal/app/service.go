@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -160,6 +162,7 @@ type gitService interface {
 	GetHeadContent(string, string) (gitrepo.Content, store.CommitInfo, error)
 	History(string, string, int) ([]store.CommitInfo, error)
 	GetContentByHash(string, string) (gitrepo.Content, error)
+	GetCommitByHash(string, string) (store.CommitInfo, error)
 	CreateTag(string, string, string) error
 	MergeIntoMain(string, string, string, string) (store.CommitInfo, error)
 }
@@ -1181,13 +1184,306 @@ func (s *Service) Compare(ctx context.Context, documentID, fromHash, toHash stri
 		}
 	}
 	changedFields := gitrepo.DiffFields(from, to)
+	commitInfo, err := s.git.GetCommitByHash(documentID, toHash)
+	if err != nil {
+		return nil, err
+	}
+	changes := buildDeterministicCompareChanges(fromHash, toHash, from, to, commitInfo)
 	return map[string]any{
 		"from":          fromHash,
 		"to":            toHash,
 		"changedFields": changedFields,
+		"changes":       changes,
 		"fromContent":   fromContent,
 		"toContent":     toContent,
 	}, nil
+}
+
+type compareDocNode struct {
+	Key       string
+	NodeID    string
+	NodeType  string
+	Text      string
+	Index     int
+	BeforeCtx string
+	AfterCtx  string
+}
+
+func buildDeterministicCompareChanges(fromHash, toHash string, from, to gitrepo.Content, commitInfo store.CommitInfo) []map[string]any {
+	fromNodes := parseCompareDocNodes(from.Doc)
+	toNodes := parseCompareDocNodes(to.Doc)
+
+	fromByKey := make(map[string]compareDocNode, len(fromNodes))
+	for _, node := range fromNodes {
+		fromByKey[node.Key] = node
+	}
+	toByKey := make(map[string]compareDocNode, len(toNodes))
+	for _, node := range toNodes {
+		toByKey[node.Key] = node
+	}
+
+	changeItems := make([]map[string]any, 0, max(len(fromNodes), len(toNodes)))
+	authorName := firstNonBlank(commitInfo.Author, "Unknown")
+	authorID := "usr_" + shortHash(strings.ToLower(strings.TrimSpace(authorName)))
+	editedAt := ""
+	if !commitInfo.CreatedAt.IsZero() {
+		editedAt = commitInfo.CreatedAt.UTC().Format(time.RFC3339)
+	}
+
+	for key, fromNode := range fromByKey {
+		toNode, exists := toByKey[key]
+		if !exists {
+			changeItems = append(changeItems, makeCompareChange(
+				fromHash,
+				toHash,
+				"deleted",
+				fromNode,
+				compareDocNode{},
+				authorID,
+				authorName,
+				editedAt,
+			))
+			continue
+		}
+		if fromNode.Text == toNode.Text && fromNode.NodeType == toNode.NodeType && fromNode.Index != toNode.Index {
+			changeItems = append(changeItems, makeCompareChange(
+				fromHash,
+				toHash,
+				"moved",
+				fromNode,
+				toNode,
+				authorID,
+				authorName,
+				editedAt,
+			))
+			continue
+		}
+		if fromNode.Text != toNode.Text || fromNode.NodeType != toNode.NodeType {
+			changeItems = append(changeItems, makeCompareChange(
+				fromHash,
+				toHash,
+				"modified",
+				fromNode,
+				toNode,
+				authorID,
+				authorName,
+				editedAt,
+			))
+		}
+	}
+
+	for key, toNode := range toByKey {
+		if _, exists := fromByKey[key]; exists {
+			continue
+		}
+		changeItems = append(changeItems, makeCompareChange(
+			fromHash,
+			toHash,
+			"inserted",
+			compareDocNode{},
+			toNode,
+			authorID,
+			authorName,
+			editedAt,
+		))
+	}
+
+	sort.Slice(changeItems, func(i, j int) bool {
+		leftAnchor, _ := changeItems[i]["anchor"].(map[string]any)
+		rightAnchor, _ := changeItems[j]["anchor"].(map[string]any)
+		leftNodeID, _ := leftAnchor["nodeId"].(string)
+		rightNodeID, _ := rightAnchor["nodeId"].(string)
+		if leftNodeID != rightNodeID {
+			return leftNodeID < rightNodeID
+		}
+		leftType, _ := changeItems[i]["type"].(string)
+		rightType, _ := changeItems[j]["type"].(string)
+		if leftType != rightType {
+			return compareTypeRank(leftType) < compareTypeRank(rightType)
+		}
+		leftSnippet, _ := changeItems[i]["snippet"].(string)
+		rightSnippet, _ := changeItems[j]["snippet"].(string)
+		return leftSnippet < rightSnippet
+	})
+
+	return changeItems
+}
+
+func makeCompareChange(
+	fromHash string,
+	toHash string,
+	changeType string,
+	fromNode compareDocNode,
+	toNode compareDocNode,
+	authorID string,
+	authorName string,
+	editedAt string,
+) map[string]any {
+	anchorNodeID := firstNonBlank(toNode.NodeID, fromNode.NodeID, toNode.Key, fromNode.Key, "unknown")
+	snippet := compareSnippet(changeType, fromNode, toNode)
+	fromOffset := 0
+	toOffset := len([]rune(snippet))
+	idSeed := fmt.Sprintf("%s|%s|%s|%s|%d|%d|%s", fromHash, toHash, changeType, anchorNodeID, fromOffset, toOffset, snippet)
+	return map[string]any{
+		"id":      "chg_" + shortHash(idSeed),
+		"type":    changeType,
+		"fromRef": fromHash,
+		"toRef":   toHash,
+		"anchor": map[string]any{
+			"nodeId":     anchorNodeID,
+			"fromOffset": fromOffset,
+			"toOffset":   toOffset,
+		},
+		"context": map[string]any{
+			"before": compareContextBefore(changeType, fromNode, toNode),
+			"after":  compareContextAfter(changeType, fromNode, toNode),
+		},
+		"snippet": snippet,
+		"author": map[string]any{
+			"id":   authorID,
+			"name": authorName,
+		},
+		"editedAt":    editedAt,
+		"reviewState": "pending",
+		"threadIds":   []string{},
+		"blockers":    []string{},
+	}
+}
+
+func compareTypeRank(changeType string) int {
+	switch changeType {
+	case "moved":
+		return 0
+	case "modified":
+		return 1
+	case "inserted":
+		return 2
+	case "deleted":
+		return 3
+	case "format_only":
+		return 4
+	default:
+		return 5
+	}
+}
+
+func compareContextBefore(changeType string, fromNode, toNode compareDocNode) string {
+	switch changeType {
+	case "inserted":
+		return toNode.BeforeCtx
+	case "deleted":
+		return fromNode.BeforeCtx
+	default:
+		return firstNonBlank(toNode.BeforeCtx, fromNode.BeforeCtx)
+	}
+}
+
+func compareContextAfter(changeType string, fromNode, toNode compareDocNode) string {
+	switch changeType {
+	case "inserted":
+		return toNode.AfterCtx
+	case "deleted":
+		return fromNode.AfterCtx
+	default:
+		return firstNonBlank(toNode.AfterCtx, fromNode.AfterCtx)
+	}
+}
+
+func compareSnippet(changeType string, fromNode, toNode compareDocNode) string {
+	switch changeType {
+	case "deleted":
+		return truncateForSnippet(firstNonBlank(fromNode.Text, fromNode.NodeType, fromNode.Key))
+	case "inserted", "moved", "modified":
+		return truncateForSnippet(firstNonBlank(toNode.Text, fromNode.Text, toNode.NodeType, toNode.Key))
+	default:
+		return truncateForSnippet(firstNonBlank(toNode.Text, fromNode.Text, toNode.Key, fromNode.Key, "change"))
+	}
+}
+
+func truncateForSnippet(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= 120 {
+		return trimmed
+	}
+	return string(runes[:120]) + "..."
+}
+
+func parseCompareDocNodes(raw json.RawMessage) []compareDocNode {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil
+	}
+	contentRaw, _ := doc["content"].([]any)
+	if len(contentRaw) == 0 {
+		return nil
+	}
+
+	nodes := make([]compareDocNode, 0, len(contentRaw))
+	for idx, item := range contentRaw {
+		nodeMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		nodeType, _ := nodeMap["type"].(string)
+		attrs, _ := nodeMap["attrs"].(map[string]any)
+		nodeID, _ := attrs["nodeId"].(string)
+		text := extractCompareNodeText(nodeMap)
+		key := nodeID
+		if key == "" {
+			key = fmt.Sprintf("%s@%d", firstNonBlank(nodeType, "node"), idx)
+		}
+		nodes = append(nodes, compareDocNode{
+			Key:      key,
+			NodeID:   nodeID,
+			NodeType: nodeType,
+			Text:     text,
+			Index:    idx,
+		})
+	}
+
+	for idx := range nodes {
+		if idx > 0 {
+			nodes[idx].BeforeCtx = nodes[idx-1].Text
+		}
+		if idx+1 < len(nodes) {
+			nodes[idx].AfterCtx = nodes[idx+1].Text
+		}
+	}
+
+	return nodes
+}
+
+func extractCompareNodeText(node map[string]any) string {
+	text, _ := node["text"].(string)
+	parts := make([]string, 0, 4)
+	if strings.TrimSpace(text) != "" {
+		parts = append(parts, strings.TrimSpace(text))
+	}
+	content, _ := node["content"].([]any)
+	for _, item := range content {
+		child, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		childText := strings.TrimSpace(extractCompareNodeText(child))
+		if childText != "" {
+			parts = append(parts, childText)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func shortHash(input string) string {
+	sum := sha1.Sum([]byte(input))
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 func (s *Service) Approvals(ctx context.Context) (map[string]any, error) {

@@ -262,6 +262,8 @@ func (f *fakeStore) Ping(context.Context) error                              { r
 type fakeGit struct {
 	historyFn            func(string, string, int) ([]store.CommitInfo, error)
 	getHeadContentFn     func(string, string) (gitrepo.Content, store.CommitInfo, error)
+	getContentByHashFn   func(string, string) (gitrepo.Content, error)
+	getCommitByHashFn    func(string, string) (store.CommitInfo, error)
 	commitContentFn      func(string, string, gitrepo.Content, string, string) (store.CommitInfo, error)
 	ensureDocumentRepoFn func(string, gitrepo.Content, string) error
 	ensureBranchFn       func(string, string, string) error
@@ -305,8 +307,17 @@ func (f *fakeGit) History(documentID, branchName string, limit int) ([]store.Com
 	}
 	return []store.CommitInfo{{Hash: "abc1234", Message: "Commit", Author: "Avery", CreatedAt: time.Now()}}, nil
 }
-func (f *fakeGit) GetContentByHash(string, string) (gitrepo.Content, error) {
+func (f *fakeGit) GetContentByHash(documentID, hash string) (gitrepo.Content, error) {
+	if f.getContentByHashFn != nil {
+		return f.getContentByHashFn(documentID, hash)
+	}
 	return gitrepo.Content{}, nil
+}
+func (f *fakeGit) GetCommitByHash(documentID, hash string) (store.CommitInfo, error) {
+	if f.getCommitByHashFn != nil {
+		return f.getCommitByHashFn(documentID, hash)
+	}
+	return store.CommitInfo{Hash: hash, Author: "Avery", CreatedAt: time.Date(2026, 2, 27, 18, 20, 0, 0, time.UTC)}, nil
 }
 func (f *fakeGit) CreateTag(documentID, hash, name string) error {
 	if f.createTagFn != nil {
@@ -1052,6 +1063,132 @@ func TestHandleSyncSessionEndedDedupesSessionIDWithSnapshotCommit(t *testing.T) 
 	}
 	if first["flushCommit"] != "flush123" || second["flushCommit"] != "flush123" {
 		t.Fatalf("expected idempotent flush commit hash, got first=%v second=%v", first["flushCommit"], second["flushCommit"])
+	}
+}
+
+func TestCompareDeterministicChangePayload(t *testing.T) {
+	fromDoc := json.RawMessage(`{"type":"doc","content":[
+		{"type":"paragraph","attrs":{"nodeId":"n-a"},"content":[{"type":"text","text":"Alpha"}]},
+		{"type":"paragraph","attrs":{"nodeId":"n-b"},"content":[{"type":"text","text":"Beta"}]}
+	]}`)
+	toDoc := json.RawMessage(`{"type":"doc","content":[
+		{"type":"paragraph","attrs":{"nodeId":"n-b"},"content":[{"type":"text","text":"Beta updated"}]},
+		{"type":"paragraph","attrs":{"nodeId":"n-a"},"content":[{"type":"text","text":"Alpha"}]},
+		{"type":"paragraph","attrs":{"nodeId":"n-c"},"content":[{"type":"text","text":"Gamma"}]}
+	]}`)
+
+	fg := &fakeGit{
+		getContentByHashFn: func(_ string, hash string) (gitrepo.Content, error) {
+			if hash == "from1234" {
+				return gitrepo.Content{Title: "Doc", Doc: fromDoc}, nil
+			}
+			if hash == "to5678" {
+				return gitrepo.Content{Title: "Doc", Doc: toDoc}, nil
+			}
+			t.Fatalf("unexpected hash %q", hash)
+			return gitrepo.Content{}, nil
+		},
+		getCommitByHashFn: func(_ string, hash string) (store.CommitInfo, error) {
+			if hash != "to5678" {
+				t.Fatalf("expected commit lookup for to hash, got %q", hash)
+			}
+			return store.CommitInfo{
+				Hash:      "to5678",
+				Author:    "Avery",
+				CreatedAt: time.Date(2026, 2, 27, 18, 20, 0, 0, time.UTC),
+			}, nil
+		},
+	}
+	svc := newTestService(&fakeStore{}, fg)
+
+	first, err := svc.Compare(context.Background(), "doc-1", "from1234", "to5678")
+	if err != nil {
+		t.Fatalf("Compare() first error = %v", err)
+	}
+	second, err := svc.Compare(context.Background(), "doc-1", "from1234", "to5678")
+	if err != nil {
+		t.Fatalf("Compare() second error = %v", err)
+	}
+
+	firstChanges, ok := first["changes"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected changes []map[string]any, got %T", first["changes"])
+	}
+	secondChanges, ok := second["changes"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected second changes []map[string]any, got %T", second["changes"])
+	}
+	if len(firstChanges) != len(secondChanges) {
+		t.Fatalf("expected deterministic change count, got %d and %d", len(firstChanges), len(secondChanges))
+	}
+	if len(firstChanges) == 0 {
+		t.Fatalf("expected non-empty change payload")
+	}
+	for idx := range firstChanges {
+		if firstChanges[idx]["id"] != secondChanges[idx]["id"] || firstChanges[idx]["type"] != secondChanges[idx]["type"] {
+			t.Fatalf("expected deterministic order and ids at index %d: first=%v second=%v", idx, firstChanges[idx], secondChanges[idx])
+		}
+	}
+}
+
+func TestCompareZeroDiffReturnsEmptyChanges(t *testing.T) {
+	doc := json.RawMessage(`{"type":"doc","content":[{"type":"paragraph","attrs":{"nodeId":"n-a"},"content":[{"type":"text","text":"Same"}]}]}`)
+	fg := &fakeGit{
+		getContentByHashFn: func(_ string, _ string) (gitrepo.Content, error) {
+			return gitrepo.Content{Title: "Doc", Doc: doc}, nil
+		},
+	}
+	svc := newTestService(&fakeStore{}, fg)
+
+	payload, err := svc.Compare(context.Background(), "doc-1", "same1", "same2")
+	if err != nil {
+		t.Fatalf("Compare() error = %v", err)
+	}
+	changes, ok := payload["changes"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected changes []map[string]any, got %T", payload["changes"])
+	}
+	if len(changes) != 0 {
+		t.Fatalf("expected zero-diff to return empty changes, got %d", len(changes))
+	}
+}
+
+func TestCompareDetectsMovedNodeAsMovedChange(t *testing.T) {
+	fromDoc := json.RawMessage(`{"type":"doc","content":[
+		{"type":"paragraph","attrs":{"nodeId":"n-a"},"content":[{"type":"text","text":"Alpha"}]},
+		{"type":"paragraph","attrs":{"nodeId":"n-b"},"content":[{"type":"text","text":"Beta"}]}
+	]}`)
+	toDoc := json.RawMessage(`{"type":"doc","content":[
+		{"type":"paragraph","attrs":{"nodeId":"n-b"},"content":[{"type":"text","text":"Beta"}]},
+		{"type":"paragraph","attrs":{"nodeId":"n-a"},"content":[{"type":"text","text":"Alpha"}]}
+	]}`)
+	fg := &fakeGit{
+		getContentByHashFn: func(_ string, hash string) (gitrepo.Content, error) {
+			if hash == "from" {
+				return gitrepo.Content{Doc: fromDoc}, nil
+			}
+			return gitrepo.Content{Doc: toDoc}, nil
+		},
+	}
+	svc := newTestService(&fakeStore{}, fg)
+
+	payload, err := svc.Compare(context.Background(), "doc-1", "from", "to")
+	if err != nil {
+		t.Fatalf("Compare() error = %v", err)
+	}
+	changes, ok := payload["changes"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected changes []map[string]any, got %T", payload["changes"])
+	}
+	foundMoved := false
+	for _, change := range changes {
+		if change["type"] == "moved" {
+			foundMoved = true
+			break
+		}
+	}
+	if !foundMoved {
+		t.Fatalf("expected at least one moved change, got %v", changes)
 	}
 }
 

@@ -595,6 +595,7 @@ func (s *HTTPServer) handleProposalAction(w http.ResponseWriter, r *http.Request
 		}
 		payload, pendingApprovals, openThreads, err := s.service.MergeProposal(r.Context(), documentID, proposalID, session.UserName, session.IsExternal)
 		if err != nil {
+			log.Printf("merge error for document=%s proposal=%s: %v", documentID, proposalID, err)
 			status, code, message, details := mapError(err)
 			writeError(w, status, code, message, details)
 			return

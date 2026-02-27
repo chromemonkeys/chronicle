@@ -131,7 +131,7 @@ func (s *Service) CommitContent(documentID, branchName string, content Content, 
 		return store.CommitInfo{}, fmt.Errorf("open repo: %w", err)
 	}
 
-	hash, err := s.commit(repo, branchName, content, author, message)
+	hash, err := s.commit(repo, branchName, content, author, message, false)
 	if err != nil {
 		return store.CommitInfo{}, err
 	}
@@ -191,6 +191,28 @@ func (s *Service) GetContentByHash(documentID, hash string) (Content, error) {
 		return Content{}, fmt.Errorf("read commit %s: %w", hash, err)
 	}
 	return readContentFromCommit(commitObj)
+}
+
+func (s *Service) GetCommitByHash(documentID, hash string) (store.CommitInfo, error) {
+	lock := s.documentLock(documentID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	repo, err := git.PlainOpen(s.repoPath(documentID))
+	if err != nil {
+		return store.CommitInfo{}, fmt.Errorf("open repo: %w", err)
+	}
+
+	resolvedHash, err := resolveHash(repo, hash)
+	if err != nil {
+		return store.CommitInfo{}, err
+	}
+	commitObj, err := repo.CommitObject(resolvedHash)
+	if err != nil {
+		return store.CommitInfo{}, fmt.Errorf("read commit %s: %w", hash, err)
+	}
+
+	return toCommitInfo(commitObj), nil
 }
 
 func (s *Service) History(documentID, branchName string, limit int) ([]store.CommitInfo, error) {
@@ -286,7 +308,7 @@ func (s *Service) MergeIntoMain(documentID, sourceBranch, author, message string
 		sourceBranch,
 		author,
 	)
-	hash, err := s.commit(repo, "main", content, author, mergeMessage)
+	hash, err := s.commit(repo, "main", content, author, mergeMessage, true)
 	if err != nil {
 		return store.CommitInfo{}, err
 	}
@@ -313,7 +335,7 @@ func (s *Service) documentLock(documentID string) *sync.Mutex {
 	return lock
 }
 
-func (s *Service) commit(repo *git.Repository, branchName string, content Content, author, message string) (plumbing.Hash, error) {
+func (s *Service) commit(repo *git.Repository, branchName string, content Content, author, message string, allowEmpty bool) (plumbing.Hash, error) {
 	if err := checkoutBranch(repo, branchName); err != nil {
 		return plumbing.ZeroHash, err
 	}
@@ -338,6 +360,7 @@ func (s *Service) commit(repo *git.Repository, branchName string, content Conten
 	}
 
 	hash, err := worktree.Commit(message, &git.CommitOptions{
+		AllowEmptyCommits: allowEmpty,
 		Author: &object.Signature{
 			Name:  author,
 			Email: fmt.Sprintf("%s@local.chronicle.dev", sanitizeEmail(author)),

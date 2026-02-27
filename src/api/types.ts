@@ -197,6 +197,30 @@ export type DocumentComparePayload = {
   from: string;
   to: string;
   changedFields: CompareField[];
+  changes?: Array<{
+    id: string;
+    type: "inserted" | "deleted" | "modified" | "moved" | "format_only";
+    fromRef: string;
+    toRef: string;
+    anchor: {
+      nodeId: string;
+      fromOffset: number;
+      toOffset: number;
+    };
+    context: {
+      before: string;
+      after: string;
+    };
+    snippet: string;
+    author: {
+      id: string;
+      name: string;
+    };
+    editedAt: string;
+    reviewState: "pending" | "accepted" | "rejected" | "deferred";
+    threadIds: string[];
+    blockers: string[];
+  }>;
   fromContent?: CompareContentSnapshot;
   toContent?: CompareContentSnapshot;
 };

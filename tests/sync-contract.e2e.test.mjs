@@ -86,6 +86,15 @@ async function openSocket(syncBaseUrl, { token, documentId, proposalId }) {
   url.searchParams.set("documentId", documentId);
   url.searchParams.set("branchId", proposalId);
   const ws = new WebSocket(url.toString());
+  ws.__events = [];
+  ws.addEventListener("message", (event) => {
+    try {
+      const raw = typeof event.data === "string" ? event.data : Buffer.from(event.data).toString("utf8");
+      ws.__events.push(JSON.parse(raw));
+    } catch {
+      // ignore malformed frames
+    }
+  });
   await new Promise((resolve, reject) => {
     const onOpen = () => {
       ws.removeEventListener("error", onError);
@@ -102,6 +111,11 @@ async function openSocket(syncBaseUrl, { token, documentId, proposalId }) {
 }
 
 function waitForEvent(ws, predicate, timeoutMs = 6_000) {
+  for (const payload of ws.__events ?? []) {
+    if (predicate(payload)) {
+      return Promise.resolve(payload);
+    }
+  }
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
