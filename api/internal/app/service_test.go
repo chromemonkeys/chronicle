@@ -986,6 +986,75 @@ func TestHandleSyncSessionEndedDedupesSessionID(t *testing.T) {
 	}
 }
 
+func TestHandleSyncSessionEndedDedupesSessionIDWithSnapshotCommit(t *testing.T) {
+	commitCalls := 0
+	fs := &fakeStore{
+		getProposalFn: func(_ context.Context, proposalID string) (store.Proposal, error) {
+			return store.Proposal{ID: proposalID, DocumentID: "doc-1", BranchName: "proposal-doc-1"}, nil
+		},
+	}
+	fg := &fakeGit{
+		getHeadContentFn: func(_ string, _ string) (gitrepo.Content, store.CommitInfo, error) {
+			return gitrepo.Content{
+				Title:    "Before",
+				Subtitle: "Sub",
+				Purpose:  "Purpose",
+				Tiers:    "Tiers",
+				Enforce:  "Enforce",
+			}, store.CommitInfo{Hash: "head123"}, nil
+		},
+		commitContentFn: func(documentID, branchName string, _ gitrepo.Content, author, message string) (store.CommitInfo, error) {
+			commitCalls++
+			if documentID != "doc-1" {
+				t.Fatalf("expected documentID doc-1, got %q", documentID)
+			}
+			if branchName != "proposal-doc-1" {
+				t.Fatalf("expected branch proposal-doc-1, got %q", branchName)
+			}
+			if author != "Avery" {
+				t.Fatalf("expected author Avery, got %q", author)
+			}
+			if message != "Sync session flush (2 updates)" {
+				t.Fatalf("unexpected commit message: %q", message)
+			}
+			return store.CommitInfo{Hash: "flush123"}, nil
+		},
+	}
+	svc := newTestService(fs, fg)
+
+	first, err := svc.HandleSyncSessionEnded(
+		context.Background(),
+		"session-1",
+		"doc-1",
+		"prop-1",
+		"Avery",
+		2,
+		&WorkspaceContent{Title: "After"},
+	)
+	if err != nil {
+		t.Fatalf("first HandleSyncSessionEnded() error = %v", err)
+	}
+	second, err := svc.HandleSyncSessionEnded(
+		context.Background(),
+		"session-1",
+		"doc-1",
+		"prop-1",
+		"Avery",
+		2,
+		&WorkspaceContent{Title: "After"},
+	)
+	if err != nil {
+		t.Fatalf("second HandleSyncSessionEnded() error = %v", err)
+	}
+
+	if commitCalls != 1 {
+		t.Fatalf("expected one commit for duplicate session flush, got %d", commitCalls)
+	}
+	if first["flushCommit"] != "flush123" || second["flushCommit"] != "flush123" {
+		t.Fatalf("expected idempotent flush commit hash, got first=%v second=%v", first["flushCommit"], second["flushCommit"])
+	}
+}
+
 func TestGetWorkspaceFiltersInternalThreadsForExternalUsers(t *testing.T) {
 	includeInternalValues := make([]bool, 0, 2)
 	fs := &fakeStore{
