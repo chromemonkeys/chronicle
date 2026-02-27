@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "api": "cd api && go run ./cmd/api",
-    "api:legacy": "node backend/server.mjs",
     "sync": "node backend/sync.mjs",
     "typecheck": "tsc --noEmit",
     "lint:web": "tsc --noEmit",

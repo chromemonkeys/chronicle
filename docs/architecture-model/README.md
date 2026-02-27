@@ -1,6 +1,6 @@
 # Chronicle Architecture Model
 
-> **Last Updated:** 2026-02-27 (Export service fix: HTML escaping in PDF/DOCX exports; URL encoding for data URLs)  
+> **Last Updated:** 2026-02-28 (RBAC-101/102: Permission middleware enforcement, suggester role, document-level permissions, permission denial audit logging)
 > **Version:** 1.0  
 > **Status:** Canonical reference for system architecture
 
@@ -53,7 +53,7 @@ This document is the single source of truth for Chronicle's system architecture.
 chronicle/
 ├── api/                          # Go API server source
 │   └── (TBD - future location for Go backend)
-├── backend/                      # Backend-related code
+├── backend/                      # WebSocket Sync Gateway (Node.js)
 ├── db/                           # Database migrations and schemas
 ├── docker/                       # Docker configuration files
 ├── docs/                         # Documentation
@@ -134,11 +134,11 @@ Stores all operational metadata. **Never stores document content** (that lives i
 | Domain | Tables |
 |--------|--------|
 | Identity | `users`, `workspace_memberships`, `email_verifications`, `password_resets` |
-| Permissions | `document_permissions` *(NEW v1.0)* |
+| Permissions | `document_permissions` *(RBAC-102)*, `permission_denials` *(RBAC-101 audit)* |
 | Documents | `workspaces`, `spaces`, `documents`, `document_versions` |
 | Version Control | `branches`, `branch_approvals` |
 | Deliberation | `threads`, `annotations`, `decision_log` |
-| Audit | `audit_log` |
+| Audit | `audit_log`, `permission_denials` |
 | Real-time | `yjs_snapshots`, `yjs_updates_log` |
 
 ### Redis 7
@@ -291,18 +291,72 @@ is required before SSO/SCIM can be meaningful.
 
 See issues: #83 (AUTH-101), #84 (AUTH-102), #85 (RBAC-101), #86 (RBAC-102)
 
-### Permission Roles
+### Permission Model
 
-| Role | Read | Comment | Suggest | Edit | Manage |
-|------|------|---------|---------|------|--------|
-| No Access | ✗ | ✗ | ✗ | ✗ | ✗ |
-| Viewer | ✓ | ✗ | ✗ | ✗ | ✗ |
-| Commenter | ✓ | ✓ | ✗ | ✗ | ✗ |
-| Suggester | ✓ | ✓ | ✓ | ✗ | ✗ |
-| Editor | ✓ | ✓ | ✓ | ✓ | ✗ |
-| Admin | ✓ | ✓ | ✓ | ✓ | ✓ |
+#### Role Hierarchy (Implemented — RBAC-101)
 
-### Row-Level Security
+| Role | Read | Comment | Suggest | Write | Approve | Admin |
+|------|------|---------|---------|-------|---------|-------|
+| **Viewer** | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Commenter** | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ |
+| **Suggester** | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ |
+| **Editor** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
+| **Admin** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+**Permission Enforcement:**
+- All API routes are guarded by `rbac.Can()` checks (RBAC-101)
+- Permission denials are logged to `permission_denials` table for audit
+- Centralized `forbid()` helper returns standardized 403 responses
+
+#### Document-Level Permissions (Implemented — RBAC-102)
+
+Document permissions override workspace-level roles via `document_permissions` table:
+- `GetEffectiveRole()` resolves: document_permissions → workspace_memberships → no access
+- Supports time-limited grants (`expires_at`)
+- External users without explicit document grants get no access
+- API endpoints: `GET/POST /api/documents/{id}/permissions`, `DELETE /api/documents/{id}/permissions/{userId}`
+
+**Permission Granularity:**
+- **Read**: View documents, see version history, blame, compare
+- **Comment**: Add annotations, replies, vote, react
+- **Suggest**: Propose tracked changes (future: suggestion mode)
+- **Write**: Create/edit documents, proposals, resolve threads
+- **Approve**: Approve proposals, merge
+- **Admin**: Manage permissions, delete spaces, manage document access
+
+#### User Types
+
+| Type | Scope | Authentication | @Mentions |
+|------|-------|----------------|-----------|
+| **Internal** | Full workspace | Email/Password, OAuth, SAML | All members |
+| **Guest** | Single space only | Magic link | Guests in same space only |
+| **Anonymous** | Specific document | None (public link) | N/A |
+
+**Guest User Restrictions:**
+- Cannot access people directory
+- Cannot see internal threads (enforced by RLS)
+- Cannot create spaces or invite others
+- @Mentions limited to other guests in same space
+
+#### Sharing Modes
+
+| Mode | Access | Use Case |
+|------|--------|----------|
+| **Private** | Owner only | Personal drafts |
+| **Space Members** | Inherits space permissions | Team documents |
+| **Invite Only** | Named individuals | Sensitive docs, client collaboration |
+| **Public Link** | Anyone with link (optional password/expiry) | Published docs, auditor access |
+
+#### Internal vs External Thread Visibility
+
+| Visibility | Visible To | Use Case |
+|------------|------------|----------|
+| **Internal** (default) | Workspace members only | Team deliberation |
+| **External** | Explicitly shared guests | Client communication |
+
+**Enforcement:** Database RLS + API filtering + Sync Gateway filtering
+
+### Row-Level Security (v1.1)
 
 All PostgreSQL queries run with RLS enabled:
 
@@ -311,7 +365,35 @@ SET LOCAL app.current_user_id = '<uuid>';
 SET LOCAL app.is_external = 'true/false';
 ```
 
-External users (`is_external=true`) are automatically excluded from INTERNAL threads at the database layer.
+**RLS Policies by Table:**
+
+| Table | Policy | Effect |
+|-------|--------|--------|
+| `threads` | `threads_visibility` | External users cannot see `INTERNAL` threads |
+| `documents` | `documents_access` | Users can only see documents they have `view` permission on |
+| `annotations` | `annotations_access` | Inherits visibility from parent thread |
+| `decision_log` | `decision_log_readonly` | Append-only; no UPDATE/DELETE |
+
+**External users (`is_external=true`)** are automatically excluded from INTERNAL threads at the database layer.
+
+### Permission Service Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    RBAC SERVICE (Implemented)                 │
+│                      (Go - internal/rbac + internal/app)     │
+├─────────────────────────────────────────────────────────────┤
+│  rbac.Can(role, action) → bool                               │
+│  service.Can(role, action) → bool                            │
+│  service.CanForDocument(ctx, userID, docID, action) → bool   │
+│  service.LogPermissionDenial(ctx, denial)                    │
+├─────────────────────────────────────────────────────────────┤
+│  Source of Truth:                                            │
+│  - workspace_memberships (workspace-level roles)             │
+│  - document_permissions (document-level overrides)           │
+│  - permission_denials (audit log)                            │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -376,9 +458,16 @@ When making structural changes, update this document:
 - [ ] **Deployment changed?** → Update Deployment section
 - [x] **Milestone completed?** → Update Build Sequence status (SSO/SCIM→v2.0)
 
+- [x] **Security model changed?** → Updated Permission Model section with RBAC v1.1 details, user types, sharing modes, and thread visibility
+- [x] **New database table?** → Added `permission_denials` (RBAC-101 audit), `document_permissions` (RBAC-102)
+- [x] **Security model changed?** → Updated Permission Model to reflect implemented RBAC-101/102: enforced role hierarchy with suggester, document-level permissions, permission denial audit logging
+- [x] **New API endpoint pattern?** → Added `/api/documents/{id}/permissions` endpoints (GET/POST/DELETE) for document permission management
+
 ## Related Documents
 
 - [Auth & Permissions v1.0 Design](../specs/auth-permissions-v1.md)
+- [Role & User Management Spec](../specs/role-user-management-spec.md) *(NEW)*
+- [Role & User Management Tickets](../specs/role-user-management-tickets.md) *(NEW)*
 - [Technical Architecture (Full)](../agent-memory/Chronicle_Technical_Architecture.txt)
 - [Product Vision](../agent-memory/Chronicle_Product_Vision_v2.txt)
 - [Agent README](../agent-memory/README.md)
