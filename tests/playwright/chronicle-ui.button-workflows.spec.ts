@@ -98,11 +98,11 @@ test.describe("Chronicle button and workflow coverage", () => {
     await page.getByRole("button", { name: /Show Diff|Diff On/ }).click();
     await page.locator(".cm-diff-toggle").getByRole("button", { name: "Unified" }).click({ force: true });
     await page.locator(".cm-diff-toggle").getByRole("button", { name: "Split" }).click({ force: true });
-    await page.getByRole("button", { name: "Proposal Mode" }).click();
-    await page.getByRole("button", { name: "Edit Mode" }).click();
+    await expect(page.getByRole("button", { name: "Proposal Mode" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Edit Mode" })).toHaveCount(0);
     await snap(page, testInfo, "11-toolbar-buttons");
 
-    await page.getByRole("button", { name: /Save Draft/ }).click();
+    await page.getByRole("button", { name: /Save$/ }).click();
     await expect(page.getByText("Saved.")).toBeVisible();
 
     await page.getByRole("button", { name: "Open Reviews" }).click();
