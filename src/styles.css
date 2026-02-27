@@ -1837,6 +1837,48 @@ label {
   align-items: center;
 }
 
+/* Progressive disclosure expand button - UX-004 */
+.cm-thread-expand-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-width: 24px;
+  justify-content: center;
+}
+
+.cm-thread-expand-btn:hover {
+  background: var(--paper-3);
+  border-color: var(--border-2);
+  color: var(--ink);
+}
+
+.cm-expand-count {
+  font-size: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+/* Collapsed content hint */
+.cm-thread-collapsed-hint {
+  font-size: 10px;
+  color: var(--ink-4);
+  margin-top: 6px;
+  font-style: italic;
+}
+
 .cm-thread-action-btn {
   background: var(--paper);
   border: 1px solid var(--border);

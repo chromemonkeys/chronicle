@@ -1,4 +1,4 @@
-import { forwardRef, useState } from "react";
+import { forwardRef, useEffect, useState } from "react";
 import type { WorkspaceThread } from "../api/types";
 
 const toneColors: Record<WorkspaceThread["tone"], string> = {
@@ -37,8 +37,22 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
   const [resolveOpen, setResolveOpen] = useState(false);
   const [resolveOutcome, setResolveOutcome] = useState<"ACCEPTED" | "REJECTED" | "DEFERRED">("ACCEPTED");
   const [resolveRationale, setResolveRationale] = useState("");
+  // Progressive disclosure: expand when active or when there are replies/reactions
+  const [isExpanded, setIsExpanded] = useState(() => {
+    const hasReplies = thread.replies.length > 0;
+    const hasReactions = (thread.reactions?.length ?? 0) > 0;
+    return hasReplies || hasReactions;
+  });
   const reactionItems = thread.reactions ?? [];
   const visibilityLabel = thread.visibility === "EXTERNAL" ? "External" : "Internal";
+  const hasSecondaryContent = reactionItems.length > 0 || thread.replies.length > 0;
+
+  // Auto-expand when thread becomes active
+  useEffect(() => {
+    if (isActive && hasSecondaryContent) {
+      setIsExpanded(true);
+    }
+  }, [isActive, hasSecondaryContent]);
 
   return (
     <div
@@ -79,6 +93,17 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
           <div className="cm-thread-anchor">¶ {thread.anchor}</div>
           {thread.quote ? <div className="cm-thread-quote">{thread.quote}</div> : null}
           <p className="cm-thread-text">{thread.text}</p>
+          {!isExpanded && hasSecondaryContent && (
+            <div className="cm-thread-collapsed-hint">
+              {thread.replies.length > 0 && (
+                <span>{thread.replies.length} repl{thread.replies.length === 1 ? "y" : "ies"}</span>
+              )}
+              {thread.replies.length > 0 && reactionItems.length > 0 && <span> · </span>}
+              {reactionItems.length > 0 && (
+                <span>{reactionItems.length} reaction{reactionItems.length === 1 ? "" : "s"}</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
       {thread.resolvedNote ? (
@@ -142,6 +167,22 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
               ▼
             </button>
           </span>
+          {hasSecondaryContent && (
+            <button
+              className="cm-thread-expand-btn"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setIsExpanded((v) => !v);
+              }}
+              title={isExpanded ? "Show less" : "Show more"}
+            >
+              {isExpanded ? "−" : "+"}
+              {!isExpanded && thread.replies.length > 0 && (
+                <span className="cm-expand-count">{thread.replies.length}</span>
+              )}
+            </button>
+          )}
         </div>
       )}
       {!thread.resolvedNote && replyOpen && (
@@ -242,34 +283,36 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
           </div>
         </div>
       )}
-      <div className="cm-thread-reactions">
-        <button
-          className="cm-thread-reaction-btn"
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onReact?.(thread.id, "👍");
-          }}
-        >
-          👍
-        </button>
-        <button
-          className="cm-thread-reaction-btn"
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onReact?.(thread.id, "🎯");
-          }}
-        >
-          🎯
-        </button>
-        {reactionItems.map((reaction) => (
-          <span key={`${thread.id}-${reaction.emoji}`} className="cm-thread-reaction-pill">
-            {reaction.emoji} {reaction.count}
-          </span>
-        ))}
-      </div>
-      {thread.replies.length > 0 && (
+      {isExpanded && (
+        <div className="cm-thread-reactions">
+          <button
+            className="cm-thread-reaction-btn"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onReact?.(thread.id, "👍");
+            }}
+          >
+            👍
+          </button>
+          <button
+            className="cm-thread-reaction-btn"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onReact?.(thread.id, "🎯");
+            }}
+          >
+            🎯
+          </button>
+          {reactionItems.map((reaction) => (
+            <span key={`${thread.id}-${reaction.emoji}`} className="cm-thread-reaction-pill">
+              {reaction.emoji} {reaction.count}
+            </span>
+          ))}
+        </div>
+      )}
+      {isExpanded && thread.replies.length > 0 && (
         <div className="cm-thread-reply">
           {thread.replies.map((reply, index) => (
             <div className="cm-reply-item" key={`${thread.id}-reply-${index}`}>
