@@ -13,6 +13,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 FAILED=0
+REQUIRED_SERVICES=(api sync postgres redis meilisearch minio caddy)
 
 check_endpoint() {
     local name=$1
@@ -60,6 +61,30 @@ check_json_field() {
     fi
 }
 
+check_compose_service() {
+    local service=$1
+    local status_line
+
+    status_line=$(docker compose ps "$service" --format "table {{.Service}}\t{{.Status}}\t{{.Health}}" 2>/dev/null | tail -n +2 | head -n 1)
+    if [ -z "$status_line" ]; then
+        status_line=$(docker-compose ps "$service" --format "table {{.Service}}\t{{.Status}}\t{{.Health}}" 2>/dev/null | tail -n +2 | head -n 1)
+    fi
+
+    echo -n "Checking compose service $service... "
+    if [ -z "$status_line" ]; then
+        echo -e "${RED}✗ FAILED (service not found)${NC}"
+        return 1
+    fi
+
+    if echo "$status_line" | grep -Eiq 'running|up'; then
+        echo -e "${GREEN}✓ OK (${status_line})${NC}"
+        return 0
+    fi
+
+    echo -e "${RED}✗ FAILED (${status_line})${NC}"
+    return 1
+}
+
 echo "========================================"
 echo "Chronicle Stack Health Check Validation"
 echo "========================================"
@@ -80,14 +105,14 @@ check_json_field "Sync Health OK" "$SYNC_URL/health" "ok" "true" || ((FAILED++))
 
 echo ""
 echo "--- Docker Compose Service Health ---"
-# Check if docker compose is available and services are running
+# Check required Compose services are present and running.
 if command -v docker &> /dev/null; then
-    echo "Docker compose service status:"
-    docker compose ps --format "table {{.Service}}\t{{.Status}}\t{{.Health}}" 2>/dev/null || \
-    docker-compose ps --format "table {{.Service}}\t{{.Status}}\t{{.Health}}" 2>/dev/null || \
-    echo "  (docker compose ps not available)"
+    for service in "${REQUIRED_SERVICES[@]}"; do
+        check_compose_service "$service" || ((FAILED++))
+    done
 else
-    echo "Docker not available, skipping container health check"
+    echo -e "${RED}Docker not available; cannot verify required compose services${NC}"
+    ((FAILED++))
 fi
 
 echo ""

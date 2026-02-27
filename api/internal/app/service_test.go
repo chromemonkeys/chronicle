@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -40,6 +41,9 @@ type fakeStore struct {
 	insertDocumentFn           func(context.Context, store.Document) error
 	insertDecisionLogFn        func(context.Context, store.DecisionLogEntry) error
 	insertNamedVersionFn       func(context.Context, string, string, string, string) error
+	openThreadCountFn          func(context.Context, string) (int, error)
+	pendingApprovalCountFn     func(context.Context, string) (int, error)
+	markProposalMergedFn       func(context.Context, string) error
 }
 
 func (f *fakeStore) ListDocuments(context.Context) ([]store.Document, error) { return nil, nil }
@@ -97,7 +101,12 @@ func (f *fakeStore) GetActiveProposal(ctx context.Context, documentID string) (*
 	}
 	return nil, nil
 }
-func (f *fakeStore) OpenThreadCount(context.Context, string) (int, error) { return 0, nil }
+func (f *fakeStore) OpenThreadCount(ctx context.Context, proposalID string) (int, error) {
+	if f.openThreadCountFn != nil {
+		return f.openThreadCountFn(ctx, proposalID)
+	}
+	return 0, nil
+}
 func (f *fakeStore) GetProposal(ctx context.Context, proposalID string) (store.Proposal, error) {
 	if f.getProposalFn != nil {
 		return f.getProposalFn(ctx, proposalID)
@@ -155,8 +164,18 @@ func (f *fakeStore) ListApprovals(ctx context.Context, proposalID string) ([]sto
 	}
 	return nil, nil
 }
-func (f *fakeStore) PendingApprovalCount(context.Context, string) (int, error) { return 0, nil }
-func (f *fakeStore) MarkProposalMerged(context.Context, string) error          { return nil }
+func (f *fakeStore) PendingApprovalCount(ctx context.Context, proposalID string) (int, error) {
+	if f.pendingApprovalCountFn != nil {
+		return f.pendingApprovalCountFn(ctx, proposalID)
+	}
+	return 0, nil
+}
+func (f *fakeStore) MarkProposalMerged(ctx context.Context, proposalID string) error {
+	if f.markProposalMergedFn != nil {
+		return f.markProposalMergedFn(ctx, proposalID)
+	}
+	return nil
+}
 func (f *fakeStore) GetDocument(ctx context.Context, documentID string) (store.Document, error) {
 	if f.getDocumentFn != nil {
 		return f.getDocumentFn(ctx, documentID)
@@ -247,6 +266,7 @@ type fakeGit struct {
 	ensureDocumentRepoFn func(string, gitrepo.Content, string) error
 	ensureBranchFn       func(string, string, string) error
 	createTagFn          func(string, string, string) error
+	mergeIntoMainFn      func(string, string, string, string) (store.CommitInfo, error)
 }
 
 func (f *fakeGit) EnsureDocumentRepo(documentID string, content gitrepo.Content, actor string) error {
@@ -294,7 +314,10 @@ func (f *fakeGit) CreateTag(documentID, hash, name string) error {
 	}
 	return nil
 }
-func (f *fakeGit) MergeIntoMain(string, string, string, string) (store.CommitInfo, error) {
+func (f *fakeGit) MergeIntoMain(documentID, branchName, author, message string) (store.CommitInfo, error) {
+	if f.mergeIntoMainFn != nil {
+		return f.mergeIntoMainFn(documentID, branchName, author, message)
+	}
 	return store.CommitInfo{Hash: "merge123", Author: "Avery", CreatedAt: time.Now(), Message: "Merge"}, nil
 }
 
@@ -645,7 +668,7 @@ func TestSaveWorkspaceCreatesProposalBranchAndCommits(t *testing.T) {
 	svc := newTestService(fs, fg)
 	payload, err := svc.SaveWorkspace(context.Background(), "doc-1", WorkspaceContent{
 		Title: "Updated title",
-		Doc:   `{"type":"doc","content":[{"type":"paragraph","attrs":{"nodeId":"p1"},"content":[{"type":"text","text":"Updated title"}]}]}`,
+		Doc:   json.RawMessage(`{"type":"doc","content":[{"type":"paragraph","attrs":{"nodeId":"p1"},"content":[{"type":"text","text":"Updated title"}]}]}`),
 	}, "Avery", false)
 	if err != nil {
 		t.Fatalf("SaveWorkspace() error = %v", err)
@@ -673,6 +696,50 @@ func TestSaveWorkspaceCreatesProposalBranchAndCommits(t *testing.T) {
 	}
 }
 
+func TestEnsureWorkflowProposalReusesActiveProposal(t *testing.T) {
+	ensureBranchCalls := 0
+	createProposalCalls := 0
+	active := &store.Proposal{
+		ID:         "prop-active",
+		DocumentID: "doc-1",
+		BranchName: "proposal-doc-1",
+		Status:     "DRAFT",
+	}
+	fs := &fakeStore{
+		getActiveProposalFn: func(_ context.Context, documentID string) (*store.Proposal, error) {
+			if documentID != "doc-1" {
+				t.Fatalf("expected doc-1, got %q", documentID)
+			}
+			return active, nil
+		},
+		createProposalFn: func(_ context.Context, proposal store.Proposal) error {
+			createProposalCalls += 1
+			return nil
+		},
+	}
+	fg := &fakeGit{
+		ensureBranchFn: func(documentID, branchName, fromBranch string) error {
+			ensureBranchCalls += 1
+			return nil
+		},
+	}
+	svc := newTestService(fs, fg)
+
+	got, err := svc.EnsureWorkflowProposal(context.Background(), "doc-1", "Avery")
+	if err != nil {
+		t.Fatalf("EnsureWorkflowProposal() error = %v", err)
+	}
+	if got == nil || got.ID != "prop-active" {
+		t.Fatalf("expected existing proposal prop-active, got %#v", got)
+	}
+	if createProposalCalls != 0 {
+		t.Fatalf("expected no proposal creation for existing active proposal, got %d", createProposalCalls)
+	}
+	if ensureBranchCalls != 0 {
+		t.Fatalf("expected no branch creation for existing active proposal, got %d", ensureBranchCalls)
+	}
+}
+
 func TestApproveProposalRoleBlocksLegalUntilDependencies(t *testing.T) {
 	fs := &fakeStore{
 		getProposalFn: func(_ context.Context, _ string) (store.Proposal, error) {
@@ -695,6 +762,59 @@ func TestApproveProposalRoleBlocksLegalUntilDependencies(t *testing.T) {
 	}
 	if domainErr.Code != "APPROVAL_ORDER_BLOCKED" {
 		t.Fatalf("unexpected error code: %s", domainErr.Code)
+	}
+	details, ok := domainErr.Details.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map details, got %T", domainErr.Details)
+	}
+	blockers, ok := details["blockers"].([]string)
+	if !ok {
+		t.Fatalf("expected []string blockers, got %#v", details["blockers"])
+	}
+	if len(blockers) != 1 || blockers[0] != "security" {
+		t.Fatalf("expected blockers [security], got %#v", blockers)
+	}
+}
+
+func TestMergeProposalReturnsBlockedCountsWithoutMerge(t *testing.T) {
+	mergeCalls := 0
+	fs := &fakeStore{
+		getProposalFn: func(_ context.Context, _ string) (store.Proposal, error) {
+			return store.Proposal{ID: "prop-1", DocumentID: "doc-1", BranchName: "proposal-doc-1"}, nil
+		},
+		pendingApprovalCountFn: func(_ context.Context, proposalID string) (int, error) {
+			if proposalID != "prop-1" {
+				t.Fatalf("expected proposal prop-1, got %q", proposalID)
+			}
+			return 2, nil
+		},
+		openThreadCountFn: func(_ context.Context, proposalID string) (int, error) {
+			if proposalID != "prop-1" {
+				t.Fatalf("expected proposal prop-1, got %q", proposalID)
+			}
+			return 1, nil
+		},
+	}
+	fg := &fakeGit{
+		mergeIntoMainFn: func(documentID, branchName, author, message string) (store.CommitInfo, error) {
+			mergeCalls += 1
+			return store.CommitInfo{Hash: "merge-should-not-run"}, nil
+		},
+	}
+	svc := newTestService(fs, fg)
+
+	payload, pendingApprovals, openThreads, err := svc.MergeProposal(context.Background(), "doc-1", "prop-1", "Avery", false)
+	if err != nil {
+		t.Fatalf("MergeProposal() error = %v", err)
+	}
+	if payload != nil {
+		t.Fatalf("expected nil payload while merge is blocked, got %#v", payload)
+	}
+	if pendingApprovals != 2 || openThreads != 1 {
+		t.Fatalf("expected blocked counts (2,1), got (%d,%d)", pendingApprovals, openThreads)
+	}
+	if mergeCalls != 0 {
+		t.Fatalf("expected no merge call while gate blocked, got %d", mergeCalls)
 	}
 }
 

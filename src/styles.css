@@ -1652,11 +1652,10 @@ label {
 }
 
 .cm-discussion-panel.collapsed {
-  width: 44px;
+  width: 56px;
 }
 
-.cm-discussion-panel.collapsed .cm-panel-main,
-.cm-discussion-panel.collapsed .cm-panel-tabs-rail {
+.cm-discussion-panel.collapsed .cm-panel-main {
   display: none;
 }
 
@@ -1715,9 +1714,14 @@ label {
   right: 10px;
 }
 
-/* Right toggle: left edge of right panel */
+/* Right toggle: sits just after the tab rail */
 .cm-pane-toggle-right {
-  left: 10px;
+  left: auto;
+  right: 10px;
+}
+
+.cm-discussion-panel.collapsed .cm-pane-toggle-right {
+  right: 16px;
 }
 
 .cm-panel-tabs {
@@ -1909,9 +1913,18 @@ label {
   color: #7a2f2f;
   font-size: 12px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+}
+
+.cm-inline-action-error > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cm-inline-action-error .cm-thread-action-btn {
+  flex-shrink: 0;
 }
 
 .cm-thread-card {
@@ -2407,12 +2420,21 @@ label {
 .cm-commit-msg {
   font-size: 12px;
   color: var(--ink-2);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .cm-commit-meta {
   font-size: 10px;
   color: var(--ink-4);
   margin-top: 2px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.cm-commit-main {
+  flex: 1;
+  min-width: 0;
 }
 
 .cm-decision-note {
@@ -3714,6 +3736,12 @@ button:focus-visible {
   border-left: 3px solid var(--accent);
   margin-left: -11px;
   padding-left: 9px;
+}
+
+.cm-commit-row .cm-thread-action-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  align-self: flex-start;
 }
 
 /* Single view mode styles */

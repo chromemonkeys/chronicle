@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { fetchApprovals } from "../api/client";
 import type { ApprovalsResponse } from "../api/types";
+import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { EmptyStateError, EmptyStateEmpty } from "../ui/EmptyState";
 import { MergeGateBadge } from "../ui/MergeGateBadge";
@@ -13,38 +14,65 @@ export function ApprovalsPage() {
   const navigate = useNavigate();
   const [viewState, setViewState] = useState<ViewState>("loading");
   const [approvals, setApprovals] = useState<ApprovalsResponse | null>(null);
+  const [loadingSlow, setLoadingSlow] = useState(false);
+  const timeoutRef = useRef<number | null>(null);
+  const slowHintRef = useRef<number | null>(null);
+  const loadSeqRef = useRef(0);
 
-  useEffect(() => {
-    let active = true;
-    setViewState("loading");
-    fetchApprovals()
-      .then((response) => {
-        if (!active) {
-          return;
-        }
-        setApprovals(response);
-        setViewState(response.queue.length === 0 ? "empty" : "success");
-      })
-      .catch(() => {
-        if (active) {
-          setViewState("error");
-        }
-      });
-    return () => {
-      active = false;
-    };
+  const clearLoadingTimers = useCallback(() => {
+    if (timeoutRef.current) {
+      window.clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (slowHintRef.current) {
+      window.clearTimeout(slowHintRef.current);
+      slowHintRef.current = null;
+    }
   }, []);
 
-  function retry() {
+  const loadApprovals = useCallback(() => {
+    loadSeqRef.current += 1;
+    const loadSeq = loadSeqRef.current;
     setViewState("loading");
+    setLoadingSlow(false);
+    clearLoadingTimers();
+
+    slowHintRef.current = window.setTimeout(() => {
+      setLoadingSlow(true);
+    }, 4000);
+
+    timeoutRef.current = window.setTimeout(() => {
+      setViewState("error");
+    }, 12000);
+
     fetchApprovals()
       .then((response) => {
+        if (loadSeq !== loadSeqRef.current) {
+          return;
+        }
+        clearLoadingTimers();
         setApprovals(response);
         setViewState(response.queue.length === 0 ? "empty" : "success");
       })
       .catch(() => {
+        if (loadSeq !== loadSeqRef.current) {
+          return;
+        }
+        clearLoadingTimers();
         setViewState("error");
       });
+  }, [clearLoadingTimers]);
+
+  useEffect(() => {
+    loadApprovals();
+    return () => {
+      loadSeqRef.current += 1;
+      clearLoadingTimers();
+    };
+  }, [clearLoadingTimers, loadApprovals]);
+
+  function retry() {
+    loadApprovals();
   }
 
   const queue = approvals?.queue ?? [];
@@ -70,15 +98,33 @@ export function ApprovalsPage() {
       </div>
 
       {viewState === "loading" && (
-        <div className="grid">
-          {[1, 2].map((id) => (
-            <Card key={id}>
-              <div className="skeleton skeleton-title" />
-              <div className="skeleton skeleton-line" />
-              <div className="skeleton skeleton-line short" />
-            </Card>
-          ))}
-        </div>
+        <>
+          <Card>
+            <h2>Loading approval queue...</h2>
+            <p className="muted" role="status" aria-live="polite">
+              {loadingSlow
+                ? "This is taking longer than expected. You can retry now or keep waiting."
+                : "Fetching approval chains and merge-gate state."}
+            </p>
+            {loadingSlow ? (
+              <div className="button-row">
+                <Button onClick={retry}>Retry loading</Button>
+                <Link className="btn btn-ghost" to="/documents">
+                  Browse documents
+                </Link>
+              </div>
+            ) : null}
+          </Card>
+          <div className="grid">
+            {[1, 2].map((id) => (
+              <Card key={id}>
+                <div className="skeleton skeleton-title" />
+                <div className="skeleton skeleton-line" />
+                <div className="skeleton skeleton-line short" />
+              </Card>
+            ))}
+          </div>
+        </>
       )}
 
       {viewState === "empty" && (

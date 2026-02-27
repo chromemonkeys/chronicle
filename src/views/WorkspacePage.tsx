@@ -178,6 +178,7 @@ export function WorkspacePage() {
   const [decisionQuery, setDecisionQuery] = useState("");
   const [decisionAuthor, setDecisionAuthor] = useState("");
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [compareSummary, setCompareSummary] = useState<string | null>(null);
   const [compareFromHash, setCompareFromHash] = useState("");
   const [compareToHash, setCompareToHash] = useState("");
@@ -255,28 +256,25 @@ export function WorkspacePage() {
     };
   }, [docId]);
 
-  useEffect(() => {
-    let active = true;
-    setDocumentIndexState("loading");
-    fetchDocuments()
-      .then((documents) => {
-        if (!active) {
-          return;
-        }
-        setDocumentIndex(documents);
-        setDocumentIndexState(documents.length === 0 ? "empty" : "success");
-      })
-      .catch(() => {
-        if (!active) {
-          return;
-        }
+  const refreshDocumentIndex = useCallback(async (mode: "foreground" | "background" = "foreground") => {
+    if (mode === "foreground") {
+      setDocumentIndexState("loading");
+    }
+    try {
+      const documents = await fetchDocuments();
+      setDocumentIndex(documents);
+      setDocumentIndexState(documents.length === 0 ? "empty" : "success");
+    } catch {
+      if (mode === "foreground") {
         setDocumentIndex([]);
-        setDocumentIndexState("error");
-      });
-    return () => {
-      active = false;
-    };
+      }
+      setDocumentIndexState("error");
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshDocumentIndex("foreground");
+  }, [refreshDocumentIndex]);
 
   useEffect(() => {
     return () => {
@@ -358,6 +356,10 @@ export function WorkspacePage() {
     }
     return [];
   }, [documentIndex, openReviewDocuments, mergedDocuments, sidebarSection]);
+  const sidebarAllCount = documentIndexState === "loading" ? (workspace?.counts.allDocuments ?? 0) : documentIndex.length;
+  const sidebarOpenReviewCount =
+    documentIndexState === "loading" ? (workspace?.counts.openReviews ?? 0) : openReviewDocuments.length;
+  const sidebarMergedCount = documentIndexState === "loading" ? (workspace?.counts.merged ?? 0) : mergedDocuments.length;
 
   useEffect(() => {
     if (activeTab !== "discussions") {
@@ -385,6 +387,7 @@ export function WorkspacePage() {
     }
 
     let active = true;
+    setHistoryLoading(true);
     setHistoryError(null);
     const load = async () => {
       try {
@@ -407,11 +410,20 @@ export function WorkspacePage() {
           setHistoryData(mainHistory);
           setMainHistoryData(null);
         }
-      } catch {
+      } catch (error) {
+        if (import.meta.env.DEV) {
+          console.warn("History tab load failed", error);
+        }
         if (active) {
           setHistoryData(null);
           setMainHistoryData(null);
-          setHistoryError("History service request failed.");
+          setHistoryError(
+            isApiError(error) ? error.message : "History service request failed."
+          );
+        }
+      } finally {
+        if (active) {
+          setHistoryLoading(false);
         }
       }
     };
@@ -960,6 +972,20 @@ export function WorkspacePage() {
       setWorkspace(updated);
       setContentDraft(updated.content);
       setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      setDocumentIndex((current) =>
+        current.map((doc) =>
+          doc.id === updated.document.id
+            ? {
+                ...doc,
+                title: updated.document.title,
+                status: updated.document.status,
+                updatedBy: updated.document.editedBy,
+                openThreads: updated.threads.filter((thread) => thread.status !== "RESOLVED").length
+              }
+            : doc
+        )
+      );
+      void refreshDocumentIndex("background");
     } catch (error) {
       if (isApiError(error) && error.code === "MERGE_GATE_BLOCKED") {
         const details = error.details as { pendingApprovals?: number; openThreads?: number } | null;
@@ -1005,68 +1031,6 @@ export function WorkspacePage() {
     setCompareAfterDoc(null);
     setCompareSummary(null);
     setDiffVisible(false);
-  }
-
-  // View a specific commit version in the compare view (shows single version)
-  async function viewCommitInCompare(hash: string, branchLabel: string) {
-    if (!workspace) return;
-
-    try {
-      // Find the commit content by fetching comparison with itself
-      // or by finding in history
-      let commitContent: CompareContentSnapshot | null = null;
-
-      // Search in history data
-      const allCommits = [
-        ...(historyData?.commits ?? []),
-        ...(mainHistoryData?.commits ?? []),
-        ...workspace.history
-      ];
-
-      // Try to find commit content from our loaded history
-      for (const commit of allCommits) {
-        if (commit.hash === hash) {
-          // We need to fetch the actual content - use compare API with same hash
-          const comparison = await fetchDocumentCompare(
-            workspace.document.id,
-            hash,
-            hash,
-            workspace.document.proposalId
-          );
-          commitContent = comparison.toContent;
-          break;
-        }
-      }
-
-      if (!commitContent) {
-        // Fallback: try to fetch via compare API
-        const comparison = await fetchDocumentCompare(
-          workspace.document.id,
-          hash,
-          hash,
-          workspace.document.proposalId
-        );
-        commitContent = comparison.toContent ?? null;
-      }
-
-      const doc = snapshotToDoc(commitContent, workspace.nodeIds);
-      if (!doc) {
-        setCompareSummary(`Could not load document content for ${hash.slice(0, 7)}`);
-        return;
-      }
-
-      // Show single version in side-by-side
-      setCompareBeforeDoc(doc);
-      setCompareAfterDoc(doc);
-      setCompareDoc(doc);
-      setCompareManifest(null);
-      setCompareActive(true);
-      setWorkspaceMode("review");
-      setActiveTab("history");
-      setCompareSummary(`Viewing ${branchLabel} · ${hash.slice(0, 7)} · Click "Close Compare" to return to editing`);
-    } catch {
-      setCompareSummary(`Failed to load version ${hash.slice(0, 7)}`);
-    }
   }
 
   async function compareCommits(fromHash: string, toHash: string, statusLabel = "Comparing selected commits...") {
@@ -1131,6 +1095,27 @@ export function WorkspacePage() {
 
   async function compareSelectedCommits() {
     await compareCommits(compareFromHash, compareToHash);
+  }
+
+  function currentCommitHash() {
+    if (!workspace) {
+      return "";
+    }
+    const currentBranchCommits = historyData?.commits ?? workspace.history;
+    return currentBranchCommits[0]?.hash ?? "";
+  }
+
+  async function compareVersionAgainstCurrent(hash: string, label: string) {
+    const currentHash = currentCommitHash();
+    if (!currentHash) {
+      setCompareSummary("Current version is unavailable. Refresh history and try again.");
+      return;
+    }
+    if (hash === currentHash) {
+      setCompareSummary(`${label} is the current version.`);
+      return;
+    }
+    await compareCommits(hash, currentHash, `Comparing ${label} against current version...`);
   }
 
   async function compareLatestCommits() {
@@ -1259,7 +1244,9 @@ export function WorkspacePage() {
   const openThreads = workspace.threads.filter((thread) => thread.status !== "RESOLVED").length;
   const resolvedThreads = workspace.threads.length - openThreads;
   const hasActiveProposal = Boolean(workspace.document.proposalId);
-  const mergeReady = hasActiveProposal && pendingApprovals === 0 && openThreads === 0;
+  const apiUnavailable = Boolean(actionError && /chronicle api is unavailable/i.test(actionError));
+  const effectiveApprovalState: ViewState = hasActiveProposal && apiUnavailable ? "error" : approvalState;
+  const mergeReady = hasActiveProposal && pendingApprovals === 0 && openThreads === 0 && effectiveApprovalState === "success";
   const content = contentDraft ?? workspace.content;
   const workspaceDoc = workspace.doc ?? legacyContentToDoc(workspace.content, workspace.nodeIds);
   const activeDoc = docDraft ?? workspaceDoc;
@@ -1396,7 +1383,7 @@ export function WorkspacePage() {
               onClick={() => navigate("/documents")}
             >
               All Documents
-              <span className="cm-sidebar-count">{documentIndex.length || workspace.counts.allDocuments}</span>
+              <span className="cm-sidebar-count">{sidebarAllCount}</span>
             </button>
             <button
               className={`cm-sidebar-item ${sidebarSection === "open" ? "active" : ""}`.trim()}
@@ -1409,7 +1396,7 @@ export function WorkspacePage() {
               }}
             >
               Open Reviews
-              <span className="cm-sidebar-count">{openReviewDocuments.length || workspace.counts.openReviews}</span>
+              <span className="cm-sidebar-count">{sidebarOpenReviewCount}</span>
             </button>
             <button
               className={`cm-sidebar-item ${sidebarSection === "merged" ? "active" : ""}`.trim()}
@@ -1422,7 +1409,7 @@ export function WorkspacePage() {
               }}
             >
               Merged
-              <span className="cm-sidebar-count">{mergedDocuments.length || workspace.counts.merged}</span>
+              <span className="cm-sidebar-count">{sidebarMergedCount}</span>
             </button>
             <button
               className={`cm-sidebar-item ${sidebarSection === "decisions" ? "active" : ""}`.trim()}
@@ -1481,12 +1468,16 @@ export function WorkspacePage() {
           />
           <div className={`cm-merge-gate-banner ${mergeReady ? "ready" : "blocked"}`}>
             <div className="cm-merge-gate-title">
-              {hasActiveProposal ? (mergeReady ? "Merge Gate Ready" : "Merge Gate Blocked") : "No Active Proposal"}
+              {hasActiveProposal
+                ? (apiUnavailable ? "Merge Gate Unavailable" : (mergeReady ? "Merge Gate Ready" : "Merge Gate Blocked"))
+                : "No Active Proposal"}
             </div>
             <div className="cm-merge-gate-copy">
               {hasActiveProposal
                 ? (
-                  mergeReady
+                  apiUnavailable
+                    ? "Approval state is temporarily unavailable. Retry once the API recovers."
+                    : mergeReady
                     ? "All required approvals are complete and all threads are resolved."
                     : `Awaiting ${pendingApprovals} approvals and ${openThreads} open thread resolutions.`
                 )
@@ -1758,28 +1749,28 @@ export function WorkspacePage() {
                     {showDebugStateToggles && (
                       <div className="cm-panel-state cm-panel-state-subtle" aria-label="Approvals panel state">
                         <button
-                          className={approvalState === "success" ? "active" : ""}
+                          className={effectiveApprovalState === "success" ? "active" : ""}
                           onClick={() => setApprovalState("success")}
                           type="button"
                         >
                           Success
                         </button>
                         <button
-                          className={approvalState === "loading" ? "active" : ""}
+                          className={effectiveApprovalState === "loading" ? "active" : ""}
                           onClick={() => setApprovalState("loading")}
                           type="button"
                         >
                           Loading
                         </button>
                         <button
-                          className={approvalState === "empty" ? "active" : ""}
+                          className={effectiveApprovalState === "empty" ? "active" : ""}
                           onClick={() => setApprovalState("empty")}
                           type="button"
                         >
                           Empty
                         </button>
                         <button
-                          className={approvalState === "error" ? "active" : ""}
+                          className={effectiveApprovalState === "error" ? "active" : ""}
                           onClick={() => setApprovalState("error")}
                           type="button"
                         >
@@ -1787,26 +1778,32 @@ export function WorkspacePage() {
                         </button>
                       </div>
                     )}
-                    {approvalState === "loading" && (
+                    {effectiveApprovalState === "loading" && (
                       <div className="cm-approval-fallback">
                         <div className="skeleton skeleton-line" />
                         <div className="skeleton skeleton-line short" />
                       </div>
                     )}
-                    {approvalState === "empty" && (
+                    {effectiveApprovalState === "empty" && (
                       <div className="cm-approval-fallback">
                         <p>No pending approvers remain. Merge gate is clear.</p>
                       </div>
                     )}
-                    {approvalState === "error" && (
+                    {effectiveApprovalState === "error" && (
                       <div className="cm-approval-fallback">
-                        <p>Approval service request failed.</p>
-                        <button className="cm-compose-send" onClick={() => setApprovalState("success")} type="button">
-                          Retry
-                        </button>
+                        <p>{apiUnavailable ? actionError : "Approval service request failed."}</p>
+                        {apiUnavailable ? (
+                          <button className="cm-compose-send" onClick={() => setActionError(null)} type="button">
+                            Dismiss
+                          </button>
+                        ) : (
+                          <button className="cm-compose-send" onClick={() => setApprovalState("success")} type="button">
+                            Retry
+                          </button>
+                        )}
                       </div>
                     )}
-                    {approvalState === "success" && (
+                    {effectiveApprovalState === "success" && (
                       <ApprovalChain
                         gate={workspace.approvals}
                         details={workspace.approvalDetails}
@@ -1886,7 +1883,12 @@ export function WorkspacePage() {
                       Compare Selected
                     </button>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="cm-approval-fallback">
+                    <strong>Compare</strong>
+                    <p className="cm-commit-meta">Need at least two commits to compare versions.</p>
+                  </div>
+                )}
                 <div className="cm-approval-fallback">
                   <strong>{historyData?.branch ?? "active"} commits</strong>
                   {(historyData?.commits ?? workspace.history).map((item) => (
@@ -1894,31 +1896,15 @@ export function WorkspacePage() {
                       className={`cm-commit-row ${compareFromHash === item.hash || compareToHash === item.hash ? "active" : ""}`}
                       key={`${historyData?.branch ?? "active"}-${item.hash}`}
                       onClick={() => {
-                        // Quick select for comparison
-                        if (!compareFromHash) {
-                          setCompareFromHash(item.hash);
-                        } else if (!compareToHash && compareFromHash !== item.hash) {
-                          setCompareToHash(item.hash);
-                        }
+                        void compareVersionAgainstCurrent(item.hash, `${historyData?.branch ?? "active"} · ${item.hash.slice(0, 7)}`);
                       }}
-                      title="Click to select for comparison, or use View to see this version"
+                      title="Open this version and compare with current"
                     >
                       <div className="cm-commit-hash">{item.hash}</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="cm-commit-main">
                         <div className="cm-commit-msg">{item.message}</div>
                         <div className="cm-commit-meta">{item.meta}</div>
                       </div>
-                      <button
-                        className="cm-thread-action-btn"
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void viewCommitInCompare(item.hash, historyData?.branch ?? "active");
-                        }}
-                        title="View this version"
-                      >
-                        View
-                      </button>
                     </div>
                   ))}
                 </div>
@@ -1930,45 +1916,50 @@ export function WorkspacePage() {
                         className={`cm-commit-row ${compareFromHash === item.hash || compareToHash === item.hash ? "active" : ""}`}
                         key={`${mainHistoryData.branch}-${item.hash}`}
                         onClick={() => {
-                          if (!compareFromHash) {
-                            setCompareFromHash(item.hash);
-                          } else if (!compareToHash && compareFromHash !== item.hash) {
-                            setCompareToHash(item.hash);
-                          }
+                          void compareVersionAgainstCurrent(item.hash, `main · ${item.hash.slice(0, 7)}`);
                         }}
-                        title="Click to select for comparison, or use View to see this version"
+                        title="Open this version and compare with current"
                       >
                         <div className="cm-commit-hash">{item.hash}</div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="cm-commit-main">
                           <div className="cm-commit-msg">{item.message}</div>
                           <div className="cm-commit-meta">{item.meta}</div>
                         </div>
-                        <button
-                          className="cm-thread-action-btn"
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void viewCommitInCompare(item.hash, "main");
-                          }}
-                          title="View this version"
-                        >
-                          View
-                        </button>
                       </div>
                     ))}
                   </div>
                 ) : null}
-                {historyError ? <div className="cm-commit-meta">{historyError}</div> : null}
                 {historyData?.namedVersions.length ? (
                   <div className="cm-approval-fallback">
                     <strong>Named Versions</strong>
                     {historyData.namedVersions.map((version) => (
-                      <p key={`${version.hash}-${version.name}`} className="cm-commit-meta">
-                        {version.name} · {version.hash} · {version.createdBy}
-                      </p>
+                      <div
+                        className={`cm-commit-row ${compareFromHash === version.hash || compareToHash === version.hash ? "active" : ""}`}
+                        key={`${version.hash}-${version.name}`}
+                        onClick={() => {
+                          void compareVersionAgainstCurrent(version.hash, `named version: ${version.name}`);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            void compareVersionAgainstCurrent(version.hash, `named version: ${version.name}`);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        title="Open this named version and compare with current"
+                      >
+                        <div className="cm-commit-hash">{version.hash}</div>
+                        <div className="cm-commit-main">
+                          <div className="cm-commit-msg">{version.name}</div>
+                          <div className="cm-commit-meta">{version.createdBy}</div>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 ) : null}
+                {historyLoading ? <div className="cm-commit-meta">Loading history…</div> : null}
+                {historyError ? <div className="cm-commit-meta">{historyError}</div> : null}
                 {compareSummary ? (
                   <div className="cm-approval-fallback">
                     <strong>Latest Compare</strong>

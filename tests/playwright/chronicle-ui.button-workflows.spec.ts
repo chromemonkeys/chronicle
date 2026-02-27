@@ -134,17 +134,23 @@ test.describe("Chronicle button and workflow coverage", () => {
     await threadCard.getByRole("button", { name: "👍" }).click();
     await snap(page, testInfo, "21-thread-actions");
 
+    await page.getByRole("tab", { name: "Required approvals" }).click();
     await page.locator(".cm-approver-row", { hasText: "Security" }).getByRole("button", { name: "Approve" }).click();
     await page.locator(".cm-approver-row", { hasText: "Architecture Committee" }).getByRole("button", { name: "Approve" }).click();
     await page.locator(".cm-approver-row", { hasText: "Legal" }).getByRole("button", { name: "Approve" }).click();
 
+    await page.getByRole("tab", { name: "Discussion" }).click();
     await threadCard.getByRole("button", { name: "Resolve" }).click();
     await threadCard.getByLabel("Outcome").selectOption("ACCEPTED");
     await threadCard.getByRole("button", { name: "Confirm Resolve" }).click();
     await expect(page.getByText("Merge Gate Ready")).toBeVisible();
 
+    await page.getByRole("tab", { name: "Required approvals" }).click();
     await page.getByRole("button", { name: "Ready to merge" }).click();
     await expect(page.locator(".cm-doc-status")).toContainText("Approved");
+    await expect(
+      page.getByRole("button", { name: /Open Reviews/i }).locator(".cm-sidebar-count")
+    ).toHaveText("0");
     await snap(page, testInfo, "22-merged");
   });
 });

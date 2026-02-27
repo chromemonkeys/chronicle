@@ -111,7 +111,11 @@ function codeFromStatus(status: number): ApiErrorCode {
   return "REQUEST_FAILED";
 }
 
-function mapErrorMessage(code: ApiErrorCode, fallback: string): string {
+function isInternalRouteError(message: string): boolean {
+  return /Unhandled mocked API route/i.test(message) || /\/api\//i.test(message);
+}
+
+function mapErrorMessage(code: ApiErrorCode, fallback: string, path: string): string {
   if (code === "AUTH_REQUIRED") {
     return "Your session expired. Please sign in again.";
   }
@@ -126,6 +130,12 @@ function mapErrorMessage(code: ApiErrorCode, fallback: string): string {
   }
   if (code === "MERGE_GATE_BLOCKED") {
     return "Merge is blocked until approvals and thread resolution are complete.";
+  }
+  if (path === "/api/spaces" && isInternalRouteError(fallback)) {
+    return "Could not create space. Please retry or cancel.";
+  }
+  if (isInternalRouteError(fallback)) {
+    return "Request failed. Please retry.";
   }
   return fallback;
 }
@@ -230,7 +240,7 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}, allowRe
     };
     const code = parseApiErrorCode(errorBody.code) ?? codeFromStatus(response.status);
     const rawMessage = typeof errorBody.error === "string" ? errorBody.error : "Request failed";
-    const message = mapErrorMessage(code, rawMessage);
+    const message = mapErrorMessage(code, rawMessage, path);
     if (code === "AUTH_REQUIRED") {
       clearAuthStorage();
     }

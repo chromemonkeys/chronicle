@@ -161,6 +161,60 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await expect(page.getByText("Current gate status")).toBeVisible();
   });
 
+  test("approvals loading state shows delayed recovery guidance", async ({ page }) => {
+    await installAndSignIn(page);
+
+    await page.route("**/api/approvals", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 4500));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          mergeGate: {
+            security: "Pending",
+            architectureCommittee: "Pending",
+            legal: "Pending"
+          },
+          queue: [
+            {
+              id: "rfc-auth",
+              documentId: "rfc-auth",
+              proposalId: "proposal-rfc-auth",
+              title: "RFC: OAuth and Magic Link Session Flow",
+              requestedBy: "Avery",
+              status: "Blocked"
+            }
+          ]
+        })
+      });
+    });
+
+    await page.goto("/approvals");
+    await expect(page.getByRole("heading", { name: "Loading approval queue..." })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry loading" })).toBeVisible();
+  });
+
+  test("create space failure hides internal API route details", async ({ page }) => {
+    await installAndSignIn(page);
+
+    await page.route("**/api/spaces", async (route) => {
+      await route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Unhandled mocked API route: POST /api/spaces"
+        })
+      });
+    });
+
+    await page.getByRole("button", { name: /\+ New space/i }).click();
+    await page.getByPlaceholder("Space name").fill("Security");
+    await page.locator(".space-sidebar-form").getByRole("button", { name: "Create", exact: true }).click();
+
+    await expect(page.getByText("Could not create space. Please retry or cancel.")).toBeVisible();
+    await expect(page.getByText(/\/api\/spaces/i)).toHaveCount(0);
+  });
+
   test("workspace load error fallback appears when API fails", async ({ page }) => {
     await installAndSignIn(page, {
       failFirst: {
@@ -304,6 +358,29 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await expect(page.getByRole("button", { name: "Close Compare" })).toBeVisible();
   });
 
+  test("history commit row click compares selected version against current version", async ({ page }) => {
+    await installAndSignIn(page);
+    await page.goto("/workspace/rfc-auth");
+
+    await page.locator(".cm-editor-wrapper .tiptap p").first().click();
+    await page.keyboard.type(" Commit row click coverage.");
+    await page.getByRole("button", { name: "Save Draft" }).click();
+
+    await page.getByRole("button", { name: /History/ }).click();
+
+    const compareRequest = page.waitForResponse((response) => {
+      if (!response.url().includes("/api/documents/rfc-auth/compare") || response.request().method() !== "GET") {
+        return false;
+      }
+      const url = new URL(response.url());
+      return response.status() === 200 && url.searchParams.get("to") === "pw-0001";
+    });
+
+    await Promise.all([compareRequest, page.locator(".cm-commit-row", { hasText: "Initial proposal branch commit" }).first().click()]);
+
+    await expect(page.locator(".cm-diff-split-panel").first()).toBeVisible();
+  });
+
   test("diff mode toggle switches between unified highlights and split panels", async ({ page }) => {
     await installAndSignIn(page);
     await page.goto("/workspace/rfc-auth");
@@ -435,9 +512,26 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await expect(page.getByText("Named Versions")).toBeVisible();
     await expect(
       page
-        .locator(".cm-approval-fallback .cm-commit-meta")
-        .filter({ hasText: /Playwright Snapshot v1 · pw-/ })
+        .locator(".cm-approval-fallback", { has: page.getByText("Named Versions") })
+        .locator(".cm-commit-row")
+        .filter({ hasText: /Playwright Snapshot v1/ })
     ).toBeVisible();
+
+    const viewNamedVersionRequest = page.waitForResponse((response) => {
+      if (!response.url().includes("/api/documents/rfc-auth/compare") || response.request().method() !== "GET") {
+        return false;
+      }
+      const url = new URL(response.url());
+      return response.status() === 200 && url.searchParams.get("from") === url.searchParams.get("to");
+    });
+    await Promise.all([
+      viewNamedVersionRequest,
+      page
+        .locator(".cm-approval-fallback", { has: page.getByText("Named Versions") })
+        .locator(".cm-commit-row", { hasText: "Playwright Snapshot v1" })
+        .click()
+    ]);
+    await expect(page.locator(".cm-compare-banner", { hasText: /Viewing named version: Playwright Snapshot v1/ })).toBeVisible();
 
     const submitRequest = page.waitForResponse((response) => {
       return (
@@ -619,6 +713,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await page.goto("/workspace/rfc-auth");
 
     await expect(page.getByText("Merge Gate Blocked")).toBeVisible();
+    await page.getByRole("tab", { name: "Required approvals" }).click();
 
     const legalRow = page.locator(".cm-approver-row", { hasText: "Legal" });
     await expect(legalRow.getByRole("button", { name: "Blocked" })).toBeDisabled();

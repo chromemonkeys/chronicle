@@ -88,6 +88,14 @@ Source: `docs/specs/UI_Detailed_Implementation_Spec.md`
 - [ ] Accessibility baseline verified for keyboard/focus/labels/status text.
 - [ ] UI unit/integration/e2e matrix implemented and passing in CI.
 
+### SPEC-004 Diff Review Vision (open)
+Source: `docs/specs/SPEC-004_Diff_Review_V1_V2.md`
+- [ ] V1 compare model supports deterministic, change-level objects with anchors/context.
+- [ ] Unified/split diff views meet V1 UX contract with right-rail navigation.
+- [ ] Per-change review actions are persisted with audit events and gate semantics.
+- [ ] Merge gate renders explicit blocker links (no generic blocked state).
+- [ ] V1 metrics instrumentation exists for review efficiency and quality.
+
 ## 5) Remaining Audit Fix Set
 
 Source: former `docs/Phase1-3_Audit_Fixes.md`

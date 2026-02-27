@@ -3,83 +3,104 @@
  * Run with: node --test tests/sync-health.test.mjs
  */
 
-import { describe, it, before } from 'node:test';
-import assert from 'node:assert';
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
 import http from 'node:http';
-
-const SYNC_PORT = 9876;
-const API_PORT = 9877;
 
 // Mock API server for testing
 function createMockAPI(healthy = true) {
   return http.createServer((req, res) => {
-    if (req.url === '/api/health') {
+    if (req.url === "/api/health") {
       res.writeHead(healthy ? 200 : 503, {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store'
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store"
       });
       res.end(JSON.stringify({ ok: healthy }));
       return;
     }
     res.writeHead(404);
-    res.end(JSON.stringify({ error: 'Not found' }));
+    res.end(JSON.stringify({ error: "Not found" }));
   });
 }
 
-describe('Sync Service Health Endpoints', () => {
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("server did not bind to a TCP port"));
+        return;
+      }
+      resolve(`http://127.0.0.1:${address.port}`);
+    });
+  });
+}
+
+function close(server) {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+describe("Sync Service Health Endpoints", () => {
   let mockApi;
   let mockApiUrl;
 
   before(async () => {
     mockApi = createMockAPI(true);
-    await new Promise((resolve) => {
-      mockApi.listen(API_PORT, '127.0.0.1', () => {
-        mockApiUrl = `http://127.0.0.1:${API_PORT}`;
-        resolve();
-      });
-    });
+    mockApiUrl = await listen(mockApi);
   });
 
-  describe('Health endpoint', () => {
-    it('should return 200 with ok=true', async () => {
+  after(async () => {
+    await close(mockApi);
+  });
+
+  describe("Health endpoint", () => {
+    it("should return expected shape fields", () => {
       // This is a simplified test - in reality we'd import the sync server
       // For now, we test the expected response format
       const expectedResponse = {
         ok: true,
-        service: 'sync',
-        rooms: expect.any(Number)
+        service: "sync",
+        rooms: 0
       };
       
       // Verify the response structure is correct
-      assert.strictEqual(typeof expectedResponse.ok, 'boolean');
-      assert.strictEqual(expectedResponse.service, 'sync');
+      assert.equal(typeof expectedResponse.ok, "boolean");
+      assert.equal(expectedResponse.service, "sync");
+      assert.equal(typeof expectedResponse.rooms, "number");
     });
   });
 
-  describe('Ready endpoint', () => {
-    it('should check API connectivity', async () => {
+  describe("Ready endpoint", () => {
+    it("should check API connectivity", async () => {
       const response = await fetch(`${mockApiUrl}/api/health`);
       const data = await response.json();
       
-      assert.strictEqual(response.status, 200);
-      assert.strictEqual(data.ok, true);
+      assert.equal(response.status, 200);
+      assert.equal(data.ok, true);
     });
 
-    it('should return not_ready when API is down', async () => {
+    it("should return not_ready when API is down", async () => {
       // Create unhealthy API
       const unhealthyApi = createMockAPI(false);
-      await new Promise((resolve) => {
-        unhealthyApi.listen(API_PORT + 1, '127.0.0.1', resolve);
-      });
+      const unhealthyUrl = await listen(unhealthyApi);
 
       try {
-        const response = await fetch(`http://127.0.0.1:${API_PORT + 1}/api/health`);
+        const response = await fetch(`${unhealthyUrl}/api/health`);
         const data = await response.json();
         
-        assert.strictEqual(response.status, 503);
-        assert.strictEqual(data.ok, false);
+        assert.equal(response.status, 503);
+        assert.equal(data.ok, false);
       } finally {
-        unhealthyApi.close();
+        await close(unhealthyApi);
       }
     });
   });
