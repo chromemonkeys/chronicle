@@ -44,6 +44,7 @@ type fakeStore struct {
 	openThreadCountFn          func(context.Context, string) (int, error)
 	pendingApprovalCountFn     func(context.Context, string) (int, error)
 	markProposalMergedFn       func(context.Context, string) error
+	orphanThreadFn             func(context.Context, string, string, string) (bool, error)
 }
 
 func (f *fakeStore) ListDocuments(context.Context) ([]store.Document, error) { return nil, nil }
@@ -272,6 +273,16 @@ func (f *fakeStore) ListAuditEvents(context.Context, string, string, int) ([]sto
 	return nil, nil
 }
 func (f *fakeStore) ListAuditEventsForChange(context.Context, string, int) ([]store.AuditEvent, error) {
+	return nil, nil
+}
+func (f *fakeStore) OrphanThread(ctx context.Context, proposalID, threadID, reason string) (bool, error) {
+	if f.orphanThreadFn != nil {
+		return f.orphanThreadFn(ctx, proposalID, threadID, reason)
+	}
+	return false, nil
+}
+func (f *fakeStore) ListOrphanedThreads(context.Context, string) ([]store.Thread, error) { return nil, nil }
+func (f *fakeStore) FindThreadsByAnchorNodeIDs(context.Context, string, []string) ([]store.Thread, error) {
 	return nil, nil
 }
 

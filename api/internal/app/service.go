@@ -160,6 +160,9 @@ type dataStore interface {
 	InsertAuditEvent(context.Context, store.AuditEvent) error
 	ListAuditEvents(context.Context, string, string, int) ([]store.AuditEvent, error)
 	ListAuditEventsForChange(context.Context, string, int) ([]store.AuditEvent, error)
+	OrphanThread(context.Context, string, string, string) (bool, error)
+	ListOrphanedThreads(context.Context, string) ([]store.Thread, error)
+	FindThreadsByAnchorNodeIDs(context.Context, string, []string) ([]store.Thread, error)
 }
 
 type gitService interface {
@@ -603,6 +606,11 @@ func (s *Service) SaveWorkspace(ctx context.Context, documentID string, content 
 		}
 		if err := s.store.UpdateDocumentState(ctx, documentID, next.Title, next.Subtitle, "In review", userName); err != nil {
 			return nil, err
+		}
+		// Check for orphaned threads when document structure changes
+		if err := s.detectAndOrphanThreads(ctx, proposal.ID, next.Doc, userName); err != nil {
+			// Log but don't fail the save operation
+			log.Printf("Thread orphan detection failed: %v", err)
 		}
 	}
 
@@ -2391,6 +2399,120 @@ func extractNodeText(content json.RawMessage) string {
 		builder.WriteString(walk(node))
 	}
 	return builder.String()
+}
+
+// extractNodeIDsFromDoc extracts all node IDs from a ProseMirror document JSON
+func extractNodeIDsFromDoc(doc json.RawMessage) map[string]bool {
+	nodeIDs := make(map[string]bool)
+	if len(doc) == 0 {
+		return nodeIDs
+	}
+	
+	var parsed struct {
+		Type    string `json:"type"`
+		Content []struct {
+			Type  string          `json:"type"`
+			Attrs struct {
+				NodeID string `json:"nodeId"`
+			} `json:"attrs"`
+			Content json.RawMessage `json:"content"`
+		} `json:"content"`
+	}
+	
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		return nodeIDs
+	}
+	
+	var walk func([]json.RawMessage)
+	walk = func(nodes []json.RawMessage) {
+		for _, rawNode := range nodes {
+			var node struct {
+				Type  string          `json:"type"`
+				Attrs struct {
+					NodeID string `json:"nodeId"`
+				} `json:"attrs"`
+				Content json.RawMessage `json:"content"`
+			}
+			if err := json.Unmarshal(rawNode, &node); err != nil {
+				continue
+			}
+			if node.Attrs.NodeID != "" {
+				nodeIDs[node.Attrs.NodeID] = true
+			}
+			// Recurse into nested content
+			if len(node.Content) > 0 {
+				var children []json.RawMessage
+				if err := json.Unmarshal(node.Content, &children); err == nil {
+					walk(children)
+				}
+			}
+		}
+	}
+	
+	// Process top-level nodes
+	for _, node := range parsed.Content {
+		if node.Attrs.NodeID != "" {
+			nodeIDs[node.Attrs.NodeID] = true
+		}
+		if len(node.Content) > 0 {
+			var children []json.RawMessage
+			if err := json.Unmarshal(node.Content, &children); err == nil {
+				walk(children)
+			}
+		}
+	}
+	
+	return nodeIDs
+}
+
+// detectAndOrphanThreads checks if any threads' anchor nodes no longer exist
+func (s *Service) detectAndOrphanThreads(ctx context.Context, proposalID string, doc json.RawMessage, actor string) error {
+	if len(doc) == 0 {
+		return nil
+	}
+	
+	// Get current node IDs from document
+	currentNodeIDs := extractNodeIDsFromDoc(doc)
+	
+	// Find all non-orphaned threads for this proposal
+	threads, err := s.store.ListThreads(ctx, proposalID, true)
+	if err != nil {
+		return fmt.Errorf("list threads for orphan detection: %w", err)
+	}
+	
+	for _, thread := range threads {
+		// Skip already orphaned or resolved threads
+		if thread.Status == "ORPHANED" || thread.Status == "RESOLVED" {
+			continue
+		}
+		
+		// Check if anchor node still exists
+		if thread.AnchorNodeID != "" && !currentNodeIDs[thread.AnchorNodeID] {
+			reason := fmt.Sprintf("Anchor node '%s' was removed from document", thread.AnchorNodeID)
+			if _, err := s.store.OrphanThread(ctx, proposalID, thread.ID, reason); err != nil {
+				log.Printf("Failed to orphan thread %s: %v", thread.ID, err)
+				continue
+			}
+			// Emit audit event for orphaning
+			auditEvent := store.AuditEvent{
+				EventType:  "thread_orphaned",
+				ActorName:  actor,
+				DocumentID: "", // We don't have document ID here, will be empty
+				ProposalID: proposalID,
+				ThreadID:   &thread.ID,
+				Payload: map[string]any{
+					"reason":         reason,
+					"anchorNodeId":   thread.AnchorNodeID,
+					"orphanedAt":     time.Now().Format(time.RFC3339),
+				},
+			}
+			if err := s.store.InsertAuditEvent(ctx, auditEvent); err != nil {
+				log.Printf("Failed to insert audit event for orphaned thread: %v", err)
+			}
+		}
+	}
+	
+	return nil
 }
 
 func nilIfEmpty(value string) any {

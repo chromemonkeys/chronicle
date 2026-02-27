@@ -51,17 +51,18 @@ type Proposal struct {
 }
 
 type Thread struct {
-	ID            string
-	ProposalID    string
-	Anchor        string
-	AnchorNodeID  string
-	AnchorOffsets string
-	Text          string
-	Status        string
-	Visibility    string
-	Type          string
+	ID              string
+	ProposalID      string
+	Anchor          string
+	AnchorNodeID    string
+	AnchorOffsets   string
+	Text            string
+	Status          string
+	Visibility      string
+	Type            string
 	ResolvedOutcome string
 	ResolvedNote    string
+	OrphanedReason  string
 	Author          string
 	CreatedAt       time.Time
 }

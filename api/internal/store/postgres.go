@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -1212,6 +1213,123 @@ func (s *PostgresStore) ListAuditEventsForChange(ctx context.Context, changeID s
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate audit events for change: %w", err)
+	}
+	return items, nil
+}
+
+
+// OrphanThread marks a thread as orphaned with a reason
+func (s *PostgresStore) OrphanThread(ctx context.Context, proposalID, threadID, reason string) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE threads
+		SET status='ORPHANED', orphaned_reason=$3, updated_at=NOW()
+		WHERE proposal_id=$1 AND id=$2 AND status <> 'ORPHANED'
+	`, proposalID, threadID, reason)
+	if err != nil {
+		return false, fmt.Errorf("orphan thread: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("orphan thread rows: %w", err)
+	}
+	return affected > 0, nil
+}
+
+// ListOrphanedThreads returns all orphaned threads for a proposal
+func (s *PostgresStore) ListOrphanedThreads(ctx context.Context, proposalID string) ([]Thread, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, proposal_id, anchor_label, COALESCE(anchor_node_id, ''), COALESCE(anchor_offsets_json::text, '{}'), body, status, visibility, type, COALESCE(resolved_outcome, ''), COALESCE(resolved_note, ''), COALESCE(orphaned_reason, ''), created_by_name, created_at
+		FROM threads
+		WHERE proposal_id=$1 AND status='ORPHANED'
+		ORDER BY created_at ASC
+	`, proposalID)
+	if err != nil {
+		return nil, fmt.Errorf("list orphaned threads: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Thread, 0)
+	for rows.Next() {
+		var item Thread
+		if err := rows.Scan(
+			&item.ID,
+			&item.ProposalID,
+			&item.Anchor,
+			&item.AnchorNodeID,
+			&item.AnchorOffsets,
+			&item.Text,
+			&item.Status,
+			&item.Visibility,
+			&item.Type,
+			&item.ResolvedOutcome,
+			&item.ResolvedNote,
+			&item.OrphanedReason,
+			&item.Author,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan orphaned thread: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate orphaned threads: %w", err)
+	}
+	return items, nil
+}
+
+// FindThreadsByAnchorNodeIDs returns threads anchored to specific nodes
+func (s *PostgresStore) FindThreadsByAnchorNodeIDs(ctx context.Context, proposalID string, nodeIDs []string) ([]Thread, error) {
+	if len(nodeIDs) == 0 {
+		return []Thread{}, nil
+	}
+	
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(nodeIDs))
+	args := make([]interface{}, 0, len(nodeIDs)+1)
+	args = append(args, proposalID)
+	for i, id := range nodeIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, id)
+	}
+	
+	query := fmt.Sprintf(`
+		SELECT id, proposal_id, anchor_label, COALESCE(anchor_node_id, ''), COALESCE(anchor_offsets_json::text, '{}'), body, status, visibility, type, COALESCE(resolved_outcome, ''), COALESCE(resolved_note, ''), COALESCE(orphaned_reason, ''), created_by_name, created_at
+		FROM threads
+		WHERE proposal_id=$1 AND anchor_node_id IN (%s)
+		ORDER BY created_at ASC
+	`, strings.Join(placeholders, ", "))
+	
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("find threads by anchor: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Thread, 0)
+	for rows.Next() {
+		var item Thread
+		if err := rows.Scan(
+			&item.ID,
+			&item.ProposalID,
+			&item.Anchor,
+			&item.AnchorNodeID,
+			&item.AnchorOffsets,
+			&item.Text,
+			&item.Status,
+			&item.Visibility,
+			&item.Type,
+			&item.ResolvedOutcome,
+			&item.ResolvedNote,
+			&item.OrphanedReason,
+			&item.Author,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan thread by anchor: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate threads by anchor: %w", err)
 	}
 	return items, nil
 }
