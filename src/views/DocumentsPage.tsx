@@ -144,6 +144,54 @@ export function DocumentsPage() {
             </Link>
           ))}
         </nav>
+        {isCreateSpaceFormOpen ? (
+          <form
+            className="space-sidebar-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleCreateSpace();
+            }}
+          >
+            <input
+              id="new-space-name"
+              value={newSpaceName}
+              onChange={(event) => {
+                setNewSpaceName(event.target.value);
+                if (spaceError) {
+                  setSpaceError(null);
+                }
+              }}
+              placeholder="Space name"
+              disabled={isCreatingSpace}
+              autoFocus
+            />
+            <div className="space-sidebar-form-actions">
+              <Button type="submit" className="btn-sm" disabled={isCreatingSpace || !newSpaceName.trim()}>
+                {isCreatingSpace ? "Creating..." : "Create"}
+              </Button>
+              <Button
+                className="btn-sm"
+                variant="ghost"
+                onClick={() => {
+                  setIsCreateSpaceFormOpen(false);
+                  setNewSpaceName("");
+                  setSpaceError(null);
+                }}
+                disabled={isCreatingSpace}
+              >
+                Cancel
+              </Button>
+            </div>
+            {spaceError ? <p className="space-sidebar-error">{spaceError}</p> : null}
+          </form>
+        ) : (
+          <button
+            className="space-sidebar-create"
+            onClick={() => setIsCreateSpaceFormOpen(true)}
+          >
+            + New space
+          </button>
+        )}
       </aside>
       <section className="documents-content">
         <div className="section-head">
@@ -156,16 +204,6 @@ export function DocumentsPage() {
             </div>
             <div className="documents-head-actions">
               <Button
-                variant={isCreateSpaceFormOpen ? "ghost" : "primary"}
-                onClick={() => {
-                  setIsCreateSpaceFormOpen((value) => !value);
-                  setSpaceError(null);
-                }}
-                disabled={isCreatingSpace}
-              >
-                {isCreateSpaceFormOpen ? "Cancel space" : "Create space"}
-              </Button>
-              <Button
                 variant={isCreateDocFormOpen ? "ghost" : "primary"}
                 onClick={() => {
                   setIsCreateDocFormOpen((value) => !value);
@@ -173,39 +211,10 @@ export function DocumentsPage() {
                 }}
                 disabled={isCreating}
               >
-                {isCreateDocFormOpen ? "Cancel document" : "Create document"}
+                {isCreateDocFormOpen ? "Cancel" : "Create document"}
               </Button>
             </div>
           </div>
-          {isCreateSpaceFormOpen ? (
-            <form
-              className="inline-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void handleCreateSpace();
-              }}
-            >
-              <label htmlFor="new-space-name">Space name</label>
-              <input
-                id="new-space-name"
-                value={newSpaceName}
-                onChange={(event) => {
-                  setNewSpaceName(event.target.value);
-                  if (spaceError) {
-                    setSpaceError(null);
-                  }
-                }}
-                placeholder="Engineering"
-                disabled={isCreatingSpace}
-              />
-              <div className="button-row">
-                <Button type="submit" disabled={isCreatingSpace || !newSpaceName.trim()}>
-                  {isCreatingSpace ? "Creating space..." : "Create space"}
-                </Button>
-              </div>
-              {spaceError ? <p className="muted">{spaceError}</p> : null}
-            </form>
-          ) : null}
           {isCreateDocFormOpen ? (
             <form
               className="inline-form"

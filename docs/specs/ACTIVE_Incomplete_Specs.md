@@ -72,6 +72,14 @@ Source: former `docs/specs/SPEC-002_Discussion_Detailed_Implementation_Spec.md`
 - [ ] `DISC-017` governance audit/metrics completeness.
 - [ ] Blocking automated test coverage and no scaffold-only completion.
 
+### SPEC-003 Workspaces and Spaces (open)
+- [x] Migration 0004 creates workspaces/spaces tables and backfills existing documents
+- [x] Go backend: workspace/space CRUD APIs + document space assignment
+- [x] Dev backend: server.mjs parity for all new routes
+- [x] Frontend: space sidebar navigation, filtered document list, breadcrumb wiring
+- [x] Back navigation from editor to document list functional
+- [ ] All verification checks pass
+
 ### UI Detailed Implementation Spec (open)
 Source: `docs/specs/UI_Detailed_Implementation_Spec.md`
 - [ ] Screen contracts completed for sign-in, documents, workspace, approvals, app shell, and not-found routes.

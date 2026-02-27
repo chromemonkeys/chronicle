@@ -37,10 +37,10 @@ export function ApprovalChain({
   const mergeText =
     mergeLabel ??
     (!allApproved
-      ? `⊘ Awaiting ${pendingCount} approvals`
+      ? `Awaiting ${pendingCount} approvals`
       : mergeEnabled
-        ? "✓ Ready to merge"
-        : "⊘ Resolve open threads");
+        ? "Ready to merge"
+        : "Resolve open threads");
   const roleToStage = new Map<MergeGateRole, ApprovalStage>();
   for (const stage of stages ?? []) {
     for (const role of stage.roles) {

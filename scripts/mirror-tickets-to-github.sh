@@ -19,6 +19,15 @@ echo "Using backlog: $BACKLOG_FILE"
 echo "Target repo: $GH_REPO"
 echo "Dry run: $DRY_RUN"
 
+ensure_label() {
+  local label_name="$1"
+  gh api "repos/$GH_REPO/labels" \
+    --method POST \
+    -f name="$label_name" \
+    -f color="1f6feb" \
+    -f description="Auto-created by ticket mirror script" >/dev/null 2>&1 || true
+}
+
 # Parse markdown table rows from the ticket table only.
 awk '
   BEGIN { in_table=0 }
@@ -56,6 +65,11 @@ EOF
     echo "DRY_RUN create: $title"
     continue
   fi
+
+  ensure_label "ticket"
+  ensure_label "priority:$priority"
+  ensure_label "status:$status"
+  ensure_label "area:$area"
 
   # Avoid duplicates by exact title.
   if gh issue list --repo "$GH_REPO" --state all --search "\"$title\" in:title" --json number,title | rg -q "\"title\":\"$title\""; then

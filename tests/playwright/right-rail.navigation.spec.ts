@@ -15,6 +15,12 @@ async function snap(page: Page, testInfo: TestInfo, label: string) {
   });
 }
 
+async function expectDiscussionPanelVisible(page: Page) {
+  const emptyState = page.getByText("No open threads");
+  const composerInput = page.getByLabel("Comment text");
+  await expect(emptyState.or(composerInput)).toBeVisible();
+}
+
 test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
   test("right panel displays vertical rail on desktop with screenshots", async ({ page }, testInfo) => {
     await installAndSignIn(page);
@@ -25,8 +31,9 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
     const rail = page.locator(".cm-panel-tabs-rail");
     await expect(rail).toBeVisible();
 
-    // Verify rail tabs are vertical (Discussion, History, Log)
+    // Verify rail tabs are vertical (Discussion, Approvals, History, Log)
     await expect(rail.getByRole("tab", { name: "Discussion" })).toBeVisible();
+    await expect(rail.getByRole("tab", { name: "Required approvals" })).toBeVisible();
     await expect(rail.getByRole("tab", { name: "History" })).toBeVisible();
     await expect(rail.getByRole("tab", { name: "Log" })).toBeVisible();
 
@@ -55,6 +62,7 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
     await expect(rail).toBeVisible();
 
     const discussionTab = rail.getByRole("tab", { name: "Discussion" });
+    const approvalsTab = rail.getByRole("tab", { name: "Required approvals" });
     const historyTab = rail.getByRole("tab", { name: "History" });
     const logTab = rail.getByRole("tab", { name: "Log" });
 
@@ -63,9 +71,12 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
     await discussionTab.focus();
     await expect(discussionTab).toHaveAttribute("aria-selected", "true");
 
-    // Press Down to navigate to History (the component calls onTabChange which updates selection)
+    // Press Down to navigate to Approvals
     await page.keyboard.press("ArrowDown");
-    // After ArrowDown, focus should move and tab should be selected
+    await expect(approvalsTab).toHaveAttribute("aria-selected", "true");
+
+    // Press Down to navigate to History
+    await page.keyboard.press("ArrowDown");
     await expect(historyTab).toHaveAttribute("aria-selected", "true");
 
     // Press Down to go to Log
@@ -75,6 +86,10 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
     // Press Up to go back to History
     await page.keyboard.press("ArrowUp");
     await expect(historyTab).toHaveAttribute("aria-selected", "true");
+
+    // Press Up to go back to Approvals
+    await page.keyboard.press("ArrowUp");
+    await expect(approvalsTab).toHaveAttribute("aria-selected", "true");
 
     // Press Up to go back to Discussion
     await page.keyboard.press("ArrowUp");
@@ -103,6 +118,7 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
 
     // Verify all tabs are visible and clickable
     await expect(page.getByRole("tab", { name: "Discussion" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Required approvals" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "History" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Log" })).toBeVisible();
 
@@ -118,6 +134,7 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
     await page.goto("/workspace/rfc-auth");
 
     const discussionTab = page.getByRole("tab", { name: "Discussion" });
+    const approvalsTab = page.getByRole("tab", { name: "Required approvals" });
     const historyTab = page.getByRole("tab", { name: "History" });
     const logTab = page.getByRole("tab", { name: "Log" });
 
@@ -128,6 +145,9 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
 
     // Use Right arrow on mobile (horizontal layout)
     await page.keyboard.press("ArrowRight");
+    await expect(approvalsTab).toHaveAttribute("aria-selected", "true");
+
+    await page.keyboard.press("ArrowRight");
     await expect(historyTab).toHaveAttribute("aria-selected", "true");
     
     await page.keyboard.press("ArrowRight");
@@ -135,6 +155,9 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
 
     await page.keyboard.press("ArrowLeft");
     await expect(historyTab).toHaveAttribute("aria-selected", "true");
+
+    await page.keyboard.press("ArrowLeft");
+    await expect(approvalsTab).toHaveAttribute("aria-selected", "true");
   });
 
   test("tab switching updates panel content correctly", async ({ page }) => {
@@ -144,7 +167,11 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
     const rail = page.locator(".cm-panel-tabs-rail");
     
     // Start on Discussion - should show thread-related content
-    await expect(page.getByText("No open threads")).toBeVisible();
+    await expectDiscussionPanelVisible(page);
+
+    // Click Approvals - should show required approvals header
+    await rail.getByRole("tab", { name: "Required approvals" }).click();
+    await expect(page.getByText("Required Approvals")).toBeVisible();
 
     // Click History - should show commits
     await rail.getByRole("tab", { name: "History" }).click();
@@ -152,11 +179,13 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
 
     // Click Log - should show decision log
     await rail.getByRole("tab", { name: "Log" }).click();
-    await expect(page.getByText(/Decision Log|Auto-generated from resolved threads/)).toBeVisible();
+    await expect(
+      page.getByText("Resolved thread outcomes and merge decisions appear here once discussions are closed.")
+    ).toBeVisible();
 
     // Back to Discussion
     await rail.getByRole("tab", { name: "Discussion" }).click();
-    await expect(page.getByText("No open threads")).toBeVisible();
+    await expectDiscussionPanelVisible(page);
   });
 
   test("rail maintains selection state after page interactions", async ({ page }) => {
@@ -184,7 +213,7 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
     const rail = page.locator(".cm-panel-tabs-rail");
     
     // Click each tab and verify active state styling
-    const tabs = ["Discussion", "History", "Log"] as const;
+    const tabs = ["Discussion", "Required approvals", "History", "Log"] as const;
     
     for (const tabName of tabs) {
       const tab = rail.getByRole("tab", { name: tabName });
@@ -207,12 +236,13 @@ test.describe("UX-001: Right Rail Navigation for Workspace Side Panel", () => {
     
     // Navigate through all tabs
     const rail = page.locator(".cm-panel-tabs-rail");
+    await rail.getByRole("tab", { name: "Required approvals" }).click();
     await rail.getByRole("tab", { name: "History" }).click();
     await rail.getByRole("tab", { name: "Log" }).click();
     await rail.getByRole("tab", { name: "Discussion" }).click();
 
     // Can still interact with thread area
-    await expect(page.getByText("No open threads")).toBeVisible();
+    await expectDiscussionPanelVisible(page);
 
     // Screenshot showing full workspace with rail
     await snap(page, testInfo, "05-workspace-with-rail-functional");

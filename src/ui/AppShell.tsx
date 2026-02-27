@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../state/AuthProvider";
 import { Button } from "./Button";
 
@@ -19,9 +19,9 @@ export function AppShell() {
     <div className="shell">
       {!isWorkspaceRoute && (
         <header className="shell-header">
-          <div className="brand">
+          <Link to="/documents" className="brand">
             Chronicle<span className="brand-dot">.</span>
-          </div>
+          </Link>
           <nav className="nav">
             <NavLink className="nav-link" to="/documents">
               Documents

@@ -9,8 +9,6 @@ import (
 	"testing"
 
 	"chronicle/api/internal/config"
-	"chronicle/api/internal/gitrepo"
-	"chronicle/api/internal/store"
 )
 
 // fakeStoreForHealth extends fakeStore with ping functionality

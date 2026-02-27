@@ -427,6 +427,11 @@ export async function createProposalThread(
     text: string;
     anchorLabel?: string;
     anchorNodeId?: string;
+    anchorOffsets?: {
+      start?: number;
+      end?: number;
+      quote?: string;
+    };
     visibility?: "INTERNAL" | "EXTERNAL";
     type?: "GENERAL" | "LEGAL" | "COMMERCIAL" | "TECHNICAL" | "SECURITY" | "QUERY" | "EDITORIAL";
   }

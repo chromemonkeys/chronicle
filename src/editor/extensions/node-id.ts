@@ -42,15 +42,26 @@ export const NodeId = Extension.create({
         appendTransaction(_transactions, _oldState, newState) {
           const { tr } = newState;
           let modified = false;
+          const seenNodeIds = new Set<string>();
 
           newState.doc.descendants((node, pos) => {
-            if (BLOCK_TYPES.has(node.type.name) && !node.attrs.nodeId) {
+            if (!BLOCK_TYPES.has(node.type.name)) {
+              return;
+            }
+
+            const existingNodeId = typeof node.attrs.nodeId === "string" ? node.attrs.nodeId : "";
+            const needsNewNodeId = !existingNodeId || seenNodeIds.has(existingNodeId);
+
+            if (needsNewNodeId) {
               tr.setNodeMarkup(pos, undefined, {
                 ...node.attrs,
                 nodeId: crypto.randomUUID(),
               });
               modified = true;
+              return;
             }
+
+            seenNodeIds.add(existingNodeId);
           });
 
           return modified ? tr : null;

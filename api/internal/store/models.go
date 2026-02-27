@@ -51,19 +51,19 @@ type Proposal struct {
 }
 
 type Thread struct {
-	ID           string
-	ProposalID   string
-	Anchor       string
-	AnchorNodeID string
+	ID            string
+	ProposalID    string
+	Anchor        string
+	AnchorNodeID  string
 	AnchorOffsets string
-	Text         string
-	Status       string
-	Visibility   string
-	Type         string
+	Text          string
+	Status        string
+	Visibility    string
+	Type          string
 	ResolvedOutcome string
-	ResolvedNote string
-	Author       string
-	CreatedAt    time.Time
+	ResolvedNote    string
+	Author          string
+	CreatedAt       time.Time
 }
 
 type Annotation struct {
@@ -90,15 +90,15 @@ type Approval struct {
 }
 
 type DecisionLogEntry struct {
-	ID         int64
-	DocumentID string
-	ProposalID string
-	ThreadID   string
-	Outcome    string
-	Rationale  string
-	DecidedBy  string
-	DecidedAt  time.Time
-	CommitHash string
+	ID           int64
+	DocumentID   string
+	ProposalID   string
+	ThreadID     string
+	Outcome      string
+	Rationale    string
+	DecidedBy    string
+	DecidedAt    time.Time
+	CommitHash   string
 	Participants []string
 }
 

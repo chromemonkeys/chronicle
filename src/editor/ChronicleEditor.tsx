@@ -10,6 +10,7 @@ import Underline from "@tiptap/extension-underline";
 import { useCallback, useEffect, useRef } from "react";
 import { NodeId } from "./extensions/node-id";
 import { ActiveBlockTracker } from "./extensions/active-block-tracker";
+import { ActiveBlockHighlight } from "./extensions/active-block-highlight";
 import { SlashCommands } from "./extensions/slash-commands";
 import { SuggestionInsert, SuggestionDelete, SuggestionMode } from "./extensions/suggestion-mode";
 import { DiffDecorations, type DiffState } from "./extensions/diff-decorations";
@@ -70,6 +71,7 @@ export function ChronicleEditor({
           onSelectionChange?.(nodeId);
         },
       }),
+      ActiveBlockHighlight,
       SlashCommands,
       SuggestionInsert,
       SuggestionDelete,

@@ -48,6 +48,32 @@ All tickets should be created here first, then mirrored to your issue tracker if
 | `UI-005` | UI/Responsive | P1 | todo | 1d | `UI_Detailed_Implementation_Spec.md` §6.1 | Responsive layouts for 1280/1024/768/390 widths |
 | `UI-006` | UI/A11y | P1 | todo | 1d | `UI_Detailed_Implementation_Spec.md` §6.2 | Keyboard/focus/label/status-text accessibility pass |
 | `UI-007` | UI/Test | P0 | todo | 1.5d | `UI_Detailed_Implementation_Spec.md` §7 | Add missing UI unit/integration/e2e coverage |
+| `RM-001` | Roadmap/Collab | P0 | todo | 2d | `Chronicle_Product_Vision_v2.txt` §9 | Spaces and hierarchical document tree |
+| `RM-002` | Roadmap/Search | P0 | todo | 2d | `Chronicle_Product_Vision_v2.txt` §9 | Full-text search with Meilisearch + fallback |
+| `RM-003` | Roadmap/Migration | P0 | todo | 2d | `Chronicle_Product_Vision_v2.txt` §9 | Confluence import (v1 scope) |
+| `RM-004` | Roadmap/Export | P0 | todo | 1.5d | `Chronicle_Product_Vision_v2.txt` §9 | Export to PDF/Markdown/DOCX |
+| `RM-005` | Roadmap/Editor | P1 | todo | 1d | `Chronicle_Product_Vision_v2.txt` §4.1, §9 | oEmbed/iframe/rich links |
+| `RM-006` | Roadmap/Platform | P1 | todo | 1.5d | `Chronicle_Product_Vision_v2.txt` §9 | REST API v1 + webhook contracts |
+| `RM-007` | Roadmap/Auth | P0 | todo | 2d | `Chronicle_Product_Vision_v2.txt` §9 | SSO (SAML/OIDC) |
+| `RM-008` | Roadmap/Auth | P0 | todo | 2d | `Chronicle_Product_Vision_v2.txt` §9 | SCIM provisioning/deprovisioning |
+| `RM-009` | Roadmap/Versioning | P1 | todo | 1d | `Chronicle_Product_Vision_v2.txt` §9 | Blame view |
+| `RM-010` | Roadmap/Editor | P1 | todo | 1d | `Chronicle_Product_Vision_v2.txt` §9 | Templates library |
+| `RM-011` | Roadmap/Collab | P1 | todo | 1d | `Chronicle_Product_Vision_v2.txt` §9 | Backlinks |
+| `RM-012` | Roadmap/Notifications | P1 | todo | 1.5d | `Chronicle_Product_Vision_v2.txt` §9 | Slack/Teams notifications |
+| `RM-013` | Roadmap/Governance | P1 | todo | 1d | `Chronicle_Product_Vision_v2.txt` §9 | Approval delegation |
+| `RM-014` | Roadmap/Governance | P1 | todo | 1d | `Chronicle_Product_Vision_v2.txt` §9 | Approval reminders/escalations |
+| `RM-015` | Roadmap/Platform | P1 | todo | 1.5d | `Chronicle_Product_Vision_v2.txt` §9 | Helm chart deployment |
+| `RM-016` | Roadmap/Cloud | P1 | todo | 2d | `Chronicle_Product_Vision_v2.txt` §9 | Chronicle Cloud managed hosting baseline |
+| `RM-017` | Roadmap/AI | P1 | todo | 2d | `Chronicle_Product_Vision_v2.txt` §9 | AI drafting assistant (tracked changes) |
+| `RM-018` | Roadmap/Integrations | P1 | todo | 1.5d | `Chronicle_Product_Vision_v2.txt` §9 | DocuSign/HelloSign integration |
+| `RM-019` | Roadmap/Compliance | P0 | todo | 2d | `Chronicle_Product_Vision_v2.txt` §9 | Advanced audit/compliance reporting |
+| `RM-020` | Roadmap/Permissions | P0 | todo | 2d | `Chronicle_Product_Vision_v2.txt` §8.4 | Enterprise sharing controls pack |
+| `RM-021` | Roadmap/Compliance | P0 | todo | 1.5d | `Chronicle_Product_Vision_v2.txt` §8.4, §9 | Data residency controls |
+| `RM-022` | Roadmap/Client-Portal | P1 | todo | 1.5d | `Chronicle_Product_Vision_v2.txt` §8.5 | Client portal external collaboration |
+| `RM-023` | Roadmap/Editor | P2 | todo | 2d | `Chronicle_Product_Vision_v2.txt` §9 | Whiteboards v1 |
+| `RM-024` | Roadmap/Integrations | P1 | todo | 1.5d | `Chronicle_Product_Vision_v2.txt` §9 | Jira/Linear deep integration |
+| `RM-025` | Roadmap/Platform | P2 | todo | 2d | `Chronicle_Product_Vision_v2.txt` §9 | Plugin/extension marketplace |
+| `RM-026` | Roadmap/Mobile | P2 | todo | 3d | `Chronicle_Product_Vision_v2.txt` §9 | Mobile apps (iOS/Android) |
 
 ## Sprint Order
 1. Sprint A: `P1-OPS-001`, `P1-DB-001`, `P1-AUTH-001`, `P1-AUTH-003`, `P1-RBAC-001`, `P1-CI-001`

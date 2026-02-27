@@ -55,20 +55,21 @@ test.describe("Chronicle frontend Playwright coverage", () => {
         response.status() === 200
       );
     });
-    page.once("dialog", (dialog) => dialog.accept("Playwright Fresh ADR"));
+    await page.getByRole("button", { name: "Create document" }).first().click();
+    await page.getByLabel("Document title").fill("Playwright Fresh ADR");
     await Promise.all([
       createRequest,
-      page.getByRole("button", { name: "Create document" }).first().click()
+      page.locator(".inline-form").getByRole("button", { name: "Create document" }).click()
     ]);
 
     await expect(page).toHaveURL(/\/workspace\//);
     await expect(page.locator(".cm-doc-status")).toContainText("Draft");
-    await expect(page.getByRole("button", { name: "+ Start Proposal" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start Proposal" }).first()).toBeVisible();
     await expect(page.getByText("No active proposal discussion")).toBeVisible();
     await expect(
       page.locator(".cm-panel-fallback-card", { hasText: "No active proposal discussion" }).getByRole("button", { name: "Start Proposal" })
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: "✓ Ready to merge" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Ready to merge" })).toHaveCount(0);
   });
 
   test("sign out returns user to sign-in page", async ({ page }) => {
@@ -86,7 +87,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await gotoWithRetry(page, "/route-that-does-not-exist");
 
     await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Return to documents" })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Return to documents|Go to Documents/i })).toBeVisible();
   });
 
   test("documents empty state is displayed", async ({ page }) => {
@@ -105,7 +106,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
 
     await expect(page.getByRole("heading", { name: "Could not load documents" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Retry" }).click();
+    await page.getByRole("button", { name: /Retry|Try again/i }).click();
 
     await expect(page.getByRole("heading", { name: "All Documents" })).toBeVisible();
     await expect(page.getByText("RFC: OAuth and Magic Link Session Flow")).toBeVisible();
@@ -117,10 +118,14 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await page.goto("/approvals");
 
     await expect(page.getByRole("heading", { name: "Approvals" })).toBeVisible();
-    await expect(page.getByText("Merge Gate Preview")).toBeVisible();
+    await expect(page.getByText("Current gate status")).toBeVisible();
+    await expect(page.getByText("Needs your review")).toBeVisible();
     await expect(page.getByText("Awaiting 3 approvals")).toBeVisible();
     await expect(page.getByText("RFC: OAuth and Magic Link Session Flow")).toBeVisible();
     await expect(page.getByText("Blocked").first()).toBeVisible();
+
+    await page.getByRole("link", { name: "Review next request" }).click();
+    await expect(page).toHaveURL(/\/workspace\/rfc-auth$/);
   });
 
   test("approvals empty state is rendered", async ({ page }) => {
@@ -151,9 +156,9 @@ test.describe("Chronicle frontend Playwright coverage", () => {
 
     await expect(page.getByRole("heading", { name: "Approval queue unavailable" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Retry" }).click();
+    await page.getByRole("button", { name: /Retry|Try again/i }).click();
 
-    await expect(page.getByText("Merge Gate Preview")).toBeVisible();
+    await expect(page.getByText("Current gate status")).toBeVisible();
   });
 
   test("workspace load error fallback appears when API fails", async ({ page }) => {
@@ -183,6 +188,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await page.locator(".cm-panel-fallback-card").getByRole("button", { name: "Retry" }).click();
     await expect(page.locator(".cm-thread-card").first()).toBeVisible();
 
+    await page.getByRole("tab", { name: "Required approvals" }).click();
     const approvalState = page.locator('[aria-label="Approvals panel state"]');
     await approvalState.getByRole("button", { name: "Empty" }).click();
     await expect(page.getByText("No pending approvers remain. Merge gate is clear.")).toBeVisible();
@@ -206,6 +212,31 @@ test.describe("Chronicle frontend Playwright coverage", () => {
 
     await page.getByLabel("Workspace mode").getByRole("button", { name: "Review", exact: true }).click();
     await expect(page.getByText("Compare request failed.")).toBeVisible();
+  });
+
+  test("editor save persists across full page reload", async ({ page }) => {
+    await installAndSignIn(page);
+    await page.goto("/workspace/rfc-auth");
+
+    const marker = " Persisted after reload coverage.";
+    await page.locator(".cm-editor-wrapper .tiptap p").first().click();
+    await page.keyboard.type(marker);
+
+    const saveRequest = page.waitForResponse((response) => {
+      return (
+        response.url().includes("/api/workspace/rfc-auth") &&
+        response.request().method() === "POST" &&
+        response.status() === 200
+      );
+    });
+    await Promise.all([
+      saveRequest,
+      page.getByRole("button", { name: "Save Draft" }).click()
+    ]);
+    await expect(page.getByText("Saved.")).toBeVisible();
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator(".cm-editor-wrapper .tiptap")).toContainText("Persisted after reload coverage.");
   });
 
   test("review mode compare flows render diff cards and history compare summary", async ({ page }) => {
@@ -241,7 +272,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
       }).first()
     ).toBeVisible();
 
-    await page.getByRole("button", { name: "⨯ Close Compare" }).click();
+    await page.getByRole("button", { name: "Close Compare" }).click();
     await expect(page.locator(".cm-diff-split-panel")).toHaveCount(0);
   });
 
@@ -270,7 +301,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     ]);
 
     await expect(page.locator(".cm-diff-split-panel").first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "⨯ Close Compare" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Close Compare" })).toBeVisible();
   });
 
   test("diff mode toggle switches between unified highlights and split panels", async ({ page }) => {
@@ -369,7 +400,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     });
     await page.goto("/workspace/rfc-auth");
 
-    const startProposalButton = page.getByRole("button", { name: "+ Start Proposal" });
+    const startProposalButton = page.getByRole("button", { name: "Start Proposal" }).first();
     await expect(startProposalButton).toBeVisible();
 
     const createProposalRequest = page.waitForResponse((response) => {
@@ -471,7 +502,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     });
     await Promise.all([
       voteRequest,
-      threadCard.getByRole("button", { name: "▲" }).click()
+      threadCard.getByRole("button", { name: "Upvote thread" }).click()
     ]);
     await expect(threadCard.locator(".cm-vote-count")).toHaveText("3");
 
@@ -498,7 +529,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await Promise.all([
       resolveRequest,
       (async () => {
-        await threadCard.getByRole("button", { name: "✓ Resolve" }).click();
+        await threadCard.getByRole("button", { name: "Resolve" }).click();
         await threadCard.getByLabel("Outcome").selectOption("ACCEPTED");
         await threadCard.getByRole("button", { name: "Confirm Resolve" }).click();
       })()
@@ -561,7 +592,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
       resolveRequest,
       (async () => {
         const threadCard = page.locator(".cm-thread-card").first();
-        await threadCard.getByRole("button", { name: "✓ Resolve" }).click();
+        await threadCard.getByRole("button", { name: "Resolve" }).click();
         await threadCard.getByRole("button", { name: "Confirm Resolve" }).click();
       })()
     ]);
@@ -580,7 +611,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     ]);
 
     await expect(page.getByText("Merge Gate Blocked")).toBeVisible();
-    await expect(page.getByRole("button", { name: "⊘ Resolve open threads" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Resolve open threads" })).toBeDisabled();
   });
 
   test("workspace merge remains blocked until approvals and thread resolution complete", async ({ page }) => {
@@ -605,7 +636,7 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await expect(legalRow.getByRole("button", { name: "Approve" })).toBeEnabled();
     await legalRow.getByRole("button", { name: "Approve" }).click();
 
-    const mergeButton = page.getByRole("button", { name: "⊘ Resolve open threads" });
+    const mergeButton = page.getByRole("button", { name: "Resolve open threads" });
     await expect(mergeButton).toBeDisabled();
 
     const resolveRequest = page.waitForResponse((response) => {
@@ -619,14 +650,14 @@ test.describe("Chronicle frontend Playwright coverage", () => {
       resolveRequest,
       (async () => {
         const threadCard = page.locator(".cm-thread-card").first();
-        await threadCard.getByRole("button", { name: "✓ Resolve" }).click();
+        await threadCard.getByRole("button", { name: "Resolve" }).click();
         await threadCard.getByLabel("Outcome").selectOption("ACCEPTED");
         await threadCard.getByRole("button", { name: "Confirm Resolve" }).click();
       })()
     ]);
 
     await expect(page.getByText(/Resolved by/i)).toBeVisible();
-    const readyMergeButton = page.getByRole("button", { name: "✓ Ready to merge" });
+    const readyMergeButton = page.getByRole("button", { name: "Ready to merge" });
     await expect(readyMergeButton).toBeEnabled();
     await readyMergeButton.click();
 
@@ -641,6 +672,8 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await expect(page.getByRole("tab", { name: "Discussion" })).toBeVisible();
     await page.getByRole("tab", { name: "Discussion" }).focus();
     await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("tab", { name: "Required approvals" })).toBeFocused();
+    await page.keyboard.press("ArrowRight");
     await expect(page.getByRole("tab", { name: "History" })).toBeFocused();
     await page.keyboard.press("ArrowRight");
     await expect(page.getByRole("tab", { name: "Log" })).toBeFocused();
@@ -651,5 +684,37 @@ test.describe("Chronicle frontend Playwright coverage", () => {
     await expect(page.locator(".cm-discussion-panel")).toBeVisible();
     const hasHorizontalOverflow = await page.evaluate(() => document.body.scrollWidth > window.innerWidth + 1);
     expect(hasHorizontalOverflow).toBeFalsy();
+  });
+
+  test("workspace sidebars can collapse and expand via header controls", async ({ page }) => {
+    await installAndSignIn(page);
+    await page.goto("/workspace/rfc-auth");
+
+    const leftSidebar = page.locator(".cm-sidebar");
+    const rightPanel = page.locator(".cm-discussion-panel");
+
+    await expect(leftSidebar).not.toHaveClass(/collapsed/);
+    await expect(rightPanel).not.toHaveClass(/collapsed/);
+
+    await page.getByRole("button", { name: "Collapse left sidebar" }).click();
+    await expect(leftSidebar).toHaveClass(/collapsed/);
+    await expect(page.getByRole("button", { name: "Expand left sidebar" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Collapse right panel" }).click();
+    await expect(rightPanel).toHaveClass(/collapsed/);
+    await expect(page.locator(".cm-panel-main")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Expand right panel" })).toBeVisible();
+
+    await page.getByRole("tab", { name: "History" }).click();
+    await expect(page.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
+    await page.getByRole("tab", { name: "Log" }).click();
+    await expect(page.getByRole("tab", { name: "Log" })).toHaveAttribute("aria-selected", "true");
+
+    await page.getByRole("button", { name: "Expand right panel" }).click();
+    await expect(rightPanel).not.toHaveClass(/collapsed/);
+    await expect(page.locator(".cm-panel-main")).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Expand left sidebar" }).click();
+    await expect(leftSidebar).not.toHaveClass(/collapsed/);
   });
 });

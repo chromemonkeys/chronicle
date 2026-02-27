@@ -40,6 +40,7 @@ import { Tabs } from "../ui/Tabs";
 import { ThreadComposer } from "../ui/ThreadComposer";
 import { ThreadList } from "../ui/ThreadList";
 import { ChronicleEditor } from "../editor/ChronicleEditor";
+import { SideBySideDiff } from "../editor/SideBySideDiff";
 import { EditorToolbar } from "../editor/EditorToolbar";
 import type { DocumentContent } from "../editor/schema";
 import { docToLegacyContent, legacyContentToDoc } from "../editor/schema";
@@ -47,7 +48,7 @@ import { diffDocs } from "../editor/diff";
 import type { DiffManifest } from "../editor/diff";
 import type { Editor } from "@tiptap/react";
 
-type PanelTab = "discussions" | "history" | "decisions";
+type PanelTab = "discussions" | "approvals" | "history" | "decisions";
 type DiffMode = "split" | "unified";
 type ViewState = "success" | "loading" | "empty" | "error";
 type WorkspaceMode = "proposal" | "review";
@@ -57,10 +58,52 @@ type CompareOption = {
   label: string;
 };
 
-const panelTabs: { id: PanelTab; label: string; ariaLabel: string }[] = [
-  { id: "discussions", label: "Discussion", ariaLabel: "Discussion" },
-  { id: "history", label: "History", ariaLabel: "History" },
-  { id: "decisions", label: "Log", ariaLabel: "Log" },
+const panelTabs: { id: PanelTab; label: string; ariaLabel: string; icon: JSX.Element }[] = [
+  {
+    id: "discussions",
+    label: "Discussion",
+    ariaLabel: "Discussion",
+    icon: (
+      <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
+        <path d="M3 4.5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8.7L5 15.2v-2.7H5a2 2 0 0 1-2-2v-6Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      </svg>
+    )
+  },
+  {
+    id: "approvals",
+    label: "Approvals",
+    ariaLabel: "Required approvals",
+    icon: (
+      <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
+        <path d="M10 2.8 4.8 5v4.3c0 3.3 2 6.4 5.2 7.9 3.2-1.5 5.2-4.6 5.2-7.9V5L10 2.8Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+        <path d="m7.7 9.9 1.6 1.6 3-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    )
+  },
+  {
+    id: "history",
+    label: "History",
+    ariaLabel: "History",
+    icon: (
+      <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
+        <path d="M10 4.2a5.8 5.8 0 1 1-4.1 1.7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M4.7 2.8v3.3H8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M10 6.7v3.4l2.3 1.4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    )
+  },
+  {
+    id: "decisions",
+    label: "Log",
+    ariaLabel: "Log",
+    icon: (
+      <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
+        <path d="M5 3.5h7.5l2.5 2.5v10.5H5V3.5Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+        <path d="M12.5 3.5V6h2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+        <path d="M7.5 9h5M7.5 11.8h5M7.5 14.6h3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    )
+  },
 ];
 
 function extractNodeText(node: DocumentContent["content"][number]): string {
@@ -141,6 +184,8 @@ export function WorkspacePage() {
   const [compareActive, setCompareActive] = useState(false);
   const [compareDoc, setCompareDoc] = useState<DocumentContent | null>(null);
   const [compareManifest, setCompareManifest] = useState<DiffManifest | null>(null);
+  const [compareBeforeDoc, setCompareBeforeDoc] = useState<DocumentContent | null>(null);
+  const [compareAfterDoc, setCompareAfterDoc] = useState<DocumentContent | null>(null);
   const [approveBusyRole, setApproveBusyRole] = useState<MergeGateRole | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "connected" | "offline">("connecting");
@@ -151,10 +196,15 @@ export function WorkspacePage() {
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
   const [reviewDiff, setReviewDiff] = useState<DocumentComparePayload | null>(null);
   const [reviewDiffState, setReviewDiffState] = useState<"idle" | "loading" | "error" | "ready">("idle");
+  const [isNarrowLayout, setIsNarrowLayout] = useState(() => window.matchMedia("(max-width: 980px)").matches);
   const baseDocRef = useRef<DocumentContent | null>(null);
   const [diffManifest, setDiffManifest] = useState<DiffManifest | null>(null);
   const proposalMode = workspaceMode === "proposal";
   const showDebugStateToggles = import.meta.env.DEV;
+  const handleDiffModeChange = useCallback((mode: DiffMode) => {
+    setDiffMode(mode);
+    setDiffVisible(true);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -236,6 +286,16 @@ export function WorkspacePage() {
     };
   }, []);
 
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 980px)");
+    const onChange = (event: MediaQueryListEvent) => {
+      setIsNarrowLayout(event.matches);
+    };
+    setIsNarrowLayout(mediaQuery.matches);
+    mediaQuery.addEventListener("change", onChange);
+    return () => mediaQuery.removeEventListener("change", onChange);
+  }, []);
+
   const nodeLabelMap = useMemo(() => buildNodeLabelMap(docDraft), [docDraft]);
 
   const currentAnchor = useMemo(() => {
@@ -265,8 +325,16 @@ export function WorkspacePage() {
 
   const discussionTabsWithCount = useMemo(() => {
     if (!workspace) return panelTabs;
+    const openThreadCount = workspace.threads.filter((thread) => thread.status !== "RESOLVED").length;
+    const pendingApprovals = workspace.document.proposalId
+      ? Object.values(workspace.approvals).filter((value) => value === "Pending").length
+      : 0;
     return panelTabs.map((tab) =>
-      tab.id === "discussions" ? { ...tab, count: workspace.threads.length } : { ...tab }
+      tab.id === "discussions"
+        ? { ...tab, count: openThreadCount }
+        : tab.id === "approvals"
+          ? { ...tab, count: pendingApprovals > 0 ? pendingApprovals : undefined }
+          : { ...tab, count: undefined }
     );
   }, [workspace]);
 
@@ -298,7 +366,6 @@ export function WorkspacePage() {
     const thread = threadRefs.current[activeThread];
     if (thread) {
       thread.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      thread.focus({ preventScroll: true });
     }
   }, [activeThread, activeTab]);
 
@@ -558,6 +625,8 @@ export function WorkspacePage() {
     return legacyContentToDoc(snapshot, fallbackNodeIds);
   }
 
+
+
   function formatChangedField(item: { field: string; before: string; after: string }) {
     if (item.field === "doc") {
       return "Document body updated.";
@@ -594,7 +663,6 @@ export function WorkspacePage() {
       const thread = workspace?.threads.find((t) => t.anchorNodeId === nodeId);
       if (thread) {
         setActiveThread(thread.id);
-        setActiveTab("discussions");
       }
     }
   }, [workspace?.threads]);
@@ -933,8 +1001,72 @@ export function WorkspacePage() {
     setCompareActive(false);
     setCompareDoc(null);
     setCompareManifest(null);
+    setCompareBeforeDoc(null);
+    setCompareAfterDoc(null);
     setCompareSummary(null);
     setDiffVisible(false);
+  }
+
+  // View a specific commit version in the compare view (shows single version)
+  async function viewCommitInCompare(hash: string, branchLabel: string) {
+    if (!workspace) return;
+
+    try {
+      // Find the commit content by fetching comparison with itself
+      // or by finding in history
+      let commitContent: CompareContentSnapshot | null = null;
+
+      // Search in history data
+      const allCommits = [
+        ...(historyData?.commits ?? []),
+        ...(mainHistoryData?.commits ?? []),
+        ...workspace.history
+      ];
+
+      // Try to find commit content from our loaded history
+      for (const commit of allCommits) {
+        if (commit.hash === hash) {
+          // We need to fetch the actual content - use compare API with same hash
+          const comparison = await fetchDocumentCompare(
+            workspace.document.id,
+            hash,
+            hash,
+            workspace.document.proposalId
+          );
+          commitContent = comparison.toContent;
+          break;
+        }
+      }
+
+      if (!commitContent) {
+        // Fallback: try to fetch via compare API
+        const comparison = await fetchDocumentCompare(
+          workspace.document.id,
+          hash,
+          hash,
+          workspace.document.proposalId
+        );
+        commitContent = comparison.toContent ?? null;
+      }
+
+      const doc = snapshotToDoc(commitContent, workspace.nodeIds);
+      if (!doc) {
+        setCompareSummary(`Could not load document content for ${hash.slice(0, 7)}`);
+        return;
+      }
+
+      // Show single version in side-by-side
+      setCompareBeforeDoc(doc);
+      setCompareAfterDoc(doc);
+      setCompareDoc(doc);
+      setCompareManifest(null);
+      setCompareActive(true);
+      setWorkspaceMode("review");
+      setActiveTab("history");
+      setCompareSummary(`Viewing ${branchLabel} · ${hash.slice(0, 7)} · Click "Close Compare" to return to editing`);
+    } catch {
+      setCompareSummary(`Failed to load version ${hash.slice(0, 7)}`);
+    }
   }
 
   async function compareCommits(fromHash: string, toHash: string, statusLabel = "Comparing selected commits...") {
@@ -967,11 +1099,15 @@ export function WorkspacePage() {
       const afterDoc = snapshotToDoc(comparison.toContent, workspace.nodeIds);
       if (beforeDoc && afterDoc) {
         setCompareDoc(afterDoc);
+        setCompareBeforeDoc(beforeDoc);
+        setCompareAfterDoc(afterDoc);
         setCompareManifest(diffDocs(beforeDoc, afterDoc));
         setCompareActive(true);
       } else {
         setCompareActive(false);
         setCompareDoc(null);
+        setCompareBeforeDoc(null);
+        setCompareAfterDoc(null);
         setCompareManifest(null);
         setCompareSummary("Compare loaded, but snapshot content is unavailable from the API response.");
         return;
@@ -1180,26 +1316,6 @@ export function WorkspacePage() {
             <div className="cm-branch-dot" />
             {workspace.document.branch.split(" -> ")[0]}
           </div>
-          <div className="cm-shell-toggle-group" role="group" aria-label="Workspace panels">
-            <button
-              className="cm-shell-toggle-btn"
-              type="button"
-              onClick={() => setLeftSidebarCollapsed((current) => !current)}
-              aria-label={leftSidebarCollapsed ? "Expand left sidebar" : "Collapse left sidebar"}
-              title={leftSidebarCollapsed ? "Expand left sidebar" : "Collapse left sidebar"}
-            >
-              {leftSidebarCollapsed ? "⟫" : "⟪"}
-            </button>
-            <button
-              className="cm-shell-toggle-btn"
-              type="button"
-              onClick={() => setRightPanelCollapsed((current) => !current)}
-              aria-label={rightPanelCollapsed ? "Expand right panel" : "Collapse right panel"}
-              title={rightPanelCollapsed ? "Expand right panel" : "Collapse right panel"}
-            >
-              {rightPanelCollapsed ? "⟪" : "⟫"}
-            </button>
-          </div>
         </div>
 
         <div className="cm-topnav-actions">
@@ -1261,6 +1377,17 @@ export function WorkspacePage() {
 
       <div className="cm-app-body">
         <aside className={`cm-sidebar ${leftSidebarCollapsed ? "collapsed" : ""}`.trim()}>
+          <button
+            className="cm-pane-toggle cm-pane-toggle-left"
+            type="button"
+            onClick={() => setLeftSidebarCollapsed((current) => !current)}
+            aria-label={leftSidebarCollapsed ? "Expand left sidebar" : "Collapse left sidebar"}
+            title={leftSidebarCollapsed ? "Expand left sidebar" : "Collapse left sidebar"}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d={leftSidebarCollapsed ? "M6 3l5 5-5 5" : "M10 3L5 8l5 5"} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
           <div className="cm-sidebar-section">
             <div className="cm-sidebar-label">Workspace</div>
             <button
@@ -1350,7 +1477,7 @@ export function WorkspacePage() {
             diffVisible={diffVisible}
             onToggleDiff={() => setDiffVisible((value) => !value)}
             diffMode={diffMode}
-            onSetDiffMode={setDiffMode}
+            onSetDiffMode={handleDiffModeChange}
           />
           <div className={`cm-merge-gate-banner ${mergeReady ? "ready" : "blocked"}`}>
             <div className="cm-merge-gate-title">
@@ -1425,7 +1552,16 @@ export function WorkspacePage() {
               </div>
 
               <div className="cm-doc-body">
-                {(compareDoc ?? docDraft) && (
+                {compareActive && compareBeforeDoc && compareAfterDoc ? (
+                  <SideBySideDiff
+                    beforeDoc={compareBeforeDoc}
+                    afterDoc={compareAfterDoc}
+                    beforeLabel={compareFromHash ? `From ${compareFromHash.slice(0, 7)}` : "Before"}
+                    afterLabel={compareToHash ? `To ${compareToHash.slice(0, 7)}` : "After"}
+                    beforeHash={compareFromHash}
+                    afterHash={compareToHash}
+                  />
+                ) : (compareDoc ?? docDraft) ? (
                   <ChronicleEditor
                     content={compareDoc ?? docDraft!}
                     editable={proposalMode && !compareActive}
@@ -1438,19 +1574,30 @@ export function WorkspacePage() {
                     threadAnchors={threadAnchors}
                     className="cm-editor-wrapper"
                   />
-                )}
+                ) : null}
               </div>
             </div>
           </div>
         </main>
 
         <aside className={`cm-discussion-panel ${rightPanelCollapsed ? "collapsed" : ""}`.trim()}>
+          <button
+            className="cm-pane-toggle cm-pane-toggle-right"
+            type="button"
+            onClick={() => setRightPanelCollapsed((current) => !current)}
+            aria-label={rightPanelCollapsed ? "Expand right panel" : "Collapse right panel"}
+            title={rightPanelCollapsed ? "Expand right panel" : "Collapse right panel"}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d={rightPanelCollapsed ? "M10 3L5 8l5 5" : "M6 3l5 5-5 5"} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
           <Tabs
             tabs={discussionTabsWithCount}
             active={activeTab}
             onTabChange={setActiveTab}
             className="cm-panel-tabs-rail"
-            orientation="vertical"
+            orientation={isNarrowLayout ? "horizontal" : "vertical"}
           />
           {!rightPanelCollapsed && <div className="cm-panel-main">
           {actionError ? (
@@ -1572,14 +1719,38 @@ export function WorkspacePage() {
               )}
 
               {discussionState === "success" && hasActiveProposal && (
-                <>
-                  <ThreadComposer
-                    anchorLabel={currentAnchor}
-                    anchorNodeId={composerAnchorNodeId ?? activeNodeId ?? undefined}
-                    onSubmit={(text, nodeId, options) => { void submitComment(text, nodeId, options); }}
-                  />
+                <ThreadComposer
+                  anchorLabel={currentAnchor}
+                  anchorNodeId={composerAnchorNodeId ?? activeNodeId ?? undefined}
+                  onSubmit={(text, nodeId, options) => { void submitComment(text, nodeId, options); }}
+                />
+              )}
+            </div>
+          )}
 
-                  <div className="cm-approval-panel">
+          {activeTab === "approvals" && (
+            <div className="cm-panel-content active">
+              {!hasActiveProposal && (
+                <div className="cm-panel-scroll">
+                  <div className="cm-panel-fallback-card">
+                    <h3>No active proposal approvals</h3>
+                    <p>Start a proposal to open the required approval chain and merge gate.</p>
+                    <button
+                      className="cm-compose-send"
+                      type="button"
+                      onClick={() => {
+                        void startProposal();
+                      }}
+                    >
+                      Start Proposal
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {hasActiveProposal && (
+                <div className="cm-panel-scroll cm-panel-scroll-approval">
+                  <div className="cm-approval-panel cm-approval-panel-tab">
                     <div className="cm-approval-header">
                       Required Approvals
                       <span className="cm-approval-progress">{3 - pendingApprovals} / 3</span>
@@ -1658,7 +1829,7 @@ export function WorkspacePage() {
                       />
                     )}
                   </div>
-                </>
+                </div>
               )}
             </div>
           )}
@@ -1719,12 +1890,35 @@ export function WorkspacePage() {
                 <div className="cm-approval-fallback">
                   <strong>{historyData?.branch ?? "active"} commits</strong>
                   {(historyData?.commits ?? workspace.history).map((item) => (
-                    <div className="cm-commit-row" key={`${historyData?.branch ?? "active"}-${item.hash}`}>
+                    <div
+                      className={`cm-commit-row ${compareFromHash === item.hash || compareToHash === item.hash ? "active" : ""}`}
+                      key={`${historyData?.branch ?? "active"}-${item.hash}`}
+                      onClick={() => {
+                        // Quick select for comparison
+                        if (!compareFromHash) {
+                          setCompareFromHash(item.hash);
+                        } else if (!compareToHash && compareFromHash !== item.hash) {
+                          setCompareToHash(item.hash);
+                        }
+                      }}
+                      title="Click to select for comparison, or use View to see this version"
+                    >
                       <div className="cm-commit-hash">{item.hash}</div>
-                      <div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="cm-commit-msg">{item.message}</div>
                         <div className="cm-commit-meta">{item.meta}</div>
                       </div>
+                      <button
+                        className="cm-thread-action-btn"
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void viewCommitInCompare(item.hash, historyData?.branch ?? "active");
+                        }}
+                        title="View this version"
+                      >
+                        View
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -1732,12 +1926,34 @@ export function WorkspacePage() {
                   <div className="cm-approval-fallback">
                     <strong>{mainHistoryData.branch} commits</strong>
                     {mainHistoryData.commits.map((item) => (
-                      <div className="cm-commit-row" key={`${mainHistoryData.branch}-${item.hash}`}>
+                      <div
+                        className={`cm-commit-row ${compareFromHash === item.hash || compareToHash === item.hash ? "active" : ""}`}
+                        key={`${mainHistoryData.branch}-${item.hash}`}
+                        onClick={() => {
+                          if (!compareFromHash) {
+                            setCompareFromHash(item.hash);
+                          } else if (!compareToHash && compareFromHash !== item.hash) {
+                            setCompareToHash(item.hash);
+                          }
+                        }}
+                        title="Click to select for comparison, or use View to see this version"
+                      >
                         <div className="cm-commit-hash">{item.hash}</div>
-                        <div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
                           <div className="cm-commit-msg">{item.message}</div>
                           <div className="cm-commit-meta">{item.meta}</div>
                         </div>
+                        <button
+                          className="cm-thread-action-btn"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void viewCommitInCompare(item.hash, "main");
+                          }}
+                          title="View this version"
+                        >
+                          View
+                        </button>
                       </div>
                     ))}
                   </div>

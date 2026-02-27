@@ -1,7 +1,11 @@
+import type { KeyboardEvent, ReactNode } from "react";
+
 type TabDef<T extends string> = {
   id: T;
   label: string;
+  ariaLabel?: string;
   count?: number;
+  icon?: ReactNode;
 };
 
 type Props<T extends string> = {
@@ -59,16 +63,18 @@ export function Tabs<T extends string>({
           onClick={() => onTabChange(tab.id)}
           type="button"
           role="tab"
+          aria-label={tab.ariaLabel ?? tab.label}
+          title={tab.ariaLabel ?? tab.label}
           aria-selected={active === tab.id}
           tabIndex={active === tab.id ? 0 : -1}
           data-tab-id={String(tab.id)}
           onKeyDown={(event) => onKeyDown(event, index)}
         >
-          {tab.label}
-          {tab.count != null && <span className="cm-panel-tab-count">{tab.count}</span>}
+          {tab.icon ? <span className="cm-panel-tab-icon" aria-hidden="true">{tab.icon}</span> : null}
+          <span className="cm-panel-tab-label">{tab.label}</span>
+          {(tab.count ?? 0) > 0 && <span className="cm-panel-tab-count">{tab.count}</span>}
         </button>
       ))}
     </div>
   );
 }
-import type { KeyboardEvent } from "react";

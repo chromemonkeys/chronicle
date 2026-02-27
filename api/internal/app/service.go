@@ -800,7 +800,7 @@ func (s *Service) ResolveThread(ctx context.Context, documentID, proposalID, thr
 	if err != nil {
 		return nil, err
 	}
-	_ = s.store.InsertDecisionLog(ctx, store.DecisionLogEntry{
+	if err := s.store.InsertDecisionLog(ctx, store.DecisionLogEntry{
 		DocumentID: documentID,
 		ProposalID: proposalID,
 		ThreadID:   threadID,
@@ -809,7 +809,9 @@ func (s *Service) ResolveThread(ctx context.Context, documentID, proposalID, thr
 		DecidedBy:  userName,
 		CommitHash: headCommit.Hash,
 		Participants: participants,
-	})
+	}); err != nil {
+		return nil, err
+	}
 	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
 }
 
@@ -968,7 +970,7 @@ func (s *Service) SaveNamedVersion(ctx context.Context, documentID, proposalID, 
 	if label == "" {
 		return nil, domainError(http.StatusUnprocessableEntity, "VALIDATION_ERROR", "name is required", nil)
 	}
-	tagName := "nv-" + strings.ReplaceAll(strings.ToLower(label), " ", "-") + "-" + commit.Hash
+	tagName := buildNamedVersionTagName(label, commit.Hash)
 	if err := s.git.CreateTag(documentID, commit.Hash, tagName); err != nil {
 		return nil, err
 	}
@@ -976,6 +978,49 @@ func (s *Service) SaveNamedVersion(ctx context.Context, documentID, proposalID, 
 		return nil, err
 	}
 	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+}
+
+func buildNamedVersionTagName(label, commitHash string) string {
+	const maxLabelLen = 48
+	slug := make([]rune, 0, len(label))
+	lastDash := false
+	for _, raw := range strings.ToLower(strings.TrimSpace(label)) {
+		ch := raw
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
+			slug = append(slug, ch)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			slug = append(slug, '-')
+			lastDash = true
+		}
+	}
+	slugText := strings.Trim(string(slug), "-")
+	if slugText == "" {
+		slugText = "version"
+	}
+	if len(slugText) > maxLabelLen {
+		slugText = strings.TrimRight(slugText[:maxLabelLen], "-")
+	}
+	if slugText == "" {
+		slugText = "version"
+	}
+
+	hashPart := make([]rune, 0, len(commitHash))
+	for _, ch := range strings.ToLower(commitHash) {
+		if (ch >= 'a' && ch <= 'f') || (ch >= '0' && ch <= '9') {
+			hashPart = append(hashPart, ch)
+		}
+	}
+	hashText := string(hashPart)
+	if hashText == "" {
+		hashText = "head"
+	}
+	if len(hashText) > 12 {
+		hashText = hashText[:12]
+	}
+	return "nv-" + slugText + "-" + hashText
 }
 
 func (s *Service) MergeProposal(ctx context.Context, documentID, proposalID, userName string, viewerIsExternal bool) (map[string]any, int, int, error) {
@@ -1016,7 +1061,7 @@ func (s *Service) MergeProposal(ctx context.Context, documentID, proposalID, use
 		return nil, 0, 0, err
 	}
 
-	_ = s.store.InsertDecisionLog(ctx, store.DecisionLogEntry{
+	if err := s.store.InsertDecisionLog(ctx, store.DecisionLogEntry{
 		DocumentID: documentID,
 		ProposalID: proposalID,
 		ThreadID:   "merge",
@@ -1024,7 +1069,9 @@ func (s *Service) MergeProposal(ctx context.Context, documentID, proposalID, use
 		Rationale:  "Proposal merged after merge gate passed.",
 		DecidedBy:  userName,
 		CommitHash: mergeCommit.Hash,
-	})
+	}); err != nil {
+		return nil, 0, 0, err
+	}
 
 	workspace, err := s.GetWorkspace(ctx, documentID, viewerIsExternal)
 	if err != nil {

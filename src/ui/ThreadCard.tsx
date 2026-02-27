@@ -43,6 +43,13 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
     const hasReactions = (thread.reactions?.length ?? 0) > 0;
     return hasReplies || hasReactions;
   });
+  
+  // Auto-expand when new replies are added
+  useEffect(() => {
+    if (thread.replies.length > 0) {
+      setIsExpanded(true);
+    }
+  }, [thread.replies.length]);
   const reactionItems = thread.reactions ?? [];
   const visibilityLabel = thread.visibility === "EXTERNAL" ? "External" : "Internal";
   const hasSecondaryContent = reactionItems.length > 0 || thread.replies.length > 0;
@@ -90,7 +97,7 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
               {visibilityLabel}
             </button>
           </div>
-          <div className="cm-thread-anchor">¶ {thread.anchor}</div>
+          <div className="cm-thread-anchor" title={thread.anchor}>¶ {thread.anchor}</div>
           {thread.quote ? <div className="cm-thread-quote">{thread.quote}</div> : null}
           <p className="cm-thread-text">{thread.text}</p>
           {!isExpanded && hasSecondaryContent && (
@@ -131,7 +138,7 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
               setReplyOpen((value) => !value);
             }}
           >
-            ↩ Reply
+            Reply
           </button>
           <button
             className="cm-thread-action-btn resolve"
@@ -142,12 +149,13 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
               setResolveOpen((value) => !value);
             }}
           >
-            ✓ Resolve
+            Resolve
           </button>
           <span className="cm-vote-bar">
             <button
               className={`cm-vote-btn up ${thread.voted ? "voted" : ""}`.trim()}
               type="button"
+              aria-label="Upvote thread"
               onClick={(event) => {
                 event.stopPropagation();
                 onVote?.(thread.id, "up");
@@ -159,6 +167,7 @@ export const ThreadCard = forwardRef<HTMLDivElement, Props>(function ThreadCard(
             <button
               className="cm-vote-btn down"
               type="button"
+              aria-label="Downvote thread"
               onClick={(event) => {
                 event.stopPropagation();
                 onVote?.(thread.id, "down");

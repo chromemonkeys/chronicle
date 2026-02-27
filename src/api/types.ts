@@ -55,6 +55,8 @@ export type ApprovalStage = {
 
 export type ApprovalQueueItem = {
   id: string;
+  documentId: string;
+  proposalId: string;
   title: string;
   requestedBy: string;
   status: ApprovalQueueStatus;
@@ -101,6 +103,12 @@ export type WorkspaceThreadReaction = {
   count: number;
 };
 
+export type ThreadAnchorOffsets = {
+  start?: number;
+  end?: number;
+  quote?: string;
+};
+
 export type WorkspaceThread = {
   id: string;
   initials: string;
@@ -108,6 +116,7 @@ export type WorkspaceThread = {
   time: string;
   anchor: string;
   anchorNodeId?: string;
+  anchorOffsets?: ThreadAnchorOffsets;
   text: string;
   quote?: string;
   votes: number;
@@ -126,6 +135,7 @@ export type WorkspaceHistoryItem = {
   hash: string;
   message: string;
   meta: string;
+  branch?: string;
 };
 
 export type WorkspaceDecisionItem = {

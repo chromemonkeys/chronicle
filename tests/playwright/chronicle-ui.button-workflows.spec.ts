@@ -26,15 +26,17 @@ test.describe("Chronicle button and workflow coverage", () => {
 
     await page.goto("/sign-in");
     await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Magic link (soon)" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Use magic link" })).toBeVisible();
     await snap(page, testInfo, "01-sign-in");
 
+    await page.getByLabel("Display name").fill("Avery");
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByRole("heading", { name: "All Documents" })).toBeVisible();
     await snap(page, testInfo, "02-documents");
 
-    page.once("dialog", (dialog) => dialog.accept("Playwright Space"));
-    await page.getByRole("button", { name: "+ Create Space" }).click();
+    await page.getByRole("button", { name: "Create space" }).click();
+    await page.getByLabel("Space name").fill("Playwright Space");
+    await page.locator(".inline-form").getByRole("button", { name: "Create space" }).click();
     await snap(page, testInfo, "03-space-created");
 
     await page.getByRole("link", { name: "Approvals" }).click();
@@ -102,7 +104,7 @@ test.describe("Chronicle button and workflow coverage", () => {
     await expect(page.getByRole("button", { name: "Edit Mode" })).toHaveCount(0);
     await snap(page, testInfo, "11-toolbar-buttons");
 
-    await page.getByRole("button", { name: /Save$/ }).click();
+    await page.getByRole("button", { name: "Save Draft" }).click();
     await expect(page.getByText("Saved.")).toBeVisible();
 
     await page.getByRole("button", { name: "Open Reviews" }).click();
@@ -125,10 +127,10 @@ test.describe("Chronicle button and workflow coverage", () => {
 
     const threadCard = page.locator(".cm-thread-card").first();
     await threadCard.getByRole("button", { name: "Internal" }).click();
-    await threadCard.getByRole("button", { name: "↩ Reply" }).click();
+    await threadCard.getByRole("button", { name: "Reply" }).click();
     await threadCard.getByPlaceholder("Reply in thread...").fill("Playwright inline reply");
     await threadCard.getByRole("button", { name: "Send Reply" }).click();
-    await threadCard.getByRole("button", { name: "▲" }).click();
+    await threadCard.getByRole("button", { name: "Upvote thread" }).click();
     await threadCard.getByRole("button", { name: "👍" }).click();
     await snap(page, testInfo, "21-thread-actions");
 
@@ -136,12 +138,12 @@ test.describe("Chronicle button and workflow coverage", () => {
     await page.locator(".cm-approver-row", { hasText: "Architecture Committee" }).getByRole("button", { name: "Approve" }).click();
     await page.locator(".cm-approver-row", { hasText: "Legal" }).getByRole("button", { name: "Approve" }).click();
 
-    await threadCard.getByRole("button", { name: "✓ Resolve" }).click();
+    await threadCard.getByRole("button", { name: "Resolve" }).click();
     await threadCard.getByLabel("Outcome").selectOption("ACCEPTED");
     await threadCard.getByRole("button", { name: "Confirm Resolve" }).click();
     await expect(page.getByText("Merge Gate Ready")).toBeVisible();
 
-    await page.getByRole("button", { name: "✓ Ready to merge" }).click();
+    await page.getByRole("button", { name: "Ready to merge" }).click();
     await expect(page.locator(".cm-doc-status")).toContainText("Approved");
     await snap(page, testInfo, "22-merged");
   });

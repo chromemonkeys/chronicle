@@ -42,21 +42,13 @@ export const ThreadMarkers = Extension.create({
 
               const classes = ["has-thread"];
               if (anchor.selected) classes.push("selected");
+              classes.push("thread-anchor");
 
               decorations.push(
                 Decoration.node(pos, pos + node.nodeSize, {
                   class: classes.join(" "),
+                  "data-thread-count": String(anchor.threadCount),
                 })
-              );
-
-              // Thread count badge widget
-              decorations.push(
-                Decoration.widget(pos + node.nodeSize, () => {
-                  const badge = document.createElement("span");
-                  badge.className = "cm-thread-indicator";
-                  badge.textContent = String(anchor.threadCount);
-                  return badge;
-                }, { side: 1 })
               );
             });
 

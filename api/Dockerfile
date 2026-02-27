@@ -18,7 +18,14 @@ COPY --from=builder /out/repos /data/repos
 COPY db /app/db
 
 RUN addgroup -S app && adduser -S -G app -u 65532 app \
-    && apk add --no-cache ca-certificates wget \
+    && i=0; until [ "$i" -ge 5 ]; do \
+         apk update && apk add --no-cache ca-certificates wget && break; \
+         i=$((i + 1)); \
+         echo "apk install failed (attempt $i/5), retrying..."; \
+         sleep $((i * 2)); \
+       done \
+    && [ "$i" -lt 5 ] \
+    && update-ca-certificates \
     && chown -R app:app /app /data
 
 USER app

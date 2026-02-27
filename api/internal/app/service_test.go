@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,47 +14,66 @@ import (
 )
 
 type fakeStore struct {
-	getProposalFn       func(context.Context, string) (store.Proposal, error)
-	listApprovalsFn     func(context.Context, string) ([]store.Approval, error)
-	approveRoleFn       func(context.Context, string, string, string) error
-	updateProposalFn    func(context.Context, string, string) error
-	resolveThreadFn     func(context.Context, string, string, string, string, string) (bool, error)
-	reopenThreadFn      func(context.Context, string, string) (bool, error)
-	updateThreadVisibilityFn func(context.Context, string, string, string) (bool, error)
-	getThreadFn         func(context.Context, string, string) (store.Thread, error)
-	listNamedVersionsFn func(context.Context, string) ([]store.NamedVersion, error)
-	listThreadsFn       func(context.Context, string, bool) ([]store.Thread, error)
-	listAnnotationsFn   func(context.Context, string, bool) ([]store.Annotation, error)
-	listThreadAnnotationsFn func(context.Context, string, string) ([]store.Annotation, error)
-	listThreadVoteTotalsFn func(context.Context, string, bool) (map[string]int, error)
+	ensureUserByNameFn         func(context.Context, string) (store.User, error)
+	getUserByIDFn              func(context.Context, string) (store.User, error)
+	getProposalFn              func(context.Context, string) (store.Proposal, error)
+	createProposalFn           func(context.Context, store.Proposal) error
+	listApprovalsFn            func(context.Context, string) ([]store.Approval, error)
+	approveRoleFn              func(context.Context, string, string, string) error
+	updateProposalFn           func(context.Context, string, string) error
+	updateDocumentStateFn      func(context.Context, string, string, string, string, string) error
+	resolveThreadFn            func(context.Context, string, string, string, string, string) (bool, error)
+	reopenThreadFn             func(context.Context, string, string) (bool, error)
+	updateThreadVisibilityFn   func(context.Context, string, string, string) (bool, error)
+	getThreadFn                func(context.Context, string, string) (store.Thread, error)
+	listNamedVersionsFn        func(context.Context, string) ([]store.NamedVersion, error)
+	listThreadsFn              func(context.Context, string, bool) ([]store.Thread, error)
+	listAnnotationsFn          func(context.Context, string, bool) ([]store.Annotation, error)
+	listThreadAnnotationsFn    func(context.Context, string, string) ([]store.Annotation, error)
+	listThreadVoteTotalsFn     func(context.Context, string, bool) (map[string]int, error)
 	listThreadReactionCountsFn func(context.Context, string, bool) ([]store.ThreadReactionCount, error)
-	getDocumentFn       func(context.Context, string) (store.Document, error)
-	getActiveProposalFn func(context.Context, string) (*store.Proposal, error)
-	listApprovalsAllFn  func(context.Context, string) ([]store.Approval, error)
-	summaryCountsFn     func(context.Context) (int, int, int, error)
-	listDecisionLogFilteredFn func(context.Context, string, string, string, string, string, int) ([]store.DecisionLogEntry, error)
-	insertDocumentFn    func(context.Context, store.Document) error
+	getDocumentFn              func(context.Context, string) (store.Document, error)
+	getActiveProposalFn        func(context.Context, string) (*store.Proposal, error)
+	listApprovalsAllFn         func(context.Context, string) ([]store.Approval, error)
+	summaryCountsFn            func(context.Context) (int, int, int, error)
+	listDecisionLogFilteredFn  func(context.Context, string, string, string, string, string, int) ([]store.DecisionLogEntry, error)
+	insertDocumentFn           func(context.Context, store.Document) error
+	insertDecisionLogFn        func(context.Context, store.DecisionLogEntry) error
+	insertNamedVersionFn       func(context.Context, string, string, string, string) error
 }
 
 func (f *fakeStore) ListDocuments(context.Context) ([]store.Document, error) { return nil, nil }
-func (f *fakeStore) EnsureUserByName(context.Context, string) (store.User, error) {
+func (f *fakeStore) EnsureUserByName(ctx context.Context, userName string) (store.User, error) {
+	if f.ensureUserByNameFn != nil {
+		return f.ensureUserByNameFn(ctx, userName)
+	}
 	return store.User{}, nil
 }
-func (f *fakeStore) CreateProposal(context.Context, store.Proposal) error { return nil }
+func (f *fakeStore) CreateProposal(ctx context.Context, proposal store.Proposal) error {
+	if f.createProposalFn != nil {
+		return f.createProposalFn(ctx, proposal)
+	}
+	return nil
+}
 func (f *fakeStore) InsertDocument(ctx context.Context, item store.Document) error {
 	if f.insertDocumentFn != nil {
 		return f.insertDocumentFn(ctx, item)
 	}
 	return nil
 }
-func (f *fakeStore) InsertThread(context.Context, store.Thread) error     { return nil }
+func (f *fakeStore) InsertThread(context.Context, store.Thread) error { return nil }
 func (f *fakeStore) ApproveRole(ctx context.Context, proposalID, role, approvedBy string) error {
 	if f.approveRoleFn != nil {
 		return f.approveRoleFn(ctx, proposalID, role, approvedBy)
 	}
 	return nil
 }
-func (f *fakeStore) InsertDecisionLog(context.Context, store.DecisionLogEntry) error { return nil }
+func (f *fakeStore) InsertDecisionLog(ctx context.Context, entry store.DecisionLogEntry) error {
+	if f.insertDecisionLogFn != nil {
+		return f.insertDecisionLogFn(ctx, entry)
+	}
+	return nil
+}
 func (f *fakeStore) SaveRefreshSession(context.Context, string, string, time.Time) error {
 	return nil
 }
@@ -65,7 +85,10 @@ func (f *fakeStore) RevokeAccessToken(context.Context, string, time.Time) error 
 	return nil
 }
 func (f *fakeStore) IsAccessTokenRevoked(context.Context, string) (bool, error) { return false, nil }
-func (f *fakeStore) GetUserByID(context.Context, string) (store.User, error) {
+func (f *fakeStore) GetUserByID(ctx context.Context, userID string) (store.User, error) {
+	if f.getUserByIDFn != nil {
+		return f.getUserByIDFn(ctx, userID)
+	}
 	return store.User{}, nil
 }
 func (f *fakeStore) GetActiveProposal(ctx context.Context, documentID string) (*store.Proposal, error) {
@@ -81,7 +104,10 @@ func (f *fakeStore) GetProposal(ctx context.Context, proposalID string) (store.P
 	}
 	return store.Proposal{}, sql.ErrNoRows
 }
-func (f *fakeStore) UpdateDocumentState(context.Context, string, string, string, string, string) error {
+func (f *fakeStore) UpdateDocumentState(ctx context.Context, documentID, title, subtitle, status, updatedBy string) error {
+	if f.updateDocumentStateFn != nil {
+		return f.updateDocumentStateFn(ctx, documentID, title, subtitle, status, updatedBy)
+	}
 	return nil
 }
 func (f *fakeStore) UpdateProposalStatus(ctx context.Context, proposalID, status string) error {
@@ -187,17 +213,40 @@ func (f *fakeStore) SummaryCounts(ctx context.Context) (int, int, int, error) {
 	}
 	return 0, 0, 0, nil
 }
-func (f *fakeStore) InsertNamedVersion(context.Context, string, string, string, string) error {
+func (f *fakeStore) InsertNamedVersion(ctx context.Context, proposalID, name, hash, createdBy string) error {
+	if f.insertNamedVersionFn != nil {
+		return f.insertNamedVersionFn(ctx, proposalID, name, hash, createdBy)
+	}
 	return nil
 }
 func (f *fakeStore) ProposalQueue(context.Context) ([]map[string]any, error) { return nil, nil }
-func (f *fakeStore) Ping(context.Context) error { return nil }
+func (f *fakeStore) ListSpaces(context.Context, string) ([]store.Space, error) {
+	return nil, nil
+}
+func (f *fakeStore) GetDefaultWorkspace(context.Context) (store.Workspace, error) {
+	return store.Workspace{ID: "ws_default", Name: "Acme Corp", Slug: "acme-corp"}, nil
+}
+func (f *fakeStore) GetSpace(_ context.Context, spaceID string) (store.Space, error) {
+	return store.Space{ID: spaceID, WorkspaceID: "ws_default", Name: "General", Slug: "general", Description: ""}, nil
+}
+func (f *fakeStore) CreateSpace(context.Context, store.Space) error            { return nil }
+func (f *fakeStore) InsertSpace(context.Context, store.Space) error            { return nil }
+func (f *fakeStore) UpdateSpace(context.Context, string, string, string) error { return nil }
+func (f *fakeStore) DeleteSpace(context.Context, string) error                 { return nil }
+func (f *fakeStore) ListDocumentsBySpace(context.Context, string) ([]store.Document, error) {
+	return nil, nil
+}
+func (f *fakeStore) MoveDocument(context.Context, string, string) error      { return nil }
+func (f *fakeStore) SpaceDocumentCount(context.Context, string) (int, error) { return 0, nil }
+func (f *fakeStore) Ping(context.Context) error                              { return nil }
 
 type fakeGit struct {
-	historyFn        func(string, string, int) ([]store.CommitInfo, error)
-	getHeadContentFn func(string, string) (gitrepo.Content, store.CommitInfo, error)
-	commitContentFn  func(string, string, gitrepo.Content, string, string) (store.CommitInfo, error)
+	historyFn            func(string, string, int) ([]store.CommitInfo, error)
+	getHeadContentFn     func(string, string) (gitrepo.Content, store.CommitInfo, error)
+	commitContentFn      func(string, string, gitrepo.Content, string, string) (store.CommitInfo, error)
 	ensureDocumentRepoFn func(string, gitrepo.Content, string) error
+	ensureBranchFn       func(string, string, string) error
+	createTagFn          func(string, string, string) error
 }
 
 func (f *fakeGit) EnsureDocumentRepo(documentID string, content gitrepo.Content, actor string) error {
@@ -206,7 +255,12 @@ func (f *fakeGit) EnsureDocumentRepo(documentID string, content gitrepo.Content,
 	}
 	return nil
 }
-func (f *fakeGit) EnsureBranch(string, string, string) error                { return nil }
+func (f *fakeGit) EnsureBranch(documentID, branchName, fromBranch string) error {
+	if f.ensureBranchFn != nil {
+		return f.ensureBranchFn(documentID, branchName, fromBranch)
+	}
+	return nil
+}
 func (f *fakeGit) CommitContent(documentID, branchName string, content gitrepo.Content, author, message string) (store.CommitInfo, error) {
 	if f.commitContentFn != nil {
 		return f.commitContentFn(documentID, branchName, content, author, message)
@@ -234,7 +288,12 @@ func (f *fakeGit) History(documentID, branchName string, limit int) ([]store.Com
 func (f *fakeGit) GetContentByHash(string, string) (gitrepo.Content, error) {
 	return gitrepo.Content{}, nil
 }
-func (f *fakeGit) CreateTag(string, string, string) error { return nil }
+func (f *fakeGit) CreateTag(documentID, hash, name string) error {
+	if f.createTagFn != nil {
+		return f.createTagFn(documentID, hash, name)
+	}
+	return nil
+}
 func (f *fakeGit) MergeIntoMain(string, string, string, string) (store.CommitInfo, error) {
 	return store.CommitInfo{Hash: "merge123", Author: "Avery", CreatedAt: time.Now(), Message: "Merge"}, nil
 }
@@ -277,6 +336,109 @@ func TestHistorySupportsMainProposalID(t *testing.T) {
 	}
 	if payload["proposalId"] != nil {
 		t.Fatalf("expected proposalId nil for main branch, got %v", payload["proposalId"])
+	}
+}
+
+func TestSaveNamedVersionCreatesTagAndRecord(t *testing.T) {
+	insertCalls := 0
+	createTagCalls := 0
+	fs := &fakeStore{
+		getProposalFn: func(_ context.Context, proposalID string) (store.Proposal, error) {
+			return store.Proposal{
+				ID:         proposalID,
+				DocumentID: "doc-1",
+				BranchName: "proposal-doc-1",
+			}, nil
+		},
+		getActiveProposalFn: func(_ context.Context, documentID string) (*store.Proposal, error) {
+			return &store.Proposal{
+				ID:         "prop-1",
+				DocumentID: documentID,
+				BranchName: "proposal-doc-1",
+			}, nil
+		},
+		insertNamedVersionFn: func(_ context.Context, proposalID, name, hash, createdBy string) error {
+			insertCalls++
+			if proposalID != "prop-1" {
+				t.Fatalf("expected proposalID prop-1, got %q", proposalID)
+			}
+			if name != "Partner Review Draft" {
+				t.Fatalf("expected label to be preserved, got %q", name)
+			}
+			if hash != "abcDEF1234567890" {
+				t.Fatalf("expected hash abcDEF1234567890, got %q", hash)
+			}
+			if createdBy != "Avery" {
+				t.Fatalf("expected createdBy Avery, got %q", createdBy)
+			}
+			return nil
+		},
+	}
+	fg := &fakeGit{
+		getHeadContentFn: func(_ string, branch string) (gitrepo.Content, store.CommitInfo, error) {
+			if branch != "proposal-doc-1" {
+				t.Fatalf("expected named version source branch proposal-doc-1, got %q", branch)
+			}
+			return gitrepo.Content{}, store.CommitInfo{Hash: "abcDEF1234567890"}, nil
+		},
+		createTagFn: func(documentID, hash, name string) error {
+			createTagCalls++
+			if documentID != "doc-1" {
+				t.Fatalf("expected document doc-1, got %q", documentID)
+			}
+			if hash != "abcDEF1234567890" {
+				t.Fatalf("expected hash abcDEF1234567890, got %q", hash)
+			}
+			expected := "nv-partner-review-draft-abcdef123456"
+			if name != expected {
+				t.Fatalf("expected tag %q, got %q", expected, name)
+			}
+			return nil
+		},
+	}
+	svc := newTestService(fs, fg)
+
+	_, err := svc.SaveNamedVersion(context.Background(), "doc-1", "prop-1", "Partner Review Draft", "Avery", false)
+	if err != nil {
+		t.Fatalf("SaveNamedVersion() error = %v", err)
+	}
+	if createTagCalls != 1 {
+		t.Fatalf("expected one CreateTag call, got %d", createTagCalls)
+	}
+	if insertCalls != 1 {
+		t.Fatalf("expected one InsertNamedVersion call, got %d", insertCalls)
+	}
+}
+
+func TestSaveNamedVersionRejectsBlankName(t *testing.T) {
+	fs := &fakeStore{
+		getProposalFn: func(_ context.Context, proposalID string) (store.Proposal, error) {
+			return store.Proposal{
+				ID:         proposalID,
+				DocumentID: "doc-1",
+				BranchName: "proposal-doc-1",
+			}, nil
+		},
+	}
+	svc := newTestService(fs, &fakeGit{})
+
+	_, err := svc.SaveNamedVersion(context.Background(), "doc-1", "prop-1", "   ", "Avery", false)
+	var domainErr *DomainError
+	if !errors.As(err, &domainErr) {
+		t.Fatalf("expected DomainError, got %v", err)
+	}
+	if domainErr.Code != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %s", domainErr.Code)
+	}
+}
+
+func TestBuildNamedVersionTagNameSanitizesUnsafeCharacters(t *testing.T) {
+	got := buildNamedVersionTagName(" Final / Client: Executed!  ", "A1B2C3D4E5F6G7")
+	if got != "nv-final-client-executed-a1b2c3d4e5f6" {
+		t.Fatalf("unexpected tag: %q", got)
+	}
+	if strings.Contains(got, " ") || strings.Contains(got, "/") || strings.Contains(got, ":") {
+		t.Fatalf("tag must not contain unsafe separators: %q", got)
 	}
 }
 
@@ -339,7 +501,7 @@ func TestCreateDocumentCreatesRepoAndReturnsWorkspace(t *testing.T) {
 	}
 	svc := newTestService(fs, fg)
 
-	payload, err := svc.CreateDocument(context.Background(), "New RFC", "", "Avery", false)
+	payload, err := svc.CreateDocument(context.Background(), "New RFC", "", "sp_default", "Avery", false)
 	if err != nil {
 		t.Fatalf("CreateDocument() error = %v", err)
 	}
@@ -355,6 +517,159 @@ func TestCreateDocumentCreatesRepoAndReturnsWorkspace(t *testing.T) {
 	}
 	if doc["proposalId"] != nil {
 		t.Fatalf("expected proposalId nil for new document, got %v", doc["proposalId"])
+	}
+}
+
+func TestSaveWorkspaceCreatesProposalBranchAndCommits(t *testing.T) {
+	var createdProposal store.Proposal
+	createProposalCalls := 0
+	updateDocumentStateCalls := 0
+	commitCalls := 0
+	ensureBranchCalls := 0
+
+	fs := &fakeStore{
+		getActiveProposalFn: func(_ context.Context, documentID string) (*store.Proposal, error) {
+			if createdProposal.ID == "" {
+				return nil, nil
+			}
+			return &createdProposal, nil
+		},
+		createProposalFn: func(_ context.Context, proposal store.Proposal) error {
+			createProposalCalls += 1
+			createdProposal = proposal
+			return nil
+		},
+		getDocumentFn: func(_ context.Context, documentID string) (store.Document, error) {
+			return store.Document{
+				ID:        documentID,
+				Title:     "Doc",
+				Subtitle:  "Sub",
+				Status:    "Draft",
+				UpdatedBy: "Avery",
+			}, nil
+		},
+		updateProposalFn: func(_ context.Context, proposalID, status string) error {
+			if proposalID != createdProposal.ID {
+				t.Fatalf("expected proposal status update for %q, got %q", createdProposal.ID, proposalID)
+			}
+			if status != "DRAFT" {
+				t.Fatalf("expected DRAFT status, got %q", status)
+			}
+			return nil
+		},
+		listApprovalsAllFn: func(context.Context, string) ([]store.Approval, error) {
+			return nil, nil
+		},
+		updateDocumentStateFn: func(_ context.Context, documentID, title, subtitle, status, updatedBy string) error {
+			updateDocumentStateCalls += 1
+			if documentID != "doc-1" {
+				t.Fatalf("expected document doc-1, got %q", documentID)
+			}
+			if title != "Updated title" {
+				t.Fatalf("expected updated title, got %q", title)
+			}
+			if status != "In review" {
+				t.Fatalf("expected status In review, got %q", status)
+			}
+			if updatedBy != "Avery" {
+				t.Fatalf("expected updatedBy Avery, got %q", updatedBy)
+			}
+			return nil
+		},
+		summaryCountsFn: func(context.Context) (int, int, int, error) {
+			return 1, 1, 0, nil
+		},
+	}
+
+	fg := &fakeGit{
+		ensureBranchFn: func(documentID, branchName, fromBranch string) error {
+			ensureBranchCalls += 1
+			if documentID != "doc-1" {
+				t.Fatalf("expected doc-1 branch creation, got %q", documentID)
+			}
+			if branchName == "" {
+				t.Fatalf("expected non-empty proposal branch name")
+			}
+			if fromBranch != "main" {
+				t.Fatalf("expected branch source main, got %q", fromBranch)
+			}
+			return nil
+		},
+		getHeadContentFn: func(documentID, branchName string) (gitrepo.Content, store.CommitInfo, error) {
+			if branchName != createdProposal.BranchName {
+				t.Fatalf("expected head lookup on %q, got %q", createdProposal.BranchName, branchName)
+			}
+			return gitrepo.Content{
+					Title:    "Doc",
+					Subtitle: "Sub",
+					Purpose:  "Purpose",
+					Tiers:    "Tier baseline",
+					Enforce:  "Enforce baseline",
+				}, store.CommitInfo{
+					Hash:      "head123",
+					Author:    "Avery",
+					Message:   "head",
+					CreatedAt: time.Now(),
+				}, nil
+		},
+		commitContentFn: func(documentID, branchName string, content gitrepo.Content, author, message string) (store.CommitInfo, error) {
+			commitCalls += 1
+			if documentID != "doc-1" {
+				t.Fatalf("expected commit for doc-1, got %q", documentID)
+			}
+			if branchName != createdProposal.BranchName {
+				t.Fatalf("expected commit on %q, got %q", createdProposal.BranchName, branchName)
+			}
+			if content.Title != "Updated title" {
+				t.Fatalf("expected committed title Updated title, got %q", content.Title)
+			}
+			if author != "Avery" {
+				t.Fatalf("expected commit author Avery, got %q", author)
+			}
+			if message != "Update proposal content" {
+				t.Fatalf("expected commit message Update proposal content, got %q", message)
+			}
+			return store.CommitInfo{Hash: "new1234", Author: author, Message: message, CreatedAt: time.Now()}, nil
+		},
+		historyFn: func(_ string, branchName string, _ int) ([]store.CommitInfo, error) {
+			if branchName != createdProposal.BranchName {
+				t.Fatalf("expected workspace history on proposal branch %q, got %q", createdProposal.BranchName, branchName)
+			}
+			return []store.CommitInfo{
+				{Hash: "new1234", Message: "Update proposal content", Author: "Avery", CreatedAt: time.Now()},
+				{Hash: "head123", Message: "head", Author: "Avery", CreatedAt: time.Now().Add(-time.Minute)},
+			}, nil
+		},
+	}
+
+	svc := newTestService(fs, fg)
+	payload, err := svc.SaveWorkspace(context.Background(), "doc-1", WorkspaceContent{
+		Title: "Updated title",
+		Doc:   `{"type":"doc","content":[{"type":"paragraph","attrs":{"nodeId":"p1"},"content":[{"type":"text","text":"Updated title"}]}]}`,
+	}, "Avery", false)
+	if err != nil {
+		t.Fatalf("SaveWorkspace() error = %v", err)
+	}
+
+	if createProposalCalls != 1 {
+		t.Fatalf("expected one proposal creation, got %d", createProposalCalls)
+	}
+	if ensureBranchCalls != 1 {
+		t.Fatalf("expected one EnsureBranch call, got %d", ensureBranchCalls)
+	}
+	if commitCalls != 1 {
+		t.Fatalf("expected one commit call, got %d", commitCalls)
+	}
+	if updateDocumentStateCalls == 0 {
+		t.Fatalf("expected document state update after save")
+	}
+
+	doc, ok := payload["document"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected document payload map")
+	}
+	if doc["proposalId"] == nil || doc["proposalId"] == "" {
+		t.Fatalf("expected workspace payload to include active proposalId")
 	}
 }
 
@@ -439,6 +754,61 @@ func TestResolveThreadRequiresRationaleForRejected(t *testing.T) {
 	}
 	if domainErr.Code != "VALIDATION_ERROR" {
 		t.Fatalf("expected VALIDATION_ERROR, got %s", domainErr.Code)
+	}
+}
+
+func TestResolveThreadFailsWhenDecisionLogInsertFails(t *testing.T) {
+	fs := &fakeStore{
+		getProposalFn: func(_ context.Context, _ string) (store.Proposal, error) {
+			return store.Proposal{ID: "prop-1", DocumentID: "doc-1", BranchName: "proposal-doc-1"}, nil
+		},
+		resolveThreadFn: func(_ context.Context, _, _, _, _, _ string) (bool, error) {
+			return true, nil
+		},
+		getThreadFn: func(_ context.Context, _, _ string) (store.Thread, error) {
+			return store.Thread{ID: "thr-1", ProposalID: "prop-1", Author: "Sam", Visibility: "INTERNAL"}, nil
+		},
+		listThreadAnnotationsFn: func(_ context.Context, _, _ string) ([]store.Annotation, error) {
+			return []store.Annotation{{Author: "Alex"}}, nil
+		},
+		insertDecisionLogFn: func(context.Context, store.DecisionLogEntry) error {
+			return errors.New("immutable violation")
+		},
+	}
+	fg := &fakeGit{
+		getHeadContentFn: func(_, _ string) (gitrepo.Content, store.CommitInfo, error) {
+			return gitrepo.Content{}, store.CommitInfo{Hash: "head123"}, nil
+		},
+	}
+	svc := newTestService(fs, fg)
+
+	_, err := svc.ResolveThread(context.Background(), "doc-1", "prop-1", "thread-1", "Avery", false, ResolveThreadInput{
+		Outcome: "ACCEPTED",
+	})
+	if err == nil || err.Error() != "immutable violation" {
+		t.Fatalf("expected decision-log error, got %v", err)
+	}
+}
+
+func TestMergeProposalFailsWhenDecisionLogInsertFails(t *testing.T) {
+	fs := &fakeStore{
+		getProposalFn: func(_ context.Context, _ string) (store.Proposal, error) {
+			return store.Proposal{ID: "prop-1", DocumentID: "doc-1", BranchName: "proposal-doc-1"}, nil
+		},
+		insertDecisionLogFn: func(context.Context, store.DecisionLogEntry) error {
+			return errors.New("immutable violation")
+		},
+	}
+	fg := &fakeGit{
+		getHeadContentFn: func(_, branch string) (gitrepo.Content, store.CommitInfo, error) {
+			return gitrepo.Content{Title: "Doc", Subtitle: "Sub"}, store.CommitInfo{Hash: "main123"}, nil
+		},
+	}
+	svc := newTestService(fs, fg)
+
+	_, _, _, err := svc.MergeProposal(context.Background(), "doc-1", "prop-1", "Avery", false)
+	if err == nil || err.Error() != "immutable violation" {
+		t.Fatalf("expected decision-log error, got %v", err)
 	}
 }
 

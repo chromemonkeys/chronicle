@@ -1017,6 +1017,8 @@ function proposalQueueItems() {
       const blocked = pendingApprovals > 0 || openThreads > 0;
       return {
         id: `${document.id}:${proposal.id}`,
+        documentId: document.id,
+        proposalId: proposal.id,
         title: document.title,
         requestedBy: proposal.createdBy,
         status: blocked ? "Blocked" : "Ready"

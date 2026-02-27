@@ -5,9 +5,6 @@ type Props = {
   editor: Editor | null;
   diffVisible: boolean;
   onToggleDiff: () => void;
-  proposalMode: boolean;
-  onSetMode: (mode: "proposal" | "review") => void;
-  onToggleMode: () => void;
   diffMode: "split" | "unified";
   onSetDiffMode: (mode: "split" | "unified") => void;
 };
@@ -75,9 +72,6 @@ export function EditorToolbar({
   editor,
   diffVisible,
   onToggleDiff,
-  proposalMode,
-  onSetMode,
-  onToggleMode,
   diffMode,
   onSetDiffMode,
 }: Props) {
@@ -87,18 +81,12 @@ export function EditorToolbar({
     <div className="cm-doc-toolbar" role="toolbar" aria-label="Editor toolbar">
       <div className="cm-doc-toolbar-group">
         <button
-          className={`cm-tool-btn ${proposalMode ? "active" : ""}`}
+          className="cm-tool-btn"
           type="button"
-          onClick={() => onSetMode("proposal")}
+          onClick={() => editor.chain().focus().splitBlock().run()}
+          title="Add a new block below the cursor"
         >
-          ✎ Edit
-        </button>
-        <button
-          className={`cm-tool-btn ${!proposalMode ? "active" : ""}`}
-          type="button"
-          onClick={() => onSetMode("review")}
-        >
-          ◉ Preview
+          + Block
         </button>
       </div>
       <div className="cm-doc-toolbar-group" role="group" aria-label="Text formatting">
@@ -280,13 +268,6 @@ export function EditorToolbar({
           onClick={onToggleDiff}
         >
           {diffVisible ? "⦿ Diff On" : "⦿ Show Diff"}
-        </button>
-        <button
-          className={`cm-tool-btn ${proposalMode ? "active" : ""}`}
-          type="button"
-          onClick={onToggleMode}
-        >
-          {proposalMode ? "Proposal Mode" : "Edit Mode"}
         </button>
       </div>
       <div className="cm-toolbar-spacer" />
