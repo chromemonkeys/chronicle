@@ -2386,6 +2386,16 @@ label {
   font-size: 12px;
 }
 
+.cm-merge-blockers {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 8px;
+  color: var(--ink-3);
+  font-size: 12px;
+  background: var(--paper);
+}
+
 .cm-merge-btn {
   margin: 10px 12px 12px;
   width: calc(100% - 24px);
