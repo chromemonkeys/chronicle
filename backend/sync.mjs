@@ -239,8 +239,25 @@ function removeClient(client) {
   }
   room.clients.delete(client);
   if (room.clients.size === 0) {
-    rooms.delete(client.roomKey);
-    void room.persistChain.then(() => flushSession(room));
+    // Keep the room alive until persistence and optional flush settle so
+    // fast reconnects do not reload a stale on-disk snapshot.
+    if (room.cleanupScheduled) {
+      return;
+    }
+    room.cleanupScheduled = true;
+    void room.persistChain
+      .then(async () => {
+        if (room.clients.size > 0) {
+          return;
+        }
+        await flushSession(room);
+      })
+      .finally(() => {
+        room.cleanupScheduled = false;
+        if (room.clients.size === 0 && rooms.get(client.roomKey) === room) {
+          rooms.delete(client.roomKey);
+        }
+      });
     return;
   }
   for (const peer of room.clients) {
@@ -419,7 +436,8 @@ server.on("upgrade", async (req, socket) => {
       sessionId: randomUUID(),
       sessionStartedAt: new Date().toISOString(),
       sessionUpdateCount: 0,
-      lastActor: null
+      lastActor: null,
+      cleanupScheduled: false
     };
     rooms.set(roomKey, room);
   }

@@ -147,6 +147,17 @@ function buildNodeLabelMap(doc: DocumentContent | null): Map<string, string> {
   return labels;
 }
 
+function parseRealtimeTimestamp(value?: string): number | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
+  return parsed;
+}
+
 export function WorkspacePage() {
   const { docId = "" } = useParams();
   const navigate = useNavigate();
@@ -159,7 +170,9 @@ export function WorkspacePage() {
   const [diffMode, setDiffMode] = useState<DiffMode>("split");
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("proposal");
   const [discussionState, setDiscussionState] = useState<ViewState>("success");
-  const [approvalState, setApprovalState] = useState<ViewState>("success");
+  const [approvalStateOverride, setApprovalStateOverride] = useState<ViewState | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [approvalRefreshBusy, setApprovalRefreshBusy] = useState(false);
   const [contentDraft, setContentDraft] = useState<WorkspaceContent | null>(null);
   const [docDraft, setDocDraft] = useState<DocumentContent | null>(null);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
@@ -194,6 +207,7 @@ export function WorkspacePage() {
   const threadRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const realtimeSocketRef = useRef<WebSocket | null>(null);
   const realtimeSendTimerRef = useRef<number | null>(null);
+  const latestRealtimeAtRef = useRef<number>(0);
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
   const [reviewDiff, setReviewDiff] = useState<DocumentComparePayload | null>(null);
   const [reviewDiffState, setReviewDiffState] = useState<"idle" | "loading" | "error" | "ready">("idle");
@@ -206,9 +220,16 @@ export function WorkspacePage() {
     setDiffMode(mode);
     setDiffVisible(true);
   }, []);
+  const applyWorkspacePayload = useCallback((payload: WorkspacePayload) => {
+    setWorkspace(payload);
+    setContentDraft(payload.content);
+    setDocDraft(payload.doc ?? legacyContentToDoc(payload.content, payload.nodeIds));
+    latestRealtimeAtRef.current = Date.now();
+  }, []);
 
   useEffect(() => {
     let active = true;
+    latestRealtimeAtRef.current = 0;
     setViewState("loading");
     setSaveState("idle");
     setSaveError(null);
@@ -227,6 +248,9 @@ export function WorkspacePage() {
     setReviewDiffState("idle");
     setApproveBusyRole(null);
     setMergeBusy(false);
+    setApprovalStateOverride(null);
+    setApprovalError(null);
+    setApprovalRefreshBusy(false);
     setRealtimeStatus("connecting");
     setOnlineCount(1);
     fetchWorkspace(docId)
@@ -234,10 +258,8 @@ export function WorkspacePage() {
         if (!active) {
           return;
         }
-        setWorkspace(response);
-        setContentDraft(response.content);
+        applyWorkspacePayload(response);
         const initialDoc = response.doc ?? legacyContentToDoc(response.content, response.nodeIds);
-        setDocDraft(initialDoc);
         baseDocRef.current = initialDoc;
         if (response.threads.length > 0) {
           setActiveThread(response.threads[0].id);
@@ -254,7 +276,7 @@ export function WorkspacePage() {
     return () => {
       active = false;
     };
-  }, [docId]);
+  }, [applyWorkspacePayload, docId]);
 
   const refreshDocumentIndex = useCallback(async (mode: "foreground" | "background" = "foreground") => {
     if (mode === "foreground") {
@@ -486,11 +508,23 @@ export function WorkspacePage() {
           return;
         }
         if (event.type === "snapshot" && event.snapshot?.content) {
+          const eventAt = parseRealtimeTimestamp(event.snapshot.updatedAt);
+          if (eventAt === null || eventAt < latestRealtimeAtRef.current) {
+            return;
+          }
+          latestRealtimeAtRef.current = eventAt;
           setContentDraft(event.snapshot.content);
           setDocDraft(event.snapshot.doc ?? legacyContentToDoc(event.snapshot.content, workspace.nodeIds));
           return;
         }
         if (event.type === "document_update") {
+          const eventAt = parseRealtimeTimestamp(event.at);
+          if (eventAt !== null && eventAt < latestRealtimeAtRef.current) {
+            return;
+          }
+          if (eventAt !== null) {
+            latestRealtimeAtRef.current = eventAt;
+          }
           setContentDraft(event.content);
           setDocDraft(event.doc ?? legacyContentToDoc(event.content, workspace.nodeIds));
           setSaveState("idle");
@@ -703,9 +737,7 @@ export function WorkspacePage() {
     setSaveError(null);
     try {
       const updated = await saveWorkspace(workspace.document.id, contentDraft, docDraft ?? undefined);
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
       setSaveState("saved");
     } catch (error) {
       setSaveState("error");
@@ -724,9 +756,7 @@ export function WorkspacePage() {
     setActionError(null);
     try {
       const updated = await requestProposalReview(workspace.document.id, workspace.document.proposalId);
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
     } catch (error) {
       setActionError(isApiError(error) ? error.message : "Could not submit proposal for review.");
     }
@@ -737,11 +767,11 @@ export function WorkspacePage() {
       return;
     }
     setActionError(null);
+    setApprovalError(null);
+    setApprovalStateOverride(null);
     try {
       const updated = await createProposal(workspace.document.id);
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
     } catch (error) {
       setActionError(isApiError(error) ? error.message : "Could not start proposal.");
     }
@@ -753,19 +783,23 @@ export function WorkspacePage() {
     }
     setApproveBusyRole(role);
     setActionError(null);
+    setApprovalError(null);
+    setApprovalStateOverride(null);
     try {
       const updated = await approveProposalRole(workspace.document.id, workspace.document.proposalId, role);
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
     } catch (error) {
       if (isApiError(error) && error.code === "APPROVAL_ORDER_BLOCKED") {
         const blockers = Array.isArray((error.details as { blockers?: unknown[] } | null)?.blockers)
           ? (error.details as { blockers: string[] }).blockers.join(", ")
           : "required prior roles";
-        setActionError(`Approval update failed. Blocked by: ${blockers}`);
+        const message = `Approval update failed. Blocked by: ${blockers}`;
+        setActionError(message);
+        setApprovalError(message);
       } else {
-        setActionError(isApiError(error) ? error.message : "Approval update failed.");
+        const message = isApiError(error) ? error.message : "Approval update failed.";
+        setActionError(message);
+        setApprovalError(message);
       }
     } finally {
       setApproveBusyRole(null);
@@ -801,9 +835,7 @@ export function WorkspacePage() {
           rationale
         }
       );
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
     } catch (error) {
       setActionError(isApiError(error) ? error.message : "Thread resolution failed.");
     }
@@ -834,9 +866,7 @@ export function WorkspacePage() {
           type: options?.type ?? "GENERAL",
         }
       );
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
       // Select the newly created thread
       const newThread = updated.threads[updated.threads.length - 1];
       if (newThread) {
@@ -869,9 +899,7 @@ export function WorkspacePage() {
         targetThreadId,
         { body: body.trim() }
       );
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
     } catch (error) {
       setActionError(isApiError(error) ? error.message : "Could not post reply. Please retry.");
     }
@@ -889,9 +917,7 @@ export function WorkspacePage() {
         threadId,
         direction
       );
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
     } catch (error) {
       setActionError(isApiError(error) ? error.message : "Could not update vote.");
     }
@@ -909,9 +935,7 @@ export function WorkspacePage() {
         threadId,
         emoji
       );
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
     } catch (error) {
       setActionError(isApiError(error) ? error.message : "Could not apply reaction.");
     }
@@ -928,9 +952,7 @@ export function WorkspacePage() {
         workspace.document.proposalId,
         threadId
       );
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
     } catch (error) {
       setActionError(isApiError(error) ? error.message : "Could not reopen thread.");
     }
@@ -953,9 +975,7 @@ export function WorkspacePage() {
         threadId,
         nextVisibility
       );
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
     } catch (error) {
       setActionError(isApiError(error) ? error.message : "Could not change visibility.");
     }
@@ -967,11 +987,11 @@ export function WorkspacePage() {
     }
     setMergeBusy(true);
     setActionError(null);
+    setApprovalError(null);
+    setApprovalStateOverride(null);
     try {
       const updated = await mergeProposal(workspace.document.id, workspace.document.proposalId);
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
       setDocumentIndex((current) =>
         current.map((doc) =>
           doc.id === updated.document.id
@@ -991,12 +1011,35 @@ export function WorkspacePage() {
         const details = error.details as { pendingApprovals?: number; openThreads?: number } | null;
         const pending = details?.pendingApprovals ?? pendingApprovals;
         const open = details?.openThreads ?? openThreads;
-        setActionError(`Merge gate is blocked. Pending approvals: ${pending}, open threads: ${open}.`);
+        const message = `Merge gate is blocked. Pending approvals: ${pending}, open threads: ${open}.`;
+        setActionError(message);
+        setApprovalError(message);
       } else {
-        setActionError(isApiError(error) ? error.message : "Merge gate is still blocked.");
+        const message = isApiError(error) ? error.message : "Merge gate is still blocked.";
+        setActionError(message);
+        setApprovalError(message);
       }
     } finally {
       setMergeBusy(false);
+    }
+  }
+
+  async function retryApprovalsPanel() {
+    if (!workspace) {
+      return;
+    }
+    setApprovalRefreshBusy(true);
+    setApprovalStateOverride(null);
+    setApprovalError(null);
+    try {
+      const refreshed = await fetchWorkspace(workspace.document.id);
+      applyWorkspacePayload(refreshed);
+    } catch (error) {
+      const message = isApiError(error) ? error.message : "Approval service request failed.";
+      setApprovalError(message);
+      setActionError(message);
+    } finally {
+      setApprovalRefreshBusy(false);
     }
   }
 
@@ -1011,9 +1054,7 @@ export function WorkspacePage() {
     setActionError(null);
     try {
       const updated = await saveNamedVersion(workspace.document.id, workspace.document.proposalId, label);
-      setWorkspace(updated);
-      setContentDraft(updated.content);
-      setDocDraft(updated.doc ?? legacyContentToDoc(updated.content, updated.nodeIds));
+      applyWorkspacePayload(updated);
       if (activeTab === "history") {
         const refreshed = await fetchDocumentHistory(updated.document.id, updated.document.proposalId);
         setHistoryData(refreshed);
@@ -1184,10 +1225,8 @@ export function WorkspacePage() {
             setViewState("loading");
             fetchWorkspace(docId)
               .then((response) => {
-                setWorkspace(response);
-                setContentDraft(response.content);
+                applyWorkspacePayload(response);
                 const initialDoc = response.doc ?? legacyContentToDoc(response.content, response.nodeIds);
-                setDocDraft(initialDoc);
                 baseDocRef.current = initialDoc;
                 if (response.threads.length > 0) {
                   setActiveThread(response.threads[0].id);
@@ -1219,10 +1258,8 @@ export function WorkspacePage() {
               setViewState("loading");
               fetchWorkspace(docId)
                 .then((response) => {
-                  setWorkspace(response);
-                  setContentDraft(response.content);
+                  applyWorkspacePayload(response);
                   const initialDoc = response.doc ?? legacyContentToDoc(response.content, response.nodeIds);
-                  setDocDraft(initialDoc);
                   baseDocRef.current = initialDoc;
                   setViewState("success");
                 })
@@ -1244,9 +1281,16 @@ export function WorkspacePage() {
   const openThreads = workspace.threads.filter((thread) => thread.status !== "RESOLVED").length;
   const resolvedThreads = workspace.threads.length - openThreads;
   const hasActiveProposal = Boolean(workspace.document.proposalId);
-  const apiUnavailable = Boolean(actionError && /chronicle api is unavailable/i.test(actionError));
-  const effectiveApprovalState: ViewState = hasActiveProposal && apiUnavailable ? "error" : approvalState;
-  const mergeReady = hasActiveProposal && pendingApprovals === 0 && openThreads === 0 && effectiveApprovalState === "success";
+  const apiUnavailable = Boolean(approvalError && /chronicle api is unavailable/i.test(approvalError));
+  const runtimeApprovalState: ViewState = !hasActiveProposal
+    ? "empty"
+    : approvalRefreshBusy || approveBusyRole !== null || mergeBusy
+      ? "loading"
+      : approvalError
+        ? "error"
+        : "success";
+  const effectiveApprovalState: ViewState = approvalStateOverride ?? runtimeApprovalState;
+  const mergeReady = hasActiveProposal && pendingApprovals === 0 && openThreads === 0 && runtimeApprovalState === "success";
   const content = contentDraft ?? workspace.content;
   const workspaceDoc = workspace.doc ?? legacyContentToDoc(workspace.content, workspace.nodeIds);
   const activeDoc = docDraft ?? workspaceDoc;
@@ -1750,28 +1794,28 @@ export function WorkspacePage() {
                       <div className="cm-panel-state cm-panel-state-subtle" aria-label="Approvals panel state">
                         <button
                           className={effectiveApprovalState === "success" ? "active" : ""}
-                          onClick={() => setApprovalState("success")}
+                          onClick={() => setApprovalStateOverride("success")}
                           type="button"
                         >
                           Success
                         </button>
                         <button
                           className={effectiveApprovalState === "loading" ? "active" : ""}
-                          onClick={() => setApprovalState("loading")}
+                          onClick={() => setApprovalStateOverride("loading")}
                           type="button"
                         >
                           Loading
                         </button>
                         <button
                           className={effectiveApprovalState === "empty" ? "active" : ""}
-                          onClick={() => setApprovalState("empty")}
+                          onClick={() => setApprovalStateOverride("empty")}
                           type="button"
                         >
                           Empty
                         </button>
                         <button
                           className={effectiveApprovalState === "error" ? "active" : ""}
-                          onClick={() => setApprovalState("error")}
+                          onClick={() => setApprovalStateOverride("error")}
                           type="button"
                         >
                           Error
@@ -1780,6 +1824,15 @@ export function WorkspacePage() {
                     )}
                     {effectiveApprovalState === "loading" && (
                       <div className="cm-approval-fallback">
+                        <p>
+                          {approvalRefreshBusy
+                            ? "Refreshing approval chain..."
+                            : mergeBusy
+                              ? "Submitting merge..."
+                              : approveBusyRole
+                                ? "Recording approval..."
+                                : "Loading approval state..."}
+                        </p>
                         <div className="skeleton skeleton-line" />
                         <div className="skeleton skeleton-line short" />
                       </div>
@@ -1791,16 +1844,16 @@ export function WorkspacePage() {
                     )}
                     {effectiveApprovalState === "error" && (
                       <div className="cm-approval-fallback">
-                        <p>{apiUnavailable ? actionError : "Approval service request failed."}</p>
-                        {apiUnavailable ? (
-                          <button className="cm-compose-send" onClick={() => setActionError(null)} type="button">
-                            Dismiss
-                          </button>
-                        ) : (
-                          <button className="cm-compose-send" onClick={() => setApprovalState("success")} type="button">
-                            Retry
-                          </button>
-                        )}
+                        <p>{approvalError ?? "Approval service request failed."}</p>
+                        <button
+                          className="cm-compose-send"
+                          onClick={() => {
+                            void retryApprovalsPanel();
+                          }}
+                          type="button"
+                        >
+                          {apiUnavailable ? "Retry API" : "Retry"}
+                        </button>
                       </div>
                     )}
                     {effectiveApprovalState === "success" && (
