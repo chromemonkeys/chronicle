@@ -57,16 +57,27 @@ type CompareOption = {
   label: string;
 };
 
-const panelTabs: { id: PanelTab; label: string }[] = [
-  { id: "discussions", label: "Discussion" },
-  { id: "history", label: "History" },
-  { id: "decisions", label: "Log" },
+const panelTabs: { id: PanelTab; label: string; ariaLabel: string }[] = [
+  { id: "discussions", label: "Discussion", ariaLabel: "Discussion" },
+  { id: "history", label: "History", ariaLabel: "History" },
+  { id: "decisions", label: "Log", ariaLabel: "Log" },
 ];
 
 function extractNodeText(node: DocumentContent["content"][number]): string {
+  // Direct text node
   if (node.text) return node.text;
-  if (!node.content) return "";
-  return node.content.map((child) => extractNodeText(child)).join("").trim();
+  
+  // No content array
+  if (!node.content || !Array.isArray(node.content)) return "";
+  
+  // Recursively extract text from all children
+  const texts: string[] = [];
+  for (const child of node.content) {
+    const childText = extractNodeText(child);
+    if (childText) texts.push(childText);
+  }
+  
+  return texts.join("").trim();
 }
 
 function buildNodeLabelMap(doc: DocumentContent | null): Map<string, string> {
@@ -118,6 +129,8 @@ export function WorkspacePage() {
   const [documentIndex, setDocumentIndex] = useState<DocumentSummary[]>([]);
   const [documentIndexState, setDocumentIndexState] = useState<ViewState>("loading");
   const [sidebarSection, setSidebarSection] = useState<SidebarSection>("open");
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [decisionOutcomeFilter, setDecisionOutcomeFilter] = useState<"" | "ACCEPTED" | "REJECTED" | "DEFERRED">("");
   const [decisionQuery, setDecisionQuery] = useState("");
   const [decisionAuthor, setDecisionAuthor] = useState("");
@@ -253,7 +266,7 @@ export function WorkspacePage() {
   const discussionTabsWithCount = useMemo(() => {
     if (!workspace) return panelTabs;
     return panelTabs.map((tab) =>
-      tab.id === "discussions" ? { ...tab, count: workspace.threads.length } : tab
+      tab.id === "discussions" ? { ...tab, count: workspace.threads.length } : { ...tab }
     );
   }, [workspace]);
 
@@ -1167,6 +1180,26 @@ export function WorkspacePage() {
             <div className="cm-branch-dot" />
             {workspace.document.branch.split(" -> ")[0]}
           </div>
+          <div className="cm-shell-toggle-group" role="group" aria-label="Workspace panels">
+            <button
+              className="cm-shell-toggle-btn"
+              type="button"
+              onClick={() => setLeftSidebarCollapsed((current) => !current)}
+              aria-label={leftSidebarCollapsed ? "Expand left sidebar" : "Collapse left sidebar"}
+              title={leftSidebarCollapsed ? "Expand left sidebar" : "Collapse left sidebar"}
+            >
+              {leftSidebarCollapsed ? "⟫" : "⟪"}
+            </button>
+            <button
+              className="cm-shell-toggle-btn"
+              type="button"
+              onClick={() => setRightPanelCollapsed((current) => !current)}
+              aria-label={rightPanelCollapsed ? "Expand right panel" : "Collapse right panel"}
+              title={rightPanelCollapsed ? "Expand right panel" : "Collapse right panel"}
+            >
+              {rightPanelCollapsed ? "⟪" : "⟫"}
+            </button>
+          </div>
         </div>
 
         <div className="cm-topnav-actions">
@@ -1177,8 +1210,7 @@ export function WorkspacePage() {
               onClick={() => void compareLatestCommits()}
               title={compareActive ? "Close comparison" : "Compare versions"}
             >
-              {compareActive ? "⨯" : "⎇"}
-              <span>Compare</span>
+              <span>{compareActive ? "Close Compare" : "Compare Versions"}</span>
             </button>
             <button 
               className="cm-action-btn" 
@@ -1186,7 +1218,7 @@ export function WorkspacePage() {
               onClick={() => setActiveTab("history")}
               title="View history"
             >
-              ↗<span>History</span>
+              <span>View History</span>
             </button>
           </div>
 
@@ -1198,7 +1230,7 @@ export function WorkspacePage() {
               onClick={() => void createNamedVersion()}
               title="Save named version"
             >
-              ⌁<span>Version</span>
+              <span>Save Version</span>
             </button>
             <button
               className="cm-action-btn"
@@ -1207,8 +1239,7 @@ export function WorkspacePage() {
               onClick={() => void saveDraft()}
               title="Save draft"
             >
-              {saveState === "saving" ? "⋯" : "💾"}
-              <span>{saveState === "saving" ? "Saving" : "Save"}</span>
+              <span>{saveState === "saving" ? "Saving..." : "Save Draft"}</span>
             </button>
           </div>
 
@@ -1223,13 +1254,13 @@ export function WorkspacePage() {
               void startProposal();
             }}
           >
-            {workspace.document.proposalId ? "⟳ Request Review" : "+ Start Proposal"}
+            {workspace.document.proposalId ? "Request Review" : "Start Proposal"}
           </button>
         </div>
       </div>
 
       <div className="cm-app-body">
-        <aside className="cm-sidebar">
+        <aside className={`cm-sidebar ${leftSidebarCollapsed ? "collapsed" : ""}`.trim()}>
           <div className="cm-sidebar-section">
             <div className="cm-sidebar-label">Workspace</div>
             <button
@@ -1237,7 +1268,7 @@ export function WorkspacePage() {
               type="button"
               onClick={() => navigate("/documents")}
             >
-              <span className="cm-sidebar-icon">◈</span> All Documents
+              All Documents
               <span className="cm-sidebar-count">{documentIndex.length || workspace.counts.allDocuments}</span>
             </button>
             <button
@@ -1250,7 +1281,7 @@ export function WorkspacePage() {
                 }
               }}
             >
-              <span className="cm-sidebar-icon">⊙</span> Open Reviews
+              Open Reviews
               <span className="cm-sidebar-count">{openReviewDocuments.length || workspace.counts.openReviews}</span>
             </button>
             <button
@@ -1263,7 +1294,7 @@ export function WorkspacePage() {
                 }
               }}
             >
-              <span className="cm-sidebar-icon">✓</span> Merged
+              Merged
               <span className="cm-sidebar-count">{mergedDocuments.length || workspace.counts.merged}</span>
             </button>
             <button
@@ -1274,7 +1305,7 @@ export function WorkspacePage() {
                 setActiveTab("decisions");
               }}
             >
-              <span className="cm-sidebar-icon">⊕</span> Decision Log
+              Decision Log
             </button>
           </div>
           {sidebarSection !== "decisions" && (
@@ -1413,7 +1444,7 @@ export function WorkspacePage() {
           </div>
         </main>
 
-        <aside className="cm-discussion-panel">
+        <aside className={`cm-discussion-panel ${rightPanelCollapsed ? "collapsed" : ""}`.trim()}>
           <Tabs
             tabs={discussionTabsWithCount}
             active={activeTab}
@@ -1421,7 +1452,7 @@ export function WorkspacePage() {
             className="cm-panel-tabs-rail"
             orientation="vertical"
           />
-          <div className="cm-panel-main">
+          {!rightPanelCollapsed && <div className="cm-panel-main">
           {actionError ? (
             <div className="cm-inline-action-error" role="alert">
               <span>{actionError}</span>
@@ -1798,7 +1829,7 @@ export function WorkspacePage() {
               )}
             </div>
           )}
-          </div>
+          </div>}
         </aside>
       </div>
 

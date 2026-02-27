@@ -1641,11 +1641,12 @@ label {
 
 .cm-panel-tabs-rail .cm-panel-tab.active,
 .cm-panel-tabs-rail .cm-panel-tab[aria-selected="true"] {
-  border-left: 3px solid var(--accent);
+  border-left: 4px solid var(--accent);
   border-bottom-color: transparent;
   background: var(--paper);
   color: var(--accent);
   font-weight: 600;
+  box-shadow: inset 4px 0 0 0 var(--accent);
 }
 
 .cm-panel-tabs-rail .cm-panel-tab:hover:not(.active) {
@@ -2516,7 +2517,17 @@ label {
 }
 
 .cm-editor-wrapper .tiptap:focus {
-  outline: none;
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 4px;
+}
+
+/* Make block-active highlighting more subtle - shows cursor position without being distracting */
+.cm-editor-wrapper .tiptap [data-node-id].block-active {
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+  margin-left: -12px;
+  /* Remove background highlight - keep only the left border */
+  background: transparent;
 }
 
 .cm-editor-wrapper .tiptap h1 {
@@ -2630,13 +2641,6 @@ label {
 
 .cm-editor-wrapper .tiptap [data-node-id].selected {
   background: var(--accent-soft);
-}
-
-.cm-editor-wrapper .tiptap [data-node-id].block-active {
-  background: #fff3e8;
-  border-left: 3px solid var(--accent);
-  padding-left: 9px;
-  margin-left: -12px;
 }
 
 .cm-editor-wrapper .tiptap [data-node-id].diff-added {
