@@ -158,6 +158,10 @@ function parseRealtimeTimestamp(value?: string): number | null {
   return parsed;
 }
 
+function pluralize(value: number, singular: string, plural: string) {
+  return value === 1 ? singular : plural;
+}
+
 export function WorkspacePage() {
   const { docId = "" } = useParams();
   const navigate = useNavigate();
@@ -1294,6 +1298,8 @@ export function WorkspacePage() {
         : "success";
   const effectiveApprovalState: ViewState = approvalStateOverride ?? runtimeApprovalState;
   const mergeReady = hasActiveProposal && pendingApprovals === 0 && openThreads === 0 && runtimeApprovalState === "success";
+  const showMergeBlockers = hasActiveProposal && !mergeReady && effectiveApprovalState === "success";
+  const mergeBlockerSummary = `Merge blockers: ${pendingApprovals} pending ${pluralize(pendingApprovals, "approval", "approvals")}, ${openThreads} open ${pluralize(openThreads, "thread", "threads")}.`;
   const content = contentDraft ?? workspace.content;
   const workspaceDoc = workspace.doc ?? legacyContentToDoc(workspace.content, workspace.nodeIds);
   const activeDoc = docDraft ?? workspaceDoc;
@@ -1860,26 +1866,42 @@ export function WorkspacePage() {
                       </div>
                     )}
                     {effectiveApprovalState === "success" && (
-                      <ApprovalChain
-                        gate={workspace.approvals}
-                        details={workspace.approvalDetails}
-                        stages={workspace.approvalStages}
-                        approvingRole={approveBusyRole}
-                        onApprove={(role) => {
-                          void approveRole(role);
-                        }}
-                        onMerge={() => {
-                          void mergeCurrentProposal();
-                        }}
-                        canMerge={hasActiveProposal && mergeReady && !mergeBusy}
-                        mergeLabel={
-                          mergeBusy
-                            ? "Merging..."
-                            : !hasActiveProposal
-                              ? "⊘ Start proposal"
-                              : undefined
-                        }
-                      />
+                      <>
+                        {showMergeBlockers ? (
+                          <div className="cm-merge-blockers" role="status">
+                            <p>{mergeBlockerSummary}</p>
+                            {openThreads > 0 ? (
+                              <button
+                                className="cm-thread-action-btn"
+                                type="button"
+                                onClick={() => setActiveTab("discussions")}
+                              >
+                                View open threads
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        <ApprovalChain
+                          gate={workspace.approvals}
+                          details={workspace.approvalDetails}
+                          stages={workspace.approvalStages}
+                          approvingRole={approveBusyRole}
+                          onApprove={(role) => {
+                            void approveRole(role);
+                          }}
+                          onMerge={() => {
+                            void mergeCurrentProposal();
+                          }}
+                          canMerge={hasActiveProposal && mergeReady && !mergeBusy}
+                          mergeLabel={
+                            mergeBusy
+                              ? "Merging..."
+                              : !hasActiveProposal
+                                ? "⊘ Start proposal"
+                                : undefined
+                          }
+                        />
+                      </>
                     )}
                   </div>
                 </div>
