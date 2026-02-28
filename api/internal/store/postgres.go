@@ -1604,12 +1604,542 @@ func (s *PostgresStore) GetPasswordReset(ctx context.Context, token string) (str
 // MarkPasswordResetUsed marks a password reset token as used
 func (s *PostgresStore) MarkPasswordResetUsed(ctx context.Context, token string) error {
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE password_resets 
+		UPDATE password_resets
 		SET used_at = NOW()
 		WHERE reset_token = $1
 	`, token)
 	if err != nil {
 		return fmt.Errorf("mark password reset used: %w", err)
+	}
+	return nil
+}
+
+// InsertPermissionDenial logs a permission denial for auditing
+func (s *PostgresStore) InsertPermissionDenial(ctx context.Context, d PermissionDenial) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO permission_denials (actor_id, actor_name, action, resource_type, resource_id, role, path, method)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, d.ActorID, d.ActorName, d.Action, d.ResourceType, d.ResourceID, d.Role, d.Path, d.Method)
+	if err != nil {
+		return fmt.Errorf("insert permission denial: %w", err)
+	}
+	return nil
+}
+
+// ListPermissionDenials returns recent permission denials for auditing
+func (s *PostgresStore) ListPermissionDenials(ctx context.Context, actorID string, limit int) ([]PermissionDenial, error) {
+	query := `SELECT id, actor_id, actor_name, action, resource_type, COALESCE(resource_id, ''), role, path, method, created_at
+		FROM permission_denials`
+	args := []any{}
+	if actorID != "" {
+		query += ` WHERE actor_id = $1`
+		args = append(args, actorID)
+	}
+	query += ` ORDER BY created_at DESC LIMIT ` + fmt.Sprintf("%d", limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list permission denials: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]PermissionDenial, 0)
+	for rows.Next() {
+		var d PermissionDenial
+		if err := rows.Scan(&d.ID, &d.ActorID, &d.ActorName, &d.Action, &d.ResourceType, &d.ResourceID, &d.Role, &d.Path, &d.Method, &d.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan permission denial: %w", err)
+		}
+		items = append(items, d)
+	}
+	return items, rows.Err()
+}
+
+// GetEffectiveRole returns the effective role for a user on a document.
+// Document-level permissions override workspace-level roles.
+// Expired grants are ignored.
+func (s *PostgresStore) GetEffectiveRole(ctx context.Context, userID, documentID string) (string, error) {
+	// Check document_permissions first (non-expired)
+	var docRole string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT role FROM document_permissions
+		WHERE document_id = $1 AND user_id = $2
+			AND (expires_at IS NULL OR expires_at > NOW())
+	`, documentID, userID).Scan(&docRole)
+	if err == nil {
+		return docRole, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("check document permission: %w", err)
+	}
+
+	// Fall back to workspace_memberships
+	wsRole, err := s.getRole(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	return wsRole, nil
+}
+
+// ListDocumentPermissions returns all permission grants for a document
+func (s *PostgresStore) ListDocumentPermissions(ctx context.Context, documentID string) ([]DocumentPermission, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT dp.id, dp.document_id, dp.user_id, dp.role, dp.granted_by, dp.granted_at, dp.expires_at,
+			u.email, u.display_name
+		FROM document_permissions dp
+		JOIN users u ON u.id = dp.user_id
+		WHERE dp.document_id = $1
+		ORDER BY dp.granted_at DESC
+	`, documentID)
+	if err != nil {
+		return nil, fmt.Errorf("list document permissions: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]DocumentPermission, 0)
+	for rows.Next() {
+		var dp DocumentPermission
+		if err := rows.Scan(&dp.ID, &dp.DocumentID, &dp.UserID, &dp.Role, &dp.GrantedBy, &dp.GrantedAt, &dp.ExpiresAt, &dp.UserEmail, &dp.UserName); err != nil {
+			return nil, fmt.Errorf("scan document permission: %w", err)
+		}
+		items = append(items, dp)
+	}
+	return items, rows.Err()
+}
+
+// UpsertDocumentPermission creates or updates a document permission grant
+func (s *PostgresStore) UpsertDocumentPermission(ctx context.Context, dp DocumentPermission) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO document_permissions (document_id, user_id, role, granted_by, expires_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (document_id, user_id) DO UPDATE SET
+			role = EXCLUDED.role,
+			granted_by = EXCLUDED.granted_by,
+			granted_at = NOW(),
+			expires_at = EXCLUDED.expires_at
+	`, dp.DocumentID, dp.UserID, dp.Role, dp.GrantedBy, dp.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("upsert document permission: %w", err)
+	}
+	return nil
+}
+
+// DeleteDocumentPermission removes a document permission grant
+func (s *PostgresStore) DeleteDocumentPermission(ctx context.Context, documentID, userID string) error {
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM document_permissions WHERE document_id = $1 AND user_id = $2
+	`, documentID, userID)
+	if err != nil {
+		return fmt.Errorf("delete document permission: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ListDocumentsForExternalUser returns only documents an external user has explicit permissions for
+func (s *PostgresStore) ListDocumentsForExternalUser(ctx context.Context, userID string) ([]Document, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT d.id, d.title, d.subtitle, d.status, d.space_id, d.updated_by_name, d.updated_at
+		FROM documents d
+		JOIN document_permissions dp ON dp.document_id = d.id
+		WHERE dp.user_id = $1 AND (dp.expires_at IS NULL OR dp.expires_at > NOW())
+		ORDER BY d.updated_at DESC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list documents for external user: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Document, 0)
+	for rows.Next() {
+		var item Document
+		if err := rows.Scan(&item.ID, &item.Title, &item.Subtitle, &item.Status, &item.SpaceID, &item.UpdatedBy, &item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan document: %w", err)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// =============================================================================
+// Sprint 3 RBAC: Groups
+// =============================================================================
+
+// ListGroups returns all groups in a workspace
+func (s *PostgresStore) ListGroups(ctx context.Context, workspaceID string) ([]Group, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, workspace_id, name, description, scim_external_id, created_at, updated_at
+		FROM groups
+		WHERE workspace_id = $1 AND deleted_at IS NULL
+		ORDER BY name
+	`, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list groups: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Group, 0)
+	for rows.Next() {
+		var g Group
+		if err := rows.Scan(&g.ID, &g.WorkspaceID, &g.Name, &g.Description, &g.SCIMExternalID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan group: %w", err)
+		}
+		items = append(items, g)
+	}
+	return items, rows.Err()
+}
+
+// GetGroup returns a single group by ID
+func (s *PostgresStore) GetGroup(ctx context.Context, id string) (*Group, error) {
+	var g Group
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, workspace_id, name, description, scim_external_id, created_at, updated_at
+		FROM groups
+		WHERE id = $1 AND deleted_at IS NULL
+	`, id).Scan(&g.ID, &g.WorkspaceID, &g.Name, &g.Description, &g.SCIMExternalID, &g.CreatedAt, &g.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get group: %w", err)
+	}
+	return &g, nil
+}
+
+// InsertGroup creates a new group
+func (s *PostgresStore) InsertGroup(ctx context.Context, g Group) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO groups (id, workspace_id, name, description, scim_external_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, g.ID, g.WorkspaceID, g.Name, g.Description, g.SCIMExternalID, g.CreatedAt, g.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("insert group: %w", err)
+	}
+	return nil
+}
+
+// UpdateGroup updates a group's details
+func (s *PostgresStore) UpdateGroup(ctx context.Context, g Group) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE groups SET name = $1, description = $2, updated_at = $3
+		WHERE id = $4 AND deleted_at IS NULL
+	`, g.Name, g.Description, time.Now(), g.ID)
+	if err != nil {
+		return fmt.Errorf("update group: %w", err)
+	}
+	return nil
+}
+
+// DeleteGroup soft-deletes a group
+func (s *PostgresStore) DeleteGroup(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE groups SET deleted_at = NOW() WHERE id = $1
+	`, id)
+	if err != nil {
+		return fmt.Errorf("delete group: %w", err)
+	}
+	return nil
+}
+
+// =============================================================================
+// Sprint 3 RBAC: Group Memberships
+// =============================================================================
+
+// ListGroupMembers returns all members of a group
+func (s *PostgresStore) ListGroupMembers(ctx context.Context, groupID string) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT u.id, u.display_name, u.email, u.role, u.is_external, u.created_at
+		FROM users u
+		JOIN group_memberships gm ON u.id = gm.user_id
+		WHERE gm.group_id = $1
+		ORDER BY u.display_name
+	`, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("list group members: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]User, 0)
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.DisplayName, &u.Email, &u.Role, &u.IsExternal, &u.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		items = append(items, u)
+	}
+	return items, rows.Err()
+}
+
+// ListUserGroups returns all groups a user belongs to
+func (s *PostgresStore) ListUserGroups(ctx context.Context, userID string) ([]Group, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.id, g.workspace_id, g.name, g.description, g.created_at, g.updated_at
+		FROM groups g
+		JOIN group_memberships gm ON g.id = gm.group_id
+		WHERE gm.user_id = $1 AND g.deleted_at IS NULL
+		ORDER BY g.name
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list user groups: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Group, 0)
+	for rows.Next() {
+		var g Group
+		if err := rows.Scan(&g.ID, &g.WorkspaceID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan group: %w", err)
+		}
+		items = append(items, g)
+	}
+	return items, rows.Err()
+}
+
+// AddGroupMember adds a user to a group
+func (s *PostgresStore) AddGroupMember(ctx context.Context, groupID, userID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO group_memberships (group_id, user_id, created_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (group_id, user_id) DO NOTHING
+	`, groupID, userID)
+	if err != nil {
+		return fmt.Errorf("add group member: %w", err)
+	}
+	return nil
+}
+
+// RemoveGroupMember removes a user from a group
+func (s *PostgresStore) RemoveGroupMember(ctx context.Context, groupID, userID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2
+	`, groupID, userID)
+	if err != nil {
+		return fmt.Errorf("remove group member: %w", err)
+	}
+	return nil
+}
+
+// =============================================================================
+// Sprint 3 RBAC: Unified Permissions (Space & Document)
+// =============================================================================
+
+// ListPermissions returns all permissions for a resource
+func (s *PostgresStore) ListPermissions(ctx context.Context, resourceType, resourceID string) ([]PermissionWithDetails, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT 
+			p.id, p.workspace_id, p.subject_type, p.subject_id, p.resource_type, p.resource_id, p.role,
+			p.granted_by, p.granted_at, p.expires_at,
+			u.email as user_email, u.display_name as user_name,
+			g.name as group_name,
+			(SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = p.subject_id) as member_count
+		FROM permissions p
+		LEFT JOIN users u ON p.subject_type = 'user' AND p.subject_id = u.id
+		LEFT JOIN groups g ON p.subject_type = 'group' AND p.subject_id = g.id
+		WHERE p.resource_type = $1 AND p.resource_id = $2 AND p.deleted_at IS NULL
+			AND (p.expires_at IS NULL OR p.expires_at > NOW())
+		ORDER BY p.granted_at DESC
+	`, resourceType, resourceID)
+	if err != nil {
+		return nil, fmt.Errorf("list permissions: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]PermissionWithDetails, 0)
+	for rows.Next() {
+		var pd PermissionWithDetails
+		if err := rows.Scan(
+			&pd.ID, &pd.WorkspaceID, &pd.SubjectType, &pd.SubjectID, &pd.ResourceType, &pd.ResourceID, &pd.Role,
+			&pd.GrantedBy, &pd.GrantedAt, &pd.ExpiresAt,
+			&pd.UserEmail, &pd.UserName, &pd.GroupName, &pd.MemberCount,
+		); err != nil {
+			return nil, fmt.Errorf("scan permission: %w", err)
+		}
+		items = append(items, pd)
+	}
+	return items, rows.Err()
+}
+
+// UpsertPermission creates or updates a permission grant
+func (s *PostgresStore) UpsertPermission(ctx context.Context, p Permission) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO permissions (id, workspace_id, subject_type, subject_id, resource_type, resource_id, role, granted_by, granted_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (workspace_id, subject_type, subject_id, resource_type, resource_id) DO UPDATE SET
+			role = EXCLUDED.role,
+			granted_by = EXCLUDED.granted_by,
+			granted_at = EXCLUDED.granted_at,
+			expires_at = EXCLUDED.expires_at,
+			deleted_at = NULL
+	`, p.ID, p.WorkspaceID, p.SubjectType, p.SubjectID, p.ResourceType, p.ResourceID, p.Role, p.GrantedBy, p.GrantedAt, p.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("upsert permission: %w", err)
+	}
+	return nil
+}
+
+// DeletePermission soft-deletes a permission grant
+func (s *PostgresStore) DeletePermission(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE permissions SET deleted_at = NOW() WHERE id = $1
+	`, id)
+	if err != nil {
+		return fmt.Errorf("delete permission: %w", err)
+	}
+	return nil
+}
+
+// GetEffectivePermission returns the effective permission for a user on a resource
+func (s *PostgresStore) GetEffectivePermission(ctx context.Context, userID, resourceType, resourceID string) (*EffectivePermission, error) {
+	var ep EffectivePermission
+	err := s.db.QueryRowContext(ctx, `
+		SELECT user_id, resource_type, resource_id, workspace_id, role, computed_at
+		FROM mv_effective_permissions
+		WHERE user_id = $1 AND resource_type = $2 AND resource_id = $3
+	`, userID, resourceType, resourceID).Scan(
+		&ep.UserID, &ep.ResourceType, &ep.ResourceID, &ep.WorkspaceID, &ep.Role, &ep.ComputedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get effective permission: %w", err)
+	}
+	return &ep, nil
+}
+
+// RefreshEffectivePermissions manually refreshes the materialized view
+func (s *PostgresStore) RefreshEffectivePermissions(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `REFRESH MATERIALIZED VIEW CONCURRENTLY mv_effective_permissions`)
+	if err != nil {
+		return fmt.Errorf("refresh effective permissions: %w", err)
+	}
+	return nil
+}
+
+// =============================================================================
+// Sprint 3 RBAC: Public Links
+// =============================================================================
+
+// GetPublicLinkByToken returns a public link by its token
+func (s *PostgresStore) GetPublicLinkByToken(ctx context.Context, token string) (*PublicLink, error) {
+	var pl PublicLink
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, token, document_id, created_by, role, password_hash, expires_at, access_count, last_accessed_at, created_at, revoked_at
+		FROM public_links
+		WHERE token = $1 AND revoked_at IS NULL
+			AND (expires_at IS NULL OR expires_at > NOW())
+	`, token).Scan(
+		&pl.ID, &pl.Token, &pl.DocumentID, &pl.CreatedBy, &pl.Role, &pl.PasswordHash,
+		&pl.ExpiresAt, &pl.AccessCount, &pl.LastAccessedAt, &pl.CreatedAt, &pl.RevokedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get public link: %w", err)
+	}
+	return &pl, nil
+}
+
+// ListPublicLinks returns all active public links for a document
+func (s *PostgresStore) ListPublicLinks(ctx context.Context, documentID string) ([]PublicLink, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, token, document_id, created_by, role, expires_at, access_count, last_accessed_at, created_at
+		FROM public_links
+		WHERE document_id = $1 AND revoked_at IS NULL
+			AND (expires_at IS NULL OR expires_at > NOW())
+		ORDER BY created_at DESC
+	`, documentID)
+	if err != nil {
+		return nil, fmt.Errorf("list public links: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]PublicLink, 0)
+	for rows.Next() {
+		var pl PublicLink
+		if err := rows.Scan(&pl.ID, &pl.Token, &pl.DocumentID, &pl.CreatedBy, &pl.Role, &pl.ExpiresAt, &pl.AccessCount, &pl.LastAccessedAt, &pl.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan public link: %w", err)
+		}
+		items = append(items, pl)
+	}
+	return items, rows.Err()
+}
+
+// InsertPublicLink creates a new public link
+func (s *PostgresStore) InsertPublicLink(ctx context.Context, pl PublicLink) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO public_links (id, token, document_id, created_by, role, password_hash, expires_at, access_count, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, pl.ID, pl.Token, pl.DocumentID, pl.CreatedBy, pl.Role, pl.PasswordHash, pl.ExpiresAt, pl.AccessCount, pl.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("insert public link: %w", err)
+	}
+	return nil
+}
+
+// RevokePublicLink marks a public link as revoked
+func (s *PostgresStore) RevokePublicLink(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE public_links SET revoked_at = NOW() WHERE id = $1
+	`, id)
+	if err != nil {
+		return fmt.Errorf("revoke public link: %w", err)
+	}
+	return nil
+}
+
+// IncrementPublicLinkAccess updates the access count and last accessed time
+func (s *PostgresStore) IncrementPublicLinkAccess(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE public_links 
+		SET access_count = access_count + 1, last_accessed_at = NOW() 
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return fmt.Errorf("increment public link access: %w", err)
+	}
+	return nil
+}
+
+// =============================================================================
+// Sprint 3 RBAC: Guest User Helpers
+// =============================================================================
+
+// ListGuestUsers returns all guest users for a space
+func (s *PostgresStore) ListGuestUsers(ctx context.Context, spaceID string) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, display_name, email, role, created_at, external_expires_at
+		FROM users
+		WHERE is_external = true AND external_space_id = $1
+		ORDER BY created_at DESC
+	`, spaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list guest users: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]User, 0)
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.DisplayName, &u.Email, &u.Role, &u.CreatedAt, &u.VerificationExpiresAt); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		items = append(items, u)
+	}
+	return items, rows.Err()
+}
+
+// RemoveGuestUser removes a guest user's space access
+func (s *PostgresStore) RemoveGuestUser(ctx context.Context, userID string) error {
+	// Soft-delete approach: mark as deleted
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE users SET is_external = false, external_space_id = NULL WHERE id = $1
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("remove guest user: %w", err)
 	}
 	return nil
 }

@@ -162,3 +162,104 @@ type AuditEvent struct {
 	Payload    map[string]any
 	CreatedAt  time.Time
 }
+
+type PermissionDenial struct {
+	ID           int64
+	ActorID      string
+	ActorName    string
+	Action       string
+	ResourceType string
+	ResourceID   string
+	Role         string
+	Path         string
+	Method       string
+	CreatedAt    time.Time
+}
+
+type DocumentPermission struct {
+	ID         string
+	DocumentID string
+	UserID     string
+	Role       string
+	GrantedBy  string
+	GrantedAt  time.Time
+	ExpiresAt  *time.Time
+	// Joined fields for API responses
+	UserEmail  string
+	UserName   string
+}
+
+// =============================================================================
+// NEW: Sprint 3 RBAC Models
+// =============================================================================
+
+// Group represents a user group for permission management
+type Group struct {
+	ID             string
+	WorkspaceID    string
+	Name           string
+	Description    string
+	SCIMExternalID *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// GroupMembership links users to groups
+type GroupMembership struct {
+	ID        string
+	GroupID   string
+	UserID    string
+	CreatedAt time.Time
+}
+
+// Permission is a unified permission grant (replaces DocumentPermission)
+// Supports both user and group subjects, and both space and document resources
+type Permission struct {
+	ID           string
+	WorkspaceID  string
+	SubjectType  string // 'user' or 'group'
+	SubjectID    string
+	ResourceType string // 'space' or 'document'
+	ResourceID   string
+	Role         string // 'viewer', 'commenter', 'suggester', 'editor', 'admin'
+	GrantedBy    *string
+	GrantedAt    time.Time
+	ExpiresAt    *time.Time
+	DeletedAt    *time.Time
+}
+
+// PermissionWithDetails includes joined user/group info for API responses
+type PermissionWithDetails struct {
+	Permission
+	// For user subjects
+	UserEmail  *string
+	UserName   *string
+	// For group subjects
+	GroupName  *string
+	MemberCount *int
+}
+
+// PublicLink represents a shareable link for anonymous document access
+type PublicLink struct {
+	ID             string
+	Token          string
+	DocumentID     string
+	CreatedBy      string
+	Role           string // 'viewer' or 'commenter'
+	PasswordHash   *string
+	ExpiresAt      *time.Time
+	AccessCount    int
+	LastAccessedAt *time.Time
+	CreatedAt      time.Time
+	RevokedAt      *time.Time
+}
+
+// EffectivePermission represents a row from the materialized view
+type EffectivePermission struct {
+	UserID       string
+	ResourceType string
+	ResourceID   string
+	WorkspaceID  string
+	Role         string
+	ComputedAt   time.Time
+}
