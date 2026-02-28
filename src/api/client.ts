@@ -795,3 +795,190 @@ export async function exportDocument(
 
   return response.blob();
 }
+
+// =============================================================================
+// Sprint 3: Role & User Management APIs
+// =============================================================================
+
+import type {
+  DocumentShareResponse,
+  Group,
+  GroupMember,
+  GuestUser,
+  PermissionGrant,
+  PermissionRole,
+  PublicLink,
+  ShareMode,
+  SpacePermissionsResponse,
+  SubjectType,
+} from "./types";
+
+// ---------------------------------------------------------------------------
+// Space Permissions
+// ---------------------------------------------------------------------------
+
+export async function fetchSpacePermissions(spaceId: string): Promise<SpacePermissionsResponse> {
+  return apiRequest<SpacePermissionsResponse>(`/api/spaces/${spaceId}/permissions`);
+}
+
+export async function grantSpacePermission(
+  spaceId: string,
+  data: {
+    subjectType: SubjectType;
+    subjectId: string;
+    role: PermissionRole;
+    expiresAt?: string;
+  }
+): Promise<PermissionGrant> {
+  return apiRequest<PermissionGrant>(`/api/spaces/${spaceId}/permissions`, {
+    method: "POST",
+    body: data,
+  });
+}
+
+export async function revokeSpacePermission(spaceId: string, permissionId: string): Promise<void> {
+  return apiRequest<void>(`/api/spaces/${spaceId}/permissions/${permissionId}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Document Permissions & Sharing
+// ---------------------------------------------------------------------------
+
+export async function fetchDocumentShare(documentId: string): Promise<DocumentShareResponse> {
+  return apiRequest<DocumentShareResponse>(`/api/documents/${documentId}/share`);
+}
+
+export async function grantDocumentPermission(
+  documentId: string,
+  data: {
+    email: string;
+    role: PermissionRole;
+    expiresAt?: string;
+  }
+): Promise<PermissionGrant> {
+  return apiRequest<PermissionGrant>(`/api/documents/${documentId}/permissions`, {
+    method: "POST",
+    body: data,
+  });
+}
+
+export async function revokeDocumentPermission(documentId: string, userId: string): Promise<void> {
+  return apiRequest<void>(`/api/documents/${documentId}/permissions/${userId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function updateDocumentShareMode(
+  documentId: string,
+  mode: ShareMode
+): Promise<void> {
+  return apiRequest<void>(`/api/documents/${documentId}/share-mode`, {
+    method: "PUT",
+    body: { mode },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Public Links
+// ---------------------------------------------------------------------------
+
+export async function createPublicLink(
+  documentId: string,
+  data: {
+    role: "viewer" | "commenter";
+    password?: string;
+    expiresAt?: string;
+  }
+): Promise<PublicLink> {
+  return apiRequest<PublicLink>(`/api/documents/${documentId}/public-links`, {
+    method: "POST",
+    body: data,
+  });
+}
+
+export async function revokePublicLink(documentId: string, linkId: string): Promise<void> {
+  return apiRequest<void>(`/api/documents/${documentId}/public-links/${linkId}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Guest Users
+// ---------------------------------------------------------------------------
+
+export async function inviteGuest(
+  spaceId: string,
+  data: {
+    email: string;
+    role: PermissionRole;
+    expiresAt?: string;
+  }
+): Promise<GuestUser> {
+  return apiRequest<GuestUser>(`/api/spaces/${spaceId}/guests`, {
+    method: "POST",
+    body: data,
+  });
+}
+
+export async function removeGuest(spaceId: string, userId: string): Promise<void> {
+  return apiRequest<void>(`/api/spaces/${spaceId}/guests/${userId}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Groups
+// ---------------------------------------------------------------------------
+
+export async function fetchGroups(workspaceId: string): Promise<Group[]> {
+  return apiRequest<{ groups: Group[] }>(`/api/workspaces/${workspaceId}/groups`).then(
+    (r) => r.groups
+  );
+}
+
+export async function createGroup(
+  workspaceId: string,
+  data: { name: string; description?: string }
+): Promise<Group> {
+  return apiRequest<Group>(`/api/workspaces/${workspaceId}/groups`, {
+    method: "POST",
+    body: data,
+  });
+}
+
+export async function updateGroup(
+  groupId: string,
+  data: { name?: string; description?: string }
+): Promise<Group> {
+  return apiRequest<Group>(`/api/groups/${groupId}`, {
+    method: "PUT",
+    body: data,
+  });
+}
+
+export async function deleteGroup(groupId: string): Promise<void> {
+  return apiRequest<void>(`/api/groups/${groupId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function fetchGroupMembers(groupId: string): Promise<GroupMember[]> {
+  return apiRequest<{ members: GroupMember[] }>(`/api/groups/${groupId}/members`).then(
+    (r) => r.members
+  );
+}
+
+export async function addGroupMember(groupId: string, userId: string): Promise<void> {
+  return apiRequest<void>(`/api/groups/${groupId}/members`, {
+    method: "POST",
+    body: { userId },
+  });
+}
+
+export async function removeGroupMember(groupId: string, userId: string): Promise<void> {
+  return apiRequest<void>(`/api/groups/${groupId}/members/${userId}`, {
+    method: "DELETE",
+  });
+}

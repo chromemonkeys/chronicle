@@ -378,3 +378,82 @@ export type SyncEvent =
       payload: unknown;
       receivedAt: string;
     };
+
+// =============================================================================
+// Sprint 3: Role & User Management Types
+// =============================================================================
+
+export type PermissionRole = "viewer" | "commenter" | "suggester" | "editor" | "admin";
+
+export type SubjectType = "user" | "group";
+export type ResourceType = "space" | "document";
+
+export type Group = {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string;
+  memberCount: number;
+  createdAt: string;
+};
+
+export type GroupMember = {
+  id: string;
+  displayName: string;
+  email: string;
+  role: PermissionRole;
+};
+
+export type PermissionGrant = {
+  id: string;
+  subjectType: SubjectType;
+  subjectId: string;
+  resourceType: ResourceType;
+  resourceId: string;
+  role: PermissionRole;
+  grantedBy: string;
+  grantedAt: string;
+  expiresAt?: string;
+  // Joined fields
+  userEmail?: string;
+  userName?: string;
+  groupName?: string;
+  memberCount?: number;
+};
+
+export type PublicLink = {
+  id: string;
+  token: string;
+  documentId: string;
+  role: "viewer" | "commenter";
+  expiresAt?: string;
+  accessCount: number;
+  lastAccessedAt?: string;
+  createdAt: string;
+};
+
+export type GuestUser = {
+  id: string;
+  email: string;
+  displayName: string;
+  role: PermissionRole;
+  expiresAt?: string;
+  createdAt: string;
+};
+
+// Space permissions response
+export type SpacePermissionsResponse = {
+  space: Space;
+  permissions: PermissionGrant[];
+  guests: GuestUser[];
+};
+
+// Document share response
+export type DocumentShareResponse = {
+  document: DocumentSummary;
+  permissions: PermissionGrant[];
+  publicLinks: PublicLink[];
+};
+
+// Share modes
+export type ShareMode = "private" | "space" | "invite" | "link";
