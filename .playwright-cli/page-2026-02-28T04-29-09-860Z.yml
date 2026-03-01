@@ -1,0 +1,62 @@
+- generic [ref=e27]:
+  - banner [ref=e28]:
+    - link "Chronicle." [ref=e29] [cursor=pointer]:
+      - /url: /documents
+    - navigation [ref=e30]:
+      - link "Documents" [ref=e31] [cursor=pointer]:
+        - /url: /documents
+      - link "Approvals" [ref=e32] [cursor=pointer]:
+        - /url: /approvals
+      - link "Users" [ref=e33] [cursor=pointer]:
+        - /url: /admin/users
+      - link "Settings" [ref=e34] [cursor=pointer]:
+        - /url: /settings/organization
+    - generic [ref=e35]:
+      - generic [ref=e36]: Admin User
+      - button "Sign out" [ref=e37] [cursor=pointer]
+  - main [ref=e38]:
+    - generic [ref=e39]:
+      - complementary [ref=e40]:
+        - generic [ref=e41]: Acme Corp
+        - navigation [ref=e42]:
+          - link "All Documents" [ref=e43] [cursor=pointer]:
+            - /url: /documents
+          - link "General 3" [ref=e44] [cursor=pointer]:
+            - /url: /spaces/sp_default
+            - text: General
+            - generic [ref=e45]: "3"
+        - button "+ New space" [ref=e46] [cursor=pointer]
+      - generic [ref=e47]:
+        - generic [ref=e48]:
+          - generic [ref=e49]:
+            - generic [ref=e50]:
+              - heading "All Documents" [level=1] [ref=e51]
+              - paragraph [ref=e52]: Primary browser journey backed by Chronicle API.
+            - button "Create document" [ref=e54] [cursor=pointer]
+          - generic [ref=e55]:
+            - textbox "Global search" [ref=e57]:
+              - /placeholder: Search documents, threads, and decisions...
+            - generic [ref=e58]:
+              - button "All" [ref=e59] [cursor=pointer]
+              - button "Documents" [ref=e60] [cursor=pointer]
+              - button "Threads" [ref=e61] [cursor=pointer]
+              - button "Decisions" [ref=e62] [cursor=pointer]
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - heading "Security Policy Update" [level=2] [ref=e65]
+            - paragraph [ref=e66]: In review · Updated by poi
+            - paragraph [ref=e67]: 1 open threads
+            - link "Open workspace" [ref=e68] [cursor=pointer]:
+              - /url: /workspace/policy-sec
+          - generic [ref=e69]:
+            - 'heading "RFC: OAuth and Magic Link Session Flow" [level=2] [ref=e70]'
+            - paragraph [ref=e71]: Draft · Updated by Avery
+            - paragraph [ref=e72]: 0 open threads
+            - link "Open workspace" [ref=e73] [cursor=pointer]:
+              - /url: /workspace/rfc-auth
+          - generic [ref=e74]:
+            - 'heading "ADR-142: Event Retention Model" [level=2] [ref=e75]'
+            - paragraph [ref=e76]: In review · Updated by Avery
+            - paragraph [ref=e77]: 2 open threads
+            - link "Open workspace" [ref=e78] [cursor=pointer]:
+              - /url: /workspace/adr-142

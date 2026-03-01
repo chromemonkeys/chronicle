@@ -136,6 +136,13 @@ export type WorkspaceHistoryItem = {
   message: string;
   meta: string;
   branch?: string;
+  // Enriched metadata for visualization (populated by frontend inference or backend)
+  eventType?: 'commit' | 'merge' | 'fork' | 'sync' | 'system';
+  mergeSource?: string;        // Branch that was merged (for merge commits)
+  mergeTarget?: string;        // Target of merge (usually "main")
+  parentHashes?: string[];     // Parent commit hashes
+  forkedFrom?: string;         // Hash where branch diverged from main
+  createdAt?: string;          // ISO timestamp
 };
 
 export type WorkspaceDecisionItem = {

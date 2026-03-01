@@ -180,6 +180,17 @@ type dataStore interface {
 	CreatePasswordReset(context.Context, string, string, time.Time) error
 	GetPasswordReset(context.Context, string) (string, error)
 	MarkPasswordResetUsed(context.Context, string) error
+	// Permission methods
+	ListPermissions(context.Context, string, string) ([]store.PermissionWithDetails, error)
+	ListGuestUsers(context.Context, string) ([]store.User, error)
+	UpsertPermission(context.Context, store.Permission) error
+	DeletePermission(context.Context, string) error
+	RemoveGuestUser(context.Context, string) error
+	// Public links
+	InsertPublicLink(context.Context, store.PublicLink) error
+	RevokePublicLink(context.Context, string) error
+	GetPublicLinkByToken(context.Context, string) (*store.PublicLink, error)
+	IncrementPublicLinkAccess(context.Context, string) error
 }
 
 type gitService interface {

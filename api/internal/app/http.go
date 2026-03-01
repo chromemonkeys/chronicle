@@ -33,6 +33,11 @@ func (s *HTTPServer) Handler() http.Handler {
 	return s.withMiddleware(http.HandlerFunc(s.handle))
 }
 
+// forbid writes a 403 Forbidden response and logs the denial
+func (s *HTTPServer) forbid(w http.ResponseWriter, r *http.Request, session Session, action string) {
+	writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
+}
+
 func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		writeJSON(w, http.StatusNoContent, map[string]any{})

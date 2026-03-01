@@ -7,6 +7,7 @@ import (
 
 	"chronicle/api/internal/rbac"
 	"chronicle/api/internal/store"
+	"chronicle/api/internal/util"
 )
 
 // =============================================================================
@@ -88,7 +89,7 @@ func (s *Service) GrantSpacePermission(ctx context.Context, spaceID string, subj
 	if err != nil {
 		return nil, fmt.Errorf("get space: %w", err)
 	}
-	if space == nil {
+	if space.ID == "" {
 		return nil, &DomainError{
 			Status:  404,
 			Code:    "NOT_FOUND",
@@ -97,7 +98,7 @@ func (s *Service) GrantSpacePermission(ctx context.Context, spaceID string, subj
 	}
 
 	perm := store.Permission{
-		ID:           generateID(),
+		ID:           util.NewID("perm"),
 		WorkspaceID:  space.WorkspaceID,
 		SubjectType:  subjectType,
 		SubjectID:    subjectID,
@@ -166,7 +167,7 @@ func (s *Service) InviteGuest(ctx context.Context, spaceID, email string, role s
 	var userID string
 	if existingUser.ID == "" {
 		// Create new guest user
-		userID = generateID()
+		userID = util.NewID("usr")
 		user := store.User{
 			ID:          userID,
 			Email:       email,
@@ -236,7 +237,7 @@ func (s *Service) CreatePublicLink(ctx context.Context, documentID, role string,
 	}
 
 	link := store.PublicLink{
-		ID:        generateID(),
+		ID:        util.NewID("link"),
 		Token:     token,
 		DocumentID: documentID,
 		CreatedBy: createdBy,

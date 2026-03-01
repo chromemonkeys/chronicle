@@ -1,0 +1,3 @@
+[   43470ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ http://localhost:8080/api/admin/users?page=1&pageSize=50:0
+[   65483ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ http://localhost:8080/api/admin/workspace:0
+[   65483ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ http://localhost:8080/api/admin/workspace/stats:0

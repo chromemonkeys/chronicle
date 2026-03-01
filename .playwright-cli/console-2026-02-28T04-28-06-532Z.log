@@ -1,0 +1,98 @@
+[     240ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:4435
+[     262ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5173/api/session:0
+[     273ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5173/api/session:0
+[    2419ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/favicon.ico:0
+[   14202ms] Error: useAuth must be used within AuthProvider
+    at useAuth (http://localhost:5173/src/state/AuthProvider.tsx:95:11)
+    at SignInPage (http://localhost:5173/src/views/SignInPage.tsx:26:74)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:11548:26)
+    at mountIndeterminateComponent (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:14926:21)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:15914:22)
+    at HTMLUnknownElement.callCallback2 (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:3674:22)
+    at Object.invokeGuardedCallbackDev (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:3699:24)
+    at invokeGuardedCallback (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:3733:39)
+    at beginWork$1 (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19765:15)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19198:20)
+[   14206ms] [ERROR] Error handled by React Router default ErrorBoundary: Error: useAuth must be used within AuthProvider
+    at useAuth (http://localhost:5173/src/state/AuthProvider.tsx:95:11)
+    at SignInPage (http://localhost:5173/src/views/SignInPage.tsx:26:74)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:11548:26)
+    at mountIndeterminateComponent (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:14926:21)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:15914:22)
+    at beginWork$1 (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19753:22)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19198:20)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19137:13)
+    at renderRootSync (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19116:15)
+    at performSyncWorkOnRoot (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:18874:28) @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:4072
+[   14206ms] [ERROR] Error handled by React Router default ErrorBoundary: Error: useAuth must be used within AuthProvider
+    at useAuth (http://localhost:5173/src/state/AuthProvider.tsx:95:11)
+    at SignInPage (http://localhost:5173/src/views/SignInPage.tsx:26:74)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:11548:26)
+    at mountIndeterminateComponent (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:14926:21)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:15914:22)
+    at beginWork$1 (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19753:22)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19198:20)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19137:13)
+    at renderRootSync (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19116:15)
+    at performSyncWorkOnRoot (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:18874:28) @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:4072
+[   14209ms] Error: useAuth must be used within AuthProvider
+    at useAuth (http://localhost:5173/src/state/AuthProvider.tsx:95:11)
+    at SignInPage (http://localhost:5173/src/views/SignInPage.tsx:26:74)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:11548:26)
+    at mountIndeterminateComponent (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:14926:21)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:15914:22)
+    at HTMLUnknownElement.callCallback2 (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:3674:22)
+    at Object.invokeGuardedCallbackDev (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:3699:24)
+    at invokeGuardedCallback (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:3733:39)
+    at beginWork$1 (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19765:15)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19198:20)
+[   14209ms] [ERROR] Error handled by React Router default ErrorBoundary: Error: useAuth must be used within AuthProvider
+    at useAuth (http://localhost:5173/src/state/AuthProvider.tsx:95:11)
+    at SignInPage (http://localhost:5173/src/views/SignInPage.tsx:26:74)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:11548:26)
+    at mountIndeterminateComponent (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:14926:21)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:15914:22)
+    at beginWork$1 (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19753:22)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19198:20)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19137:13)
+    at renderRootSync (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19116:15)
+    at recoverFromConcurrentError (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:18736:28) @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:4072
+[   14210ms] [ERROR] Error handled by React Router default ErrorBoundary: Error: useAuth must be used within AuthProvider
+    at useAuth (http://localhost:5173/src/state/AuthProvider.tsx:95:11)
+    at SignInPage (http://localhost:5173/src/views/SignInPage.tsx:26:74)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:11548:26)
+    at mountIndeterminateComponent (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:14926:21)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:15914:22)
+    at beginWork$1 (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19753:22)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19198:20)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19137:13)
+    at renderRootSync (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19116:15)
+    at recoverFromConcurrentError (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:18736:28) @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:4072
+[   14212ms] [ERROR] The above error occurred in the <SignInPage> component:
+
+    at SignInPage (http://localhost:5173/src/views/SignInPage.tsx:25:20)
+    at RenderedRoute (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:4131:5)
+    at RenderErrorBoundary (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:4091:5)
+    at DataRoutes (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:5282:5)
+    at Router (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:4544:15)
+    at RouterProvider (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:5096:5)
+    at PageLayoutProvider (http://localhost:5173/src/state/PageLayoutProvider.tsx:42:38)
+    at AuthProvider (http://localhost:5173/src/state/AuthProvider.tsx?t=1772252900619:21:32)
+
+React will try to recreate this component tree from scratch using the error boundary you provided, RenderErrorBoundary. @ http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:14031
+[   14212ms] [ERROR] React Router caught the following error during render Error: useAuth must be used within AuthProvider
+    at useAuth (http://localhost:5173/src/state/AuthProvider.tsx:95:11)
+    at SignInPage (http://localhost:5173/src/views/SignInPage.tsx:26:74)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:11548:26)
+    at mountIndeterminateComponent (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:14926:21)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:15914:22)
+    at beginWork$1 (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19753:22)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19198:20)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19137:13)
+    at renderRootSync (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:19116:15)
+    at recoverFromConcurrentError (http://localhost:5173/node_modules/.vite/deps/chunk-TYILIMWK.js?v=1b9c5243:18736:28) {componentStack: 
+    at SignInPage (http://localhost:5173/src/view…src/state/AuthProvider.tsx?t=1772252900619:21:32)} @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:4117
+[   14258ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5173/api/session:0
+[   15238ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=1b9c5243:4435
+[   15250ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5173/api/session:0
+[   15258ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5173/api/session:0

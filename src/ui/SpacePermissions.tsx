@@ -132,7 +132,7 @@ export function SpacePermissions({ space, isOpen, onClose }: SpacePermissionsPro
             { id: "groups", label: `Groups (${groupPermissions.length})` },
             { id: "guests", label: `Guests (${guests.length})` },
           ]}
-          activeTab={activeTab}
+          active={activeTab}
           onTabChange={(id) => setActiveTab(id as Tab)}
         />
 

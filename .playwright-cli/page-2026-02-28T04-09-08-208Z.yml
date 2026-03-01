@@ -1,0 +1,37 @@
+- generic [ref=e27]:
+  - banner [ref=e28]:
+    - link "Chronicle." [ref=e29] [cursor=pointer]:
+      - /url: /documents
+    - navigation [ref=e30]:
+      - link "Documents" [ref=e31] [cursor=pointer]:
+        - /url: /documents
+      - link "Approvals" [ref=e32] [cursor=pointer]:
+        - /url: /approvals
+      - link "Users" [active] [ref=e33] [cursor=pointer]:
+        - /url: /admin/users
+    - generic [ref=e34]:
+      - generic [ref=e35]: Test Admin
+      - button "Sign out" [ref=e36] [cursor=pointer]
+  - main [ref=e37]:
+    - generic [ref=e78]:
+      - generic [ref=e79]:
+        - heading "User Management" [level=1] [ref=e80]
+        - generic [ref=e81]:
+          - button "Organization Settings" [ref=e82] [cursor=pointer]
+          - button "Invite Users" [ref=e83] [cursor=pointer]
+      - alert [ref=e84]:
+        - button "×" [ref=e85] [cursor=pointer]
+        - text: Insufficient permissions
+      - generic [ref=e86]:
+        - textbox "Search by name or email..." [ref=e87]
+        - combobox [ref=e88]:
+          - option "All Roles" [selected]
+          - option "Viewer"
+          - option "Commenter"
+          - option "Suggester"
+          - option "Editor"
+          - option "Admin"
+        - button "Refresh" [ref=e89] [cursor=pointer]
+      - generic [ref=e90]:
+        - paragraph [ref=e91]: Failed to load users
+        - button "Retry" [ref=e92] [cursor=pointer]

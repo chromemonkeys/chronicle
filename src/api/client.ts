@@ -60,7 +60,7 @@ function clearLocalUser() {
 }
 
 type RequestOptions = {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
 };
 

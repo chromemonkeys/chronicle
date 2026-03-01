@@ -6,7 +6,6 @@ import {
   revokeDocumentPermission,
   createPublicLink,
   revokePublicLink,
-  updateDocumentShareMode,
 } from "../api/client";
 import { Dialog } from "./Dialog";
 
@@ -70,15 +69,6 @@ export function ShareDialog({ documentId, documentTitle, isOpen, onClose }: Shar
       loadShareData();
     }
   }, [isOpen, loadShareData]);
-
-  const handleShareModeChange = async (mode: ShareMode) => {
-    try {
-      await updateDocumentShareMode(documentId, mode);
-      setShareMode(mode);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update share mode");
-    }
-  };
 
   const handleAddPerson = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,6 +150,7 @@ export function ShareDialog({ documentId, documentTitle, isOpen, onClose }: Shar
                   name="shareMode"
                   value={mode}
                   checked={shareMode === mode}
+                  onChange={() => setShareMode(mode)}
                 />
                 <span>{shareModeLabels[mode]}</span>
               </label>

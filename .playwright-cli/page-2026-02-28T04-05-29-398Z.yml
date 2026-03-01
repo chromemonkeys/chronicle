@@ -1,0 +1,18 @@
+- generic [ref=e4]:
+  - heading "Welcome to Chronicle" [level=1] [ref=e5]
+  - paragraph [ref=e6]: Web-first collaborative documentation with persistent deliberation.
+  - generic [ref=e7]:
+    - button "Sign In" [ref=e8] [cursor=pointer]
+    - button "Sign Up" [ref=e9] [cursor=pointer]
+  - generic [ref=e10]:
+    - generic [ref=e11]: Email
+    - textbox "Email" [ref=e12]:
+      - /placeholder: you@example.com
+    - generic [ref=e13]: Password
+    - textbox "Password" [ref=e14]:
+      - /placeholder: Enter your password
+    - link "Forgot password?" [ref=e16] [cursor=pointer]:
+      - /url: /forgot-password
+    - button "Sign In" [ref=e17] [cursor=pointer]
+  - generic [ref=e19]: or
+  - button "Use demo mode (no email required)" [ref=e20] [cursor=pointer]
