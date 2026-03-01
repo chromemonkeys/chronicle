@@ -5539,6 +5539,20 @@ button:focus-visible {
   font-weight: 500;
 }
 
+.bg-row--branch {
+  opacity: 0.85;
+}
+
+.bg-row--branch .bg-row-msg {
+  font-style: italic;
+}
+
+.bg-row-branch-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 .bg-row-hash {
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;

@@ -173,94 +173,191 @@ export function buildBranchGraph(
     return true;
   });
 
-  // Detect merges and assign each a unique branch color + staggered column
-  // Each merge commit from a different proposal gets its own color
+  // ── Phase 1: Classify commits ──────────────────────────────────────
+  // Each merge commit implies a proposal that forked, had work, and merged.
+  // We synthesize branch topology: for each merge we insert a "proposal work"
+  // commit on column 1, creating a fork→work→merge pattern.
+
   type MergeInfo = {
     propId: string;
     shortId: string;
     color: string;
-    row: number;
+    author: string;
+    timeAgo: string;
   };
-  const mergeInfoMap = new Map<string, MergeInfo>(); // hash → info
+  const mergeInfoByHash = new Map<string, MergeInfo>();
   let colorIdx = 0;
 
-  items.forEach((item, idx) => {
+  items.forEach((item) => {
     if (isMergeCommit(item)) {
       const propId = extractPropId(item.message);
       if (propId) {
-        mergeInfoMap.set(item.hash, {
+        mergeInfoByHash.set(item.hash, {
           propId,
-          shortId: propId.slice(5, 11), // first 6 hex chars after "prop_"
+          shortId: propId.slice(5, 11),
           color: BRANCH_COLORS[colorIdx % BRANCH_COLORS.length],
-          row: idx,
+          author: extractAuthorFromMeta(item.meta),
+          timeAgo: extractTimeFromMeta(item.meta),
         });
         colorIdx++;
       }
     }
   });
 
-  // Build main branch
-  const mainBranch: BranchGraphBranch = {
-    name: "main",
-    displayName: "main",
-    color: MAIN_COLOR,
-    column: 0,
-    head: items[0]?.hash || "",
-    status: "active",
-    commitCount: items.length,
-    startRow: items.length - 1,
-    endRow: 0,
-  };
+  // ── Phase 2: Build interleaved row list ─────────────────────────────
+  // For each merge commit on main, we insert an extra row AFTER it for the
+  // synthetic proposal work commit on column 1. This produces:
+  //   Row N:   merge node on main (column 0)  ← merge point
+  //   Row N+1: proposal work node (column 1)  ← synthetic commit
+  // Non-merge commits stay on main (column 0) with no extra row.
 
-  // If there's a current active proposal, track it as a branch
-  const activeBranches: BranchGraphBranch[] = [];
+  const commits: BranchGraphCommit[] = [];
+  const branches: BranchGraphBranch[] = [];
+  let row = 0;
+
+  // Track branches for the legend
+  const branchNames = new Set<string>();
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const merge = mergeInfoByHash.get(item.hash);
+    const author = extractAuthorFromMeta(item.meta);
+    const timeAgo = extractTimeFromMeta(item.meta);
+
+    if (merge) {
+      // ── Merge commit on main rail ──
+      commits.push({
+        hash: item.hash,
+        message: cleanMessage(item.message),
+        author,
+        timeAgo,
+        createdAt: item.createdAt || "",
+        branch: "main",
+        branchColor: MAIN_COLOR,
+        parentHashes: [],
+        column: 0,
+        row,
+        isMerge: true,
+        isFork: false,
+        mergeSource: merge.propId,
+        mergeColor: merge.color,
+        forkedFrom: undefined,
+      });
+      row++;
+
+      // ── Synthetic proposal work commit on branch lane ──
+      const proposalName = `#${merge.shortId}`;
+      commits.push({
+        hash: `synth-${merge.propId}`,
+        message: `Proposal ${proposalName} work`,
+        author: merge.author,
+        timeAgo: merge.timeAgo,
+        createdAt: "",
+        branch: merge.propId,
+        branchColor: merge.color,
+        parentHashes: [],
+        column: 1,
+        row,
+        isMerge: false,
+        isFork: false,
+        mergeSource: undefined,
+        mergeColor: merge.color,
+        forkedFrom: undefined,
+      });
+      branchNames.add(proposalName);
+      row++;
+    } else {
+      // ── Regular commit on main rail ──
+      commits.push({
+        hash: item.hash,
+        message: cleanMessage(item.message),
+        author,
+        timeAgo,
+        createdAt: item.createdAt || "",
+        branch: "main",
+        branchColor: MAIN_COLOR,
+        parentHashes: [],
+        column: 0,
+        row,
+        isMerge: false,
+        isFork: false,
+        mergeSource: undefined,
+        mergeColor: undefined,
+        forkedFrom: undefined,
+      });
+      row++;
+    }
+  }
+
+  // ── Phase 3: If there's an active (unmerged) proposal, show it ──────
   if (proposalId && branchName !== "main") {
+    const activeColor = BRANCH_COLORS[colorIdx % BRANCH_COLORS.length];
     const shortName = branchName
       .replace("proposals/", "")
       .replace("proposal-", "")
       .slice(0, 12);
-    activeBranches.push({
-      name: branchName,
-      displayName: shortName || "proposal",
-      color: BRANCH_COLORS[colorIdx % BRANCH_COLORS.length],
-      column: 1,
-      head: "",
-      status: "active",
-      commitCount: 0,
-      startRow: 0,
-      endRow: 0,
-    });
+
+    // Find proposal-specific commits (ones with branch matching proposal)
+    // These come from historyData when viewing a proposal
+    const proposalCommits = items.filter(
+      (item) => item.branch && item.branch !== "main" && !mergeInfoByHash.has(item.hash)
+    );
+
+    if (proposalCommits.length > 0) {
+      // Insert active proposal commits at the top (newest)
+      // Shift all existing rows down
+      const shift = proposalCommits.length;
+      commits.forEach((c) => (c.row += shift));
+
+      proposalCommits.forEach((item, idx) => {
+        commits.unshift({
+          hash: item.hash,
+          message: cleanMessage(item.message),
+          author: extractAuthorFromMeta(item.meta),
+          timeAgo: extractTimeFromMeta(item.meta),
+          createdAt: item.createdAt || "",
+          branch: branchName,
+          branchColor: activeColor,
+          parentHashes: [],
+          column: 1,
+          row: idx,
+          isMerge: false,
+          isFork: false,
+          mergeSource: undefined,
+          mergeColor: activeColor,
+          forkedFrom: undefined,
+        });
+      });
+
+      branches.push({
+        name: branchName,
+        displayName: shortName || "proposal",
+        color: activeColor,
+        column: 1,
+        head: proposalCommits[0]?.hash || "",
+        status: "active",
+        commitCount: proposalCommits.length,
+        startRow: 0,
+        endRow: proposalCommits.length - 1,
+      });
+    }
   }
 
-  // Build commits — all on main (column 0), merges annotated
-  const commits: BranchGraphCommit[] = items.map((item, index) => {
-    const merge = mergeInfoMap.get(item.hash);
-    const author = extractAuthorFromMeta(item.meta);
-    const timeAgo = extractTimeFromMeta(item.meta);
-
-    return {
-      hash: item.hash,
-      message: cleanMessage(item.message),
-      author,
-      timeAgo,
-      createdAt: item.createdAt || "",
-      branch: "main",
-      branchColor: MAIN_COLOR,
-      parentHashes: index < items.length - 1 ? [items[index + 1].hash] : [],
-      column: 0,
-      row: index,
-      isMerge: !!merge,
-      isFork: false,
-      mergeSource: merge?.propId,
-      mergeColor: merge?.color,
-      forkedFrom: undefined,
-    };
+  // ── Build main branch entry ──────────────────────────────────────────
+  const mainCommits = commits.filter((c) => c.column === 0);
+  branches.unshift({
+    name: "main",
+    displayName: "main",
+    color: MAIN_COLOR,
+    column: 0,
+    head: mainCommits[0]?.hash || "",
+    status: "active",
+    commitCount: mainCommits.length,
+    startRow: mainCommits.length > 0 ? mainCommits[mainCommits.length - 1].row : 0,
+    endRow: mainCommits.length > 0 ? mainCommits[0].row : 0,
   });
 
-  return {
-    commits,
-    branches: [mainBranch, ...activeBranches],
-  };
+  return { commits, branches };
 }
 
 /* ------------------------------------------------------------------ */
@@ -278,43 +375,53 @@ function commitY(row: number, rowH: number): number {
 }
 
 /**
- * Draw a merge arc: a smooth curve from the branch lane into the main rail.
- * The branch "stub" starts halfway between this commit and the one below,
- * runs vertically in the branch lane, then curves into main at this row.
+ * Draw a fork connector: smooth bezier from main rail down to branch node.
+ * Goes from main (col 0) at forkRow+offset down/right to branch node at branchRow.
  */
-function mergeArc(
+function forkPath(
   mainCol: number,
   branchCol: number,
-  mergeRow: number,
+  forkRow: number,   // the row BELOW the branch node (where it forks from main)
+  branchRow: number, // the branch commit row
   rowH: number,
   expanded: boolean,
-  totalRows: number,
 ): string {
   const mainX = railX(mainCol, expanded);
   const branchX = railX(branchCol, expanded);
-  const mergeY = commitY(mergeRow, rowH);
-  // Fork point: midway to next commit (or a bit below if last merge)
-  const forkRow = Math.min(mergeRow + 1, totalRows - 1);
-  const forkY = mergeRow === totalRows - 1
-    ? mergeY + rowH * 0.7
-    : commitY(forkRow, rowH);
-
-  // Path: fork from main → go right to branch lane → run up → curve into main
-  const d = [
-    // Fork curve: main → branch lane
-    `M ${mainX} ${forkY}`,
-    `C ${mainX + (branchX - mainX) * 0.3} ${forkY},`,
-    `  ${branchX} ${forkY - (forkY - mergeY) * 0.15},`,
-    `  ${branchX} ${mergeY + rowH * 0.3}`,
-    // Vertical run in branch lane
-    `L ${branchX} ${mergeY + rowH * 0.05}`,
-    // Merge curve: branch lane → main
-    `C ${branchX} ${mergeY - rowH * 0.05},`,
-    `  ${branchX - (branchX - mainX) * 0.3} ${mergeY},`,
-    `  ${mainX} ${mergeY}`,
+  // Fork starts from between the merge row and the branch row on main
+  const startY = commitY(forkRow, rowH) - rowH * 0.3;
+  const endY = commitY(branchRow, rowH);
+  const dx = branchX - mainX;
+  return [
+    `M ${mainX} ${startY}`,
+    `C ${mainX + dx * 0.4} ${startY},`,
+    `  ${branchX} ${startY + (endY - startY) * 0.4},`,
+    `  ${branchX} ${endY}`,
   ].join(" ");
+}
 
-  return d;
+/**
+ * Draw a merge connector: smooth bezier from branch node up to merge point on main.
+ */
+function mergePath(
+  mainCol: number,
+  branchCol: number,
+  branchRow: number, // where the branch commit is
+  mergeRow: number,  // where it merges into main
+  rowH: number,
+  expanded: boolean,
+): string {
+  const mainX = railX(mainCol, expanded);
+  const branchX = railX(branchCol, expanded);
+  const startY = commitY(branchRow, rowH);
+  const endY = commitY(mergeRow, rowH);
+  const dx = branchX - mainX;
+  return [
+    `M ${branchX} ${startY}`,
+    `C ${branchX} ${startY - (startY - endY) * 0.6},`,
+    `  ${mainX + dx * 0.4} ${endY},`,
+    `  ${mainX} ${endY}`,
+  ].join(" ");
 }
 
 /* ------------------------------------------------------------------ */
@@ -368,7 +475,9 @@ function BranchLegend({
   commits: BranchGraphCommit[];
 }) {
   const mergeCount = commits.filter((c) => c.isMerge).length;
-  const regularCount = commits.length - mergeCount;
+  const branchCommitCount = commits.filter((c) => c.column > 0 && !c.hash.startsWith("synth-")).length;
+  const mainDirectCount = commits.filter((c) => c.column === 0 && !c.isMerge).length;
+  const proposalCount = commits.filter((c) => c.hash.startsWith("synth-")).length + branchCommitCount;
 
   return (
     <div className="bg-legend">
@@ -392,19 +501,27 @@ function BranchLegend({
             <span className="bg-legend-name">merge</span>
           </div>
         )}
+        <div className="bg-legend-item">
+          <svg width="10" height="10" viewBox="0 0 10 10" style={{ flexShrink: 0 }}>
+            <circle cx="5" cy="5" r="3" fill="var(--ink-3)" />
+          </svg>
+          <span className="bg-legend-name">commit</span>
+        </div>
       </div>
       <div className="bg-legend-stats">
-        <span>{commits.length} commits</span>
         {mergeCount > 0 && (
+          <span>{mergeCount} merged proposals</span>
+        )}
+        {proposalCount > 0 && (
           <>
-            <span className="bg-legend-dot" />
-            <span>{mergeCount} merged proposals</span>
+            {mergeCount > 0 && <span className="bg-legend-dot" />}
+            <span>{proposalCount} proposal commits</span>
           </>
         )}
-        {regularCount > 0 && (
+        {mainDirectCount > 0 && (
           <>
             <span className="bg-legend-dot" />
-            <span>{regularCount} direct</span>
+            <span>{mainDirectCount} direct</span>
           </>
         )}
       </div>
@@ -459,7 +576,10 @@ export function BranchGraph({
   const expanded = isExpanded;
   // Graph area: main rail + one branch lane + padding
   const graphLeftWidth = railX(1, expanded) + (expanded ? COL_WIDTH_EXPANDED : COL_WIDTH);
-  const contentHeight = TOP_PAD + data.commits.length * rowHeight + 16;
+  const totalRows = data.commits.length > 0
+    ? data.commits[data.commits.length - 1].row + 1
+    : 0;
+  const contentHeight = TOP_PAD + totalRows * rowHeight + 16;
 
   // Hover handler
   const handleCommitHover = useCallback(
@@ -500,80 +620,144 @@ export function BranchGraph({
 
     const nr = expanded ? NODE_R + 1 : NODE_R;
     const nrm = expanded ? NODE_R_MERGE + 1 : NODE_R_MERGE;
+    const totalRows = data.commits.length > 0
+      ? data.commits[data.commits.length - 1].row + 1
+      : 0;
 
-    // --- Main rail ---
+    // --- Main rail (continuous vertical line through all main-column commits) ---
+    const mainCommits = data.commits.filter((c) => c.column === 0);
     const mainX = railX(0, expanded);
-    _rails.push(
-      <line
-        key="rail-main"
-        x1={mainX}
-        y1={commitY(0, rowHeight) - 4}
-        x2={mainX}
-        y2={commitY(data.commits.length - 1, rowHeight) + 4}
-        className="bg-rail bg-rail--main"
-        stroke={MAIN_COLOR}
-        strokeWidth={LINE_W}
-      />
-    );
+    if (mainCommits.length > 0) {
+      _rails.push(
+        <line
+          key="rail-main"
+          x1={mainX}
+          y1={commitY(mainCommits[0].row, rowHeight) - 4}
+          x2={mainX}
+          y2={commitY(mainCommits[mainCommits.length - 1].row, rowHeight) + 4}
+          className="bg-rail bg-rail--main"
+          stroke={MAIN_COLOR}
+          strokeWidth={LINE_W}
+        />
+      );
+    }
 
-    // --- Merge arcs (one per merge commit) ---
-    data.commits.forEach((commit) => {
+    // --- Branch connectors (fork + merge paths for each proposal) ---
+    // For each merge commit, find its paired synthetic branch commit (next row, col 1)
+    data.commits.forEach((commit, idx) => {
       if (commit.isMerge && commit.mergeColor) {
+        // The synthetic branch commit is the next commit in the array at column 1
+        const branchCommit = data.commits[idx + 1];
+        if (branchCommit && branchCommit.column === 1) {
+          const color = commit.mergeColor;
+
+          // Fork: main rail at branchRow → branch node
+          // We fork from the main rail at a point below the branch node
+          _connectors.push(
+            <path
+              key={`fork-${commit.hash}`}
+              d={forkPath(0, 1, branchCommit.row, branchCommit.row, rowHeight, expanded)}
+              className="bg-connector bg-connector--fork"
+              stroke={color}
+              strokeWidth={LINE_W}
+              fill="none"
+            />
+          );
+
+          // Merge: branch node → merge point on main
+          _connectors.push(
+            <path
+              key={`merge-${commit.hash}`}
+              d={mergePath(0, 1, branchCommit.row, commit.row, rowHeight, expanded)}
+              className="bg-connector bg-connector--merge"
+              stroke={color}
+              strokeWidth={LINE_W}
+              fill="none"
+            />
+          );
+        }
+      }
+    });
+
+    // --- Active proposal branch connectors (unmerged) ---
+    const activeBranchCommits = data.commits.filter(
+      (c) => c.column === 1 && !c.hash.startsWith("synth-")
+    );
+    if (activeBranchCommits.length > 0) {
+      const branchX = railX(1, expanded);
+      const firstActive = activeBranchCommits[0];
+      const lastActive = activeBranchCommits[activeBranchCommits.length - 1];
+      const activeColor = firstActive.branchColor;
+
+      // Branch rail for active proposal
+      _rails.push(
+        <line
+          key="rail-active"
+          x1={branchX}
+          y1={commitY(firstActive.row, rowHeight) - 4}
+          x2={branchX}
+          y2={commitY(lastActive.row, rowHeight) + 4}
+          className="bg-rail bg-rail--branch"
+          stroke={activeColor}
+          strokeWidth={LINE_W}
+        />
+      );
+
+      // Fork connector from main to the active branch
+      const forkFromRow = lastActive.row + 1;
+      if (forkFromRow < totalRows) {
         _connectors.push(
           <path
-            key={`arc-${commit.hash}`}
-            d={mergeArc(0, 1, commit.row, rowHeight, expanded, data.commits.length)}
-            className="bg-connector bg-connector--merge"
-            stroke={commit.mergeColor}
+            key="fork-active"
+            d={forkPath(0, 1, forkFromRow, lastActive.row, rowHeight, expanded)}
+            className="bg-connector bg-connector--fork"
+            stroke={activeColor}
             strokeWidth={LINE_W}
             fill="none"
           />
         );
       }
-    });
+    }
 
     // --- Commit nodes ---
     data.commits.forEach((commit) => {
-      const x = mainX;
-      const y = commitY(commit.row, rowHeight);
+      const x = railX(commit.column, expanded);
+      const cy = commitY(commit.row, rowHeight);
       const isHovered = commit.hash === hoveredCommit;
+      const nodeColor = commit.mergeColor || commit.branchColor;
 
       if (commit.isMerge) {
+        // Diamond node for merge commits
         const s = isHovered ? nrm + 1 : nrm;
         _nodes.push(
           <g key={`node-${commit.hash}`} className="bg-node bg-node--merge">
             {isHovered && (
-              <circle cx={x} cy={y} r={s + 5} className="bg-node-glow"
-                fill={commit.mergeColor || MAIN_COLOR} />
+              <circle cx={x} cy={cy} r={s + 5} className="bg-node-glow"
+                fill={nodeColor} />
             )}
             <rect
-              x={x - s}
-              y={y - s}
-              width={s * 2}
-              height={s * 2}
+              x={x - s} y={cy - s}
+              width={s * 2} height={s * 2}
               rx={1.5}
-              transform={`rotate(45 ${x} ${y})`}
-              fill={commit.mergeColor || MAIN_COLOR}
-              stroke="var(--paper)"
-              strokeWidth={2}
+              transform={`rotate(45 ${x} ${cy})`}
+              fill={nodeColor}
+              stroke="var(--paper)" strokeWidth={2}
             />
           </g>
         );
       } else {
+        // Circle node for regular commits (main or branch)
         const r = isHovered ? nr + 1 : nr;
         _nodes.push(
           <g key={`node-${commit.hash}`} className="bg-node bg-node--commit">
             {isHovered && (
-              <circle cx={x} cy={y} r={r + 5} className="bg-node-glow"
-                fill={MAIN_COLOR} />
+              <circle cx={x} cy={cy} r={r + 5} className="bg-node-glow"
+                fill={nodeColor} />
             )}
             <circle
-              cx={x}
-              cy={y}
-              r={r}
-              fill={MAIN_COLOR}
-              stroke="var(--paper)"
-              strokeWidth={2}
+              cx={x} cy={cy} r={r}
+              fill={nodeColor}
+              stroke="var(--paper)" strokeWidth={2}
             />
           </g>
         );
@@ -643,26 +827,36 @@ export function BranchGraph({
       <div className="bg-rows" style={{ paddingTop: TOP_PAD }}>
         {data.commits.map((commit) => {
           const isHovered = commit.hash === hoveredCommit;
+          const isBranchCommit = commit.column > 0;
+          const isSynthetic = commit.hash.startsWith("synth-");
+          const nodeColor = commit.mergeColor || commit.branchColor;
 
           return (
             <div
               key={commit.hash}
-              className={`bg-row ${isHovered ? "bg-row--hover" : ""} ${commit.isMerge ? "bg-row--merge" : ""}`}
+              className={[
+                "bg-row",
+                isHovered ? "bg-row--hover" : "",
+                commit.isMerge ? "bg-row--merge" : "",
+                isBranchCommit ? "bg-row--branch" : "",
+              ].filter(Boolean).join(" ")}
               style={{
                 height: rowHeight,
                 paddingLeft: graphLeftWidth,
               }}
               onMouseEnter={(e) => handleCommitHover(commit.hash, e)}
               onMouseLeave={() => handleCommitHover(null)}
-              onClick={() => onSelectCommit?.(commit.hash)}
+              onClick={() => !isSynthetic && onSelectCommit?.(commit.hash)}
               data-commit-hash={commit.hash}
             >
-              <span className="bg-row-hash">{shortHash(commit.hash)}</span>
+              <span className="bg-row-hash" style={isBranchCommit ? { color: nodeColor } : undefined}>
+                {isSynthetic ? "" : shortHash(commit.hash)}
+              </span>
               <span className="bg-row-msg">
                 {commit.isMerge && (
                   <span
                     className="bg-row-merge-icon"
-                    style={{ color: commit.mergeColor || MAIN_COLOR }}
+                    style={{ color: nodeColor }}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
                       stroke="currentColor" strokeWidth="2.5">
@@ -672,16 +866,28 @@ export function BranchGraph({
                     </svg>
                   </span>
                 )}
-                {truncate(commit.message, expanded ? 80 : 28)}
+                {isBranchCommit && !commit.isMerge && (
+                  <span
+                    className="bg-row-branch-icon"
+                    style={{ color: nodeColor }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5">
+                      <line x1="6" y1="3" x2="6" y2="15" />
+                      <circle cx="18" cy="6" r="3" />
+                      <circle cx="6" cy="18" r="3" />
+                      <path d="M18 9a9 9 0 0 1-9 9" />
+                    </svg>
+                  </span>
+                )}
+                <span style={isBranchCommit ? { color: nodeColor, fontStyle: "italic" } : undefined}>
+                  {truncate(commit.message, expanded ? 80 : 28)}
+                </span>
               </span>
               <span className="bg-row-author">
                 <span
                   className="bg-row-avatar"
-                  style={{
-                    background: commit.isMerge
-                      ? (commit.mergeColor || MAIN_COLOR)
-                      : MAIN_COLOR,
-                  }}
+                  style={{ background: nodeColor }}
                 >
                   {commit.author.slice(0, 2).toUpperCase()}
                 </span>
@@ -710,8 +916,8 @@ export function BranchGraph({
         {nodes}
       </svg>
 
-      {/* Tooltip */}
-      {hoveredCommitData && tooltipPos && (
+      {/* Tooltip — skip for synthetic commits */}
+      {hoveredCommitData && tooltipPos && !hoveredCommitData.hash.startsWith("synth-") && (
         <CommitTooltip
           commit={hoveredCommitData}
           x={tooltipPos.x}
@@ -771,7 +977,7 @@ export function BranchGraph({
         </div>
         <div className="bg-header-right">
           <span className="bg-header-count">
-            {data.commits.length}
+            {data.commits.filter(c => !c.hash.startsWith("synth-")).length}
             <span className="bg-header-count-label"> commits</span>
           </span>
           {onExpand && (
