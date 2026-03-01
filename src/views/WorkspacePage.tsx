@@ -44,6 +44,7 @@ import type {
 } from "../api/types";
 import { ApprovalChain } from "../ui/ApprovalChain";
 import { BlameView } from "../ui/BlameView";
+import { BranchGraph } from "../ui/BranchGraph";
 import { DecisionLogTable } from "../ui/DecisionLogTable";
 import { DocumentTree } from "../ui/DocumentTree";
 import { EmptyStateError, EmptyState } from "../ui/EmptyState";
@@ -71,7 +72,7 @@ import {
   trackMergeBlocked,
 } from "../lib/metrics";
 
-type PanelTab = "discussions" | "approvals" | "history" | "decisions" | "changes" | "blame";
+type PanelTab = "discussions" | "approvals" | "history" | "decisions" | "changes" | "blame" | "branches";
 type DiffMode = "split" | "unified";
 type ViewState = "success" | "loading" | "empty" | "error";
 type WorkspaceMode = "proposal" | "review";
@@ -194,6 +195,20 @@ const panelTabs: { id: PanelTab; label: string; ariaLabel: string; icon: JSX.Ele
       <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
         <circle cx="10" cy="7" r="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
         <path d="M4 17c0-3 2.7-5 6-5s6 2 6 5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    )
+  },
+  {
+    id: "branches",
+    label: "Branches",
+    ariaLabel: "Branch timeline",
+    icon: (
+      <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
+        <path d="M4 4v12M4 6c2 0 4-1.5 4-4M4 14c2 0 4 1.5 4 4M4 10c3 0 6-2 6-5h4a2 2 0 0 1 2 2v6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="4" cy="6" r="1.5" fill="currentColor" />
+        <circle cx="4" cy="14" r="1.5" fill="currentColor" />
+        <circle cx="4" cy="10" r="1.5" fill="currentColor" />
+        <circle cx="16" cy="10" r="1.5" fill="currentColor" />
       </svg>
     )
   },
@@ -382,6 +397,7 @@ export function WorkspacePage() {
   const [diffVisible, setDiffVisible] = useState(false);
   const [diffMode, setDiffMode] = useState<DiffMode>("split");
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("proposal");
+  const [branchGraphExpanded, setBranchGraphExpanded] = useState(false);
   const [discussionState, setDiscussionState] = useState<ViewState>("success");
   const [approvalStateOverride, setApprovalStateOverride] = useState<ViewState | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
@@ -793,7 +809,7 @@ export function WorkspacePage() {
   }, [activeTab, sidebarSection]);
 
   useEffect(() => {
-    if (activeTab !== "history" || !workspace) {
+    if ((activeTab !== "history" && activeTab !== "branches") || !workspace) {
       return;
     }
 
@@ -3035,6 +3051,27 @@ export function WorkspacePage() {
                 }}
                 loading={blameLoading}
                 error={blameError}
+              />
+            </div>
+          )}
+
+          {activeTab === "branches" && (
+            <div className="cm-panel-content active">
+              <BranchGraph
+                historyData={historyData}
+                mainHistoryData={mainHistoryData}
+                onSelectCommit={(commitHash) => {
+                  setActiveTab("history");
+                  const commitElement = document.querySelector(`[data-commit-hash="${commitHash}"]`);
+                  if (commitElement) {
+                    commitElement.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }
+                }}
+                onExpand={() => setBranchGraphExpanded(true)}
+                onClose={() => setBranchGraphExpanded(false)}
+                isExpanded={branchGraphExpanded}
+                loading={historyLoading}
+                error={historyError}
               />
             </div>
           )}
