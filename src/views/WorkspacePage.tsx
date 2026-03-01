@@ -3060,6 +3060,8 @@ export function WorkspacePage() {
               <BranchGraph
                 historyData={historyData}
                 mainHistoryData={mainHistoryData}
+                proposalId={workspace?.document.proposalId}
+                branchName={workspace?.document.branch || "main"}
                 onSelectCommit={(commitHash) => {
                   setActiveTab("history");
                   const commitElement = document.querySelector(`[data-commit-hash="${commitHash}"]`);

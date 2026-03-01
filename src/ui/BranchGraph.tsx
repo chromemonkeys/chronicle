@@ -159,25 +159,33 @@ function isMergeCommit(item: WorkspaceHistoryItem): boolean {
 /* ------------------------------------------------------------------ */
 
 export function buildBranchGraph(
-  history: WorkspaceHistoryItem[],
+  mainHistory: WorkspaceHistoryItem[],
+  proposalHistory: WorkspaceHistoryItem[] | null,
   proposalId: string | null,
   branchName: string
 ): BranchGraphData {
-  if (!history.length) return { commits: [], branches: [] };
+  if (!mainHistory.length && (!proposalHistory || !proposalHistory.length)) {
+    return { commits: [], branches: [] };
+  }
 
-  // Deduplicate by hash, keep order from API (newest first)
-  const seen = new Set<string>();
-  const items = history.filter((item) => {
-    if (seen.has(item.hash)) return false;
-    seen.add(item.hash);
-    return true;
-  });
+  // Deduplicate helper
+  function dedup(items: WorkspaceHistoryItem[]): WorkspaceHistoryItem[] {
+    const seen = new Set<string>();
+    return items.filter((item) => {
+      if (seen.has(item.hash)) return false;
+      seen.add(item.hash);
+      return true;
+    });
+  }
 
-  // ── Phase 1: Classify commits ──────────────────────────────────────
-  // Each merge commit implies a proposal that forked, had work, and merged.
-  // We synthesize branch topology: for each merge we insert a "proposal work"
-  // commit on column 1, creating a fork→work→merge pattern.
+  const mainItems = dedup(mainHistory);
+  const proposalItems = proposalHistory ? dedup(proposalHistory) : [];
 
+  // Remove any proposal commits that also appear in main (e.g. after merge)
+  const mainHashes = new Set(mainItems.map((i) => i.hash));
+  const uniqueProposalItems = proposalItems.filter((i) => !mainHashes.has(i.hash));
+
+  // ── Phase 1: Classify main commits (detect merged proposals) ────────
   type MergeInfo = {
     propId: string;
     shortId: string;
@@ -188,7 +196,7 @@ export function buildBranchGraph(
   const mergeInfoByHash = new Map<string, MergeInfo>();
   let colorIdx = 0;
 
-  items.forEach((item) => {
+  mainItems.forEach((item) => {
     if (isMergeCommit(item)) {
       const propId = extractPropId(item.message);
       if (propId) {
@@ -204,28 +212,81 @@ export function buildBranchGraph(
     }
   });
 
-  // ── Phase 2: Build interleaved row list ─────────────────────────────
-  // For each merge commit on main, we insert an extra row AFTER it for the
-  // synthetic proposal work commit on column 1. This produces:
-  //   Row N:   merge node on main (column 0)  ← merge point
-  //   Row N+1: proposal work node (column 1)  ← synthetic commit
-  // Non-merge commits stay on main (column 0) with no extra row.
+  // ── Phase 2: Determine active proposal color ────────────────────────
+  const activeProposalColor = (proposalId && branchName !== "main")
+    ? BRANCH_COLORS[colorIdx % BRANCH_COLORS.length]
+    : null;
+  const activeShortName = branchName
+    .replace("proposals/", "")
+    .replace("proposal-", "")
+    .slice(0, 12) || "proposal";
+
+  // ── Phase 3: Build interleaved row list ─────────────────────────────
+  //
+  // Layout order (top = newest):
+  //   1. Active proposal commits (column 1) — if any, newest first
+  //   2. Main commits (column 0) — newest first, with synthetic branch
+  //      commits (column 1) for each merged proposal
+  //
+  // This produces a graph like:
+  //   ○ proposal commit 3    (col 1, active branch)
+  //   ○ proposal commit 2    (col 1, active branch)
+  //   ○ proposal commit 1    (col 1, active branch)
+  //   ◆ Merge #abc123        (col 0, main)
+  //   ● Proposal #abc123     (col 1, synthetic merged branch)
+  //   ◆ Merge #def456        (col 0, main)
+  //   ● Proposal #def456     (col 1, synthetic merged branch)
+  //   ○ Import baseline       (col 0, main)
 
   const commits: BranchGraphCommit[] = [];
   const branches: BranchGraphBranch[] = [];
   let row = 0;
 
-  // Track branches for the legend
-  const branchNames = new Set<string>();
+  // ── Active proposal commits first (unmerged, on branch lane) ────────
+  if (activeProposalColor && uniqueProposalItems.length > 0) {
+    uniqueProposalItems.forEach((item) => {
+      commits.push({
+        hash: item.hash,
+        message: cleanMessage(item.message),
+        author: extractAuthorFromMeta(item.meta),
+        timeAgo: extractTimeFromMeta(item.meta),
+        createdAt: item.createdAt || "",
+        branch: branchName,
+        branchColor: activeProposalColor,
+        parentHashes: [],
+        column: 1,
+        row,
+        isMerge: false,
+        isFork: false,
+        mergeSource: undefined,
+        mergeColor: activeProposalColor,
+        forkedFrom: undefined,
+      });
+      row++;
+    });
 
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
+    branches.push({
+      name: branchName,
+      displayName: activeShortName,
+      color: activeProposalColor,
+      column: 1,
+      head: uniqueProposalItems[0]?.hash || "",
+      status: "active",
+      commitCount: uniqueProposalItems.length,
+      startRow: 0,
+      endRow: uniqueProposalItems.length - 1,
+    });
+  }
+
+  // ── Main branch commits (with synthetic branch nodes for merges) ────
+  for (let i = 0; i < mainItems.length; i++) {
+    const item = mainItems[i];
     const merge = mergeInfoByHash.get(item.hash);
     const author = extractAuthorFromMeta(item.meta);
     const timeAgo = extractTimeFromMeta(item.meta);
 
     if (merge) {
-      // ── Merge commit on main rail ──
+      // Merge commit on main rail
       commits.push({
         hash: item.hash,
         message: cleanMessage(item.message),
@@ -245,7 +306,7 @@ export function buildBranchGraph(
       });
       row++;
 
-      // ── Synthetic proposal work commit on branch lane ──
+      // Synthetic proposal work commit on branch lane
       const proposalName = `#${merge.shortId}`;
       commits.push({
         hash: `synth-${merge.propId}`,
@@ -264,10 +325,9 @@ export function buildBranchGraph(
         mergeColor: merge.color,
         forkedFrom: undefined,
       });
-      branchNames.add(proposalName);
       row++;
     } else {
-      // ── Regular commit on main rail ──
+      // Regular commit on main rail
       commits.push({
         hash: item.hash,
         message: cleanMessage(item.message),
@@ -286,60 +346,6 @@ export function buildBranchGraph(
         forkedFrom: undefined,
       });
       row++;
-    }
-  }
-
-  // ── Phase 3: If there's an active (unmerged) proposal, show it ──────
-  if (proposalId && branchName !== "main") {
-    const activeColor = BRANCH_COLORS[colorIdx % BRANCH_COLORS.length];
-    const shortName = branchName
-      .replace("proposals/", "")
-      .replace("proposal-", "")
-      .slice(0, 12);
-
-    // Find proposal-specific commits (ones with branch matching proposal)
-    // These come from historyData when viewing a proposal
-    const proposalCommits = items.filter(
-      (item) => item.branch && item.branch !== "main" && !mergeInfoByHash.has(item.hash)
-    );
-
-    if (proposalCommits.length > 0) {
-      // Insert active proposal commits at the top (newest)
-      // Shift all existing rows down
-      const shift = proposalCommits.length;
-      commits.forEach((c) => (c.row += shift));
-
-      proposalCommits.forEach((item, idx) => {
-        commits.unshift({
-          hash: item.hash,
-          message: cleanMessage(item.message),
-          author: extractAuthorFromMeta(item.meta),
-          timeAgo: extractTimeFromMeta(item.meta),
-          createdAt: item.createdAt || "",
-          branch: branchName,
-          branchColor: activeColor,
-          parentHashes: [],
-          column: 1,
-          row: idx,
-          isMerge: false,
-          isFork: false,
-          mergeSource: undefined,
-          mergeColor: activeColor,
-          forkedFrom: undefined,
-        });
-      });
-
-      branches.push({
-        name: branchName,
-        displayName: shortName || "proposal",
-        color: activeColor,
-        column: 1,
-        head: proposalCommits[0]?.hash || "",
-        status: "active",
-        commitCount: proposalCommits.length,
-        startRow: 0,
-        endRow: proposalCommits.length - 1,
-      });
     }
   }
 
@@ -564,13 +570,23 @@ export function BranchGraph({
 
   const rowHeight = rowHeightProp || (isExpanded ? 48 : 40);
 
-  // Build graph data
+  // Build graph data — keep main and proposal histories separate
   const data = useMemo(() => {
     if (dataProp) return dataProp;
-    const history: WorkspaceHistoryItem[] = [];
-    if (mainHistoryData?.commits) history.push(...mainHistoryData.commits);
-    if (historyData?.commits) history.push(...historyData.commits);
-    return buildBranchGraph(history, proposalId || null, branchName);
+
+    // When on a proposal: historyData = proposal commits, mainHistoryData = main commits
+    // When on main: historyData = main commits, mainHistoryData = null
+    const isOnProposal = !!proposalId && branchName !== "main";
+
+    const mainCommits = isOnProposal
+      ? (mainHistoryData?.commits || [])
+      : (historyData?.commits || []);
+
+    const proposalCommits = isOnProposal
+      ? (historyData?.commits || [])
+      : null;
+
+    return buildBranchGraph(mainCommits, proposalCommits, proposalId || null, branchName);
   }, [dataProp, historyData, mainHistoryData, proposalId, branchName]);
 
   const expanded = isExpanded;
