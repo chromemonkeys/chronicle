@@ -252,7 +252,7 @@ func (f *fakeStore) GetSpace(_ context.Context, spaceID string) (store.Space, er
 }
 func (f *fakeStore) CreateSpace(context.Context, store.Space) error            { return nil }
 func (f *fakeStore) InsertSpace(context.Context, store.Space) error            { return nil }
-func (f *fakeStore) UpdateSpace(context.Context, string, string, string) error { return nil }
+func (f *fakeStore) UpdateSpace(context.Context, string, string, string, string) error { return nil }
 func (f *fakeStore) DeleteSpace(context.Context, string) error                 { return nil }
 func (f *fakeStore) ListDocumentsBySpace(context.Context, string) ([]store.Document, error) {
 	return nil, nil
@@ -312,6 +312,69 @@ func (f *fakeStore) ListDocumentTree(context.Context, string) ([]store.Document,
 func (f *fakeStore) ListChildDocuments(context.Context, string) ([]store.Document, error)     { return nil, nil }
 func (f *fakeStore) MoveDocumentToParent(context.Context, string, *string, string) error      { return nil }
 func (f *fakeStore) ReorderDocument(context.Context, string, int) error                      { return nil }
+
+// Sprint 3 RBAC stubs
+func (f *fakeStore) ListPermissions(context.Context, string, string) ([]store.PermissionWithDetails, error) {
+	return nil, nil
+}
+func (f *fakeStore) ListGuestUsers(context.Context, string) ([]store.User, error) { return nil, nil }
+func (f *fakeStore) UpsertPermission(context.Context, store.Permission) (string, error) {
+	return "", nil
+}
+func (f *fakeStore) DeletePermission(context.Context, string) error  { return nil }
+func (f *fakeStore) RemoveGuestUser(context.Context, string) error   { return nil }
+func (f *fakeStore) CreateGuestUser(_ context.Context, _ store.User, _ string, _ *time.Time) error {
+	return nil
+}
+func (f *fakeStore) UpdateDocumentShareMode(context.Context, string, string) error { return nil }
+func (f *fakeStore) InsertPublicLink(context.Context, store.PublicLink) (string, error) {
+	return "", nil
+}
+func (f *fakeStore) RevokePublicLink(context.Context, string) error               { return nil }
+func (f *fakeStore) GetPublicLinkByToken(context.Context, string) (*store.PublicLink, error) {
+	return nil, nil
+}
+func (f *fakeStore) IncrementPublicLinkAccess(context.Context, string) error      { return nil }
+func (f *fakeStore) ListPublicLinks(context.Context, string) ([]store.PublicLink, error) {
+	return nil, nil
+}
+func (f *fakeStore) ListWorkspaceUsers(_ context.Context, _, _ string, _, _ int) ([]store.User, int, error) {
+	return nil, 0, nil
+}
+func (f *fakeStore) UpdateUserRole(context.Context, string, string, string) error   { return nil }
+func (f *fakeStore) SetUserDeactivated(context.Context, string, bool) error         { return nil }
+func (f *fakeStore) ListGroups(context.Context, string) ([]store.Group, error)      { return nil, nil }
+func (f *fakeStore) GetGroup(context.Context, string) (*store.Group, error)         { return nil, nil }
+func (f *fakeStore) InsertGroup(context.Context, store.Group) error                 { return nil }
+func (f *fakeStore) InsertGroupReturningID(context.Context, store.Group) (string, error) {
+	return "", nil
+}
+func (f *fakeStore) UpdateGroup(context.Context, store.Group) error                 { return nil }
+func (f *fakeStore) DeleteGroup(context.Context, string) error                      { return nil }
+func (f *fakeStore) ListGroupMembers(context.Context, string) ([]store.User, error) { return nil, nil }
+func (f *fakeStore) AddGroupMember(context.Context, string, string) error           { return nil }
+func (f *fakeStore) RemoveGroupMember(context.Context, string, string) error        { return nil }
+func (f *fakeStore) CreateSpaceWithPermissions(_ context.Context, _ store.Space, _ []store.Permission) error {
+	return nil
+}
+func (f *fakeStore) CountSlugsWithPrefix(_ context.Context, _, _ string) (int, error) { return 0, nil }
+
+// Approval Workflow V2 stubs
+func (f *fakeStore) ListApprovalGroups(context.Context, string) ([]store.ApprovalGroup, error) {
+	return nil, nil
+}
+func (f *fakeStore) ListApprovalGroupMembers(context.Context, string) ([]store.ApprovalGroupMember, error) {
+	return nil, nil
+}
+func (f *fakeStore) SaveApprovalRules(_ context.Context, _ string, _ []store.ApprovalGroup, _ map[string][]string) error {
+	return nil
+}
+func (f *fakeStore) ListProposalApprovals(context.Context, string) ([]store.ProposalApproval, error) {
+	return nil, nil
+}
+func (f *fakeStore) UpsertProposalApproval(_ context.Context, _, _, _, _, _, _ string) error {
+	return nil
+}
 
 type fakeGit struct {
 	historyFn            func(string, string, int) ([]store.CommitInfo, error)
@@ -1461,10 +1524,10 @@ func TestGetWorkspaceFiltersInternalThreadsForExternalUsers(t *testing.T) {
 	}
 	svc := newTestService(fs, &fakeGit{})
 
-	if _, err := svc.GetWorkspace(context.Background(), "doc-1", false); err != nil {
+	if _, err := svc.GetWorkspace(context.Background(), "doc-1", "", false); err != nil {
 		t.Fatalf("GetWorkspace() internal user error = %v", err)
 	}
-	if _, err := svc.GetWorkspace(context.Background(), "doc-1", true); err != nil {
+	if _, err := svc.GetWorkspace(context.Background(), "doc-1", "", true); err != nil {
 		t.Fatalf("GetWorkspace() external user error = %v", err)
 	}
 

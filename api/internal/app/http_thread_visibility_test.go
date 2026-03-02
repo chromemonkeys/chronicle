@@ -341,7 +341,7 @@ func TestInternalUserRetainsFullThreadVisibility(t *testing.T) {
 	svc := newTestService(fs, &fakeGit{})
 
 	// Internal user should see both threads
-	workspace, err := svc.GetWorkspace(context.Background(), "doc-1", false)
+	workspace, err := svc.GetWorkspace(context.Background(), "doc-1", "", false)
 	if err != nil {
 		t.Fatalf("GetWorkspace() internal user error = %v", err)
 	}

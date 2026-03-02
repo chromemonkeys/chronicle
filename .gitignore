@@ -12,3 +12,13 @@ vite.config.d.ts
 
 # Claude Code worktrees and settings
 .claude/
+
+# Playwright temp files
+.playwright-cli/
+.playwright-mcp/
+
+# Agent skills cache
+.agents/
+
+# Skills lock
+skills-lock.json

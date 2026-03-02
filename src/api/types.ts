@@ -12,6 +12,7 @@ export type Space = {
   name: string;
   slug: string;
   description: string;
+  visibility?: SpaceVisibility;
   documentCount: number;
 };
 
@@ -63,8 +64,88 @@ export type ApprovalQueueItem = {
 };
 
 export type ApprovalsResponse = {
-  mergeGate: MergeGate;
+  mergeGate?: MergeGate;
   queue: ApprovalQueueItem[];
+};
+
+// =============================================================================
+// V2 Flexible Approval Workflow Types
+// =============================================================================
+
+export type ApprovalGroupMember = {
+  id: string;
+  userId: string;
+  displayName: string;
+  email: string;
+  avatarUrl?: string;
+};
+
+export type ApprovalGroup = {
+  id: string;
+  documentId: string;
+  name: string;
+  description?: string;
+  minApprovals: number;
+  sortOrder: number;
+  members: ApprovalGroupMember[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProposalApprovalStatus = "approved" | "rejected" | "dismissed";
+
+export type ProposalApproval = {
+  id: string;
+  proposalId: string;
+  groupId: string;
+  approvedBy: string;
+  approvedByName: string;
+  commitHash: string;
+  status: ProposalApprovalStatus;
+  comment?: string;
+  createdAt: string;
+  isStale: boolean;
+};
+
+export type ApprovalGroupStatus = "approved" | "rejected" | "pending" | "blocked";
+
+export type ApprovalGroupProgress = {
+  groupId: string;
+  groupName: string;
+  minApprovals: number;
+  sortOrder: number;
+  status: ApprovalGroupStatus;
+  approvalCount: number;
+  members: ApprovalGroupMember[];
+  approvals: ProposalApproval[];
+};
+
+export type ApprovalWorkflowMode = "parallel" | "sequential";
+
+export type ApprovalWorkflow = {
+  documentId: string;
+  mode: ApprovalWorkflowMode;
+  groups: ApprovalGroupProgress[];
+  allApproved: boolean;
+  currentUserGroups: string[];
+};
+
+export type ApprovalRulesPayload = {
+  documentId: string;
+  mode: ApprovalWorkflowMode;
+  groups: ApprovalGroup[];
+};
+
+export type SaveApprovalRulesRequest = {
+  mode: ApprovalWorkflowMode;
+  groups: Array<{
+    id?: string;
+    name: string;
+    description?: string;
+    minApprovals: number;
+    sortOrder: number;
+    memberUserIds: string[];
+  }>;
 };
 
 export type WorkspaceDocument = {
@@ -168,6 +249,7 @@ export type WorkspacePayload = {
   approvals: MergeGate;
   approvalDetails?: Record<MergeGateRole, ApprovalDetail>;
   approvalStages?: ApprovalStage[];
+  approvalWorkflow?: ApprovalWorkflow;
   threads: WorkspaceThread[];
   history: WorkspaceHistoryItem[];
   decisions: WorkspaceDecisionItem[];
@@ -458,9 +540,64 @@ export type SpacePermissionsResponse = {
 // Document share response
 export type DocumentShareResponse = {
   document: DocumentSummary;
+  space: { id: string; name: string };
+  shareMode: ShareMode;
   permissions: PermissionGrant[];
   publicLinks: PublicLink[];
 };
 
+// Share search candidate types
+export type ShareSearchUser = {
+  id: string;
+  displayName: string;
+  email: string;
+};
+
+export type ShareSearchGroup = {
+  id: string;
+  name: string;
+  description: string;
+  memberCount: number;
+};
+
+export type ShareSearchResponse = {
+  users: ShareSearchUser[];
+  groups: ShareSearchGroup[];
+};
+
 // Share modes
 export type ShareMode = "private" | "space" | "invite" | "link";
+
+// =============================================================================
+// Admin User Management Types
+// =============================================================================
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  displayName: string;
+  role: string;
+  isExternal: boolean;
+  deactivatedAt: string | null;
+  createdAt: string;
+};
+
+export type AdminUsersResponse = {
+  users: AdminUser[];
+  total: number;
+};
+
+export type SpaceVisibility = "restricted" | "organization";
+
+export type InitialPermission = {
+  subjectType: SubjectType;
+  subjectId: string;
+  role: PermissionRole;
+};
+
+export type CreateSpaceRequest = {
+  name: string;
+  description?: string;
+  visibility?: SpaceVisibility;
+  initialPermissions?: InitialPermission[];
+};

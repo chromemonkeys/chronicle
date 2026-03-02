@@ -3,17 +3,18 @@ package store
 import "time"
 
 type User struct {
-	ID                   string
-	DisplayName          string
-	Email                string
-	PasswordHash         string
-	Role                 string
-	IsExternal           bool
-	IsEmailVerified      bool
-	VerificationToken    string
+	ID                    string
+	DisplayName           string
+	Email                 string
+	PasswordHash          string
+	Role                  string
+	IsExternal            bool
+	IsEmailVerified       bool
+	VerificationToken     string
 	VerificationExpiresAt *time.Time
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	DeactivatedAt         *time.Time
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 type Workspace struct {
@@ -31,6 +32,7 @@ type Space struct {
 	Name        string
 	Slug        string
 	Description string
+	Visibility  string
 	SortOrder   int
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -42,6 +44,7 @@ type Document struct {
 	Subtitle   string
 	Status     string
 	SpaceID    string
+	ShareMode  string
 	ParentID   *string
 	SortOrder  int
 	Path       string
@@ -262,4 +265,43 @@ type EffectivePermission struct {
 	WorkspaceID  string
 	Role         string
 	ComputedAt   time.Time
+}
+
+// =============================================================================
+// Approval Workflow V2 Models
+// =============================================================================
+
+// ApprovalGroup represents a custom approval group defined per document
+type ApprovalGroup struct {
+	ID           string
+	DocumentID   string
+	Name         string
+	Description  string
+	MinApprovals int
+	SortOrder    int
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// ApprovalGroupMember represents a user assigned to an approval group
+type ApprovalGroupMember struct {
+	ID          string
+	GroupID     string
+	UserID      string
+	DisplayName string
+	Email       string
+	CreatedAt   time.Time
+}
+
+// ProposalApproval represents an individual approval/rejection action
+type ProposalApproval struct {
+	ID             string
+	ProposalID     string
+	GroupID        string
+	ApprovedBy     string
+	ApprovedByName string
+	CommitHash     string
+	Status         string // approved, rejected, dismissed
+	Comment        string
+	CreatedAt      time.Time
 }

@@ -19,6 +19,7 @@ type Props = {
   onSelect: (id: string) => void;
   onCreateDocument?: (folderId?: string) => void;
   onMoveDocument?: (documentId: string, targetFolderId: string) => void;
+  onManageSpacePermissions?: (spaceId: string) => void;
   className?: string;
   emptyMessage?: string;
   showStatusLegend?: boolean;
@@ -239,6 +240,7 @@ export function DocumentTree({
   onSelect,
   onCreateDocument,
   onMoveDocument,
+  onManageSpacePermissions,
   className = "",
   emptyMessage = "No documents in this section.",
   showStatusLegend = true,
@@ -442,6 +444,21 @@ export function DocumentTree({
               >
                 <span>➕</span> New document
               </button>
+              {onManageSpacePermissions && (
+                <button
+                  className="cm-context-item"
+                  onClick={() => {
+                    const spaceId = contextMenu.itemId.startsWith("space-")
+                      ? contextMenu.itemId.slice(6)
+                      : contextMenu.itemId;
+                    onManageSpacePermissions(spaceId);
+                    handleCloseContextMenu();
+                  }}
+                  type="button"
+                >
+                  <span>⚙</span> Space settings
+                </button>
+              )}
             </>
           ) : (
             <>

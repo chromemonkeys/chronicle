@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   createDocument,
-  createSpace,
   fetchDocuments,
   fetchSpaceDocuments,
   fetchWorkspaces,
@@ -11,26 +10,31 @@ import {
 import type { DocumentSummary, Space, WorkspacesResponse } from "../api/types";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
+import { CreateSpaceDialog } from "../ui/CreateSpaceDialog";
+import { ShareDialog } from "../ui/ShareDialog";
+import { SpaceSettingsDialog } from "../ui/SpaceSettingsDialog";
 import { EmptyStateError, EmptyStateEmpty } from "../ui/EmptyState";
 import { SearchBar } from "../ui/SearchBar";
+import { useAuth } from "../state/AuthProvider";
 
 type ViewState = "success" | "loading" | "empty" | "error";
 
 export function DocumentsPage() {
   const navigate = useNavigate();
   const { spaceId } = useParams<{ spaceId?: string }>();
+  const { role } = useAuth();
   const [viewState, setViewState] = useState<ViewState>("loading");
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [workspaceName, setWorkspaceName] = useState<string>("");
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [isCreateDocFormOpen, setIsCreateDocFormOpen] = useState(false);
-  const [newDocumentTitle, setNewDocumentTitle] = useState("");
-  const [isCreateSpaceFormOpen, setIsCreateSpaceFormOpen] = useState(false);
-  const [newSpaceName, setNewSpaceName] = useState("");
-  const [spaceError, setSpaceError] = useState<string | null>(null);
-  const [isCreatingSpace, setIsCreatingSpace] = useState(false);
+  const [isCreateSpaceDialogOpen, setIsCreateSpaceDialogOpen] = useState(false);
+  const [settingsSpaceId, setSettingsSpaceId] = useState<string | null>(null);
+  const [newDocId, setNewDocId] = useState<string | null>(null);
+  const [newDocTitle, setNewDocTitle] = useState("");
+
+  const canManageSpaces = role === "admin" || role === "editor";
 
   useEffect(() => {
     fetchWorkspaces()
@@ -75,14 +79,12 @@ export function DocumentsPage() {
   }
 
   async function createNewDocument() {
-    const title = newDocumentTitle.trim() || "Untitled Document";
     setIsCreating(true);
     setCreateError(null);
     try {
-      const workspace = await createDocument(title, "", spaceId);
-      setIsCreateDocFormOpen(false);
-      setNewDocumentTitle("");
-      navigate(`/workspace/${workspace.document.id}`);
+      const workspace = await createDocument("Untitled Document", "", spaceId);
+      setNewDocId(workspace.document.id);
+      setNewDocTitle("Untitled Document");
     } catch (error) {
       if (isApiError(error)) {
         setCreateError(error.message);
@@ -94,31 +96,8 @@ export function DocumentsPage() {
     }
   }
 
-  async function handleCreateSpace() {
-    const trimmedName = newSpaceName.trim();
-    if (!trimmedName) {
-      setSpaceError("Space name is required.");
-      return;
-    }
-    setIsCreatingSpace(true);
-    setSpaceError(null);
-    try {
-      const data = await createSpace(trimmedName);
-      setSpaces(data.spaces);
-      setIsCreateSpaceFormOpen(false);
-      setNewSpaceName("");
-    } catch (error) {
-      if (isApiError(error)) {
-        setSpaceError(error.message);
-      } else {
-        setSpaceError("Could not create space.");
-      }
-    } finally {
-      setIsCreatingSpace(false);
-    }
-  }
-
   const activeSpace = spaceId ? spaces.find((s) => s.id === spaceId) : null;
+  const settingsSpace = settingsSpaceId ? spaces.find((s) => s.id === settingsSpaceId) : null;
   const pageTitle = activeSpace ? activeSpace.name : "All Documents";
 
   return (
@@ -140,58 +119,53 @@ export function DocumentsPage() {
               className={`space-sidebar-item${spaceId === space.id ? " active" : ""}`}
               to={`/spaces/${space.id}`}
             >
-              {space.name}
+              <span className="space-sidebar-item-label">{space.name}</span>
               <span className="space-sidebar-count">{space.documentCount}</span>
+              {canManageSpaces && (
+                <button
+                  className="space-sidebar-settings"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setSettingsSpaceId(space.id);
+                  }}
+                  title="Space settings"
+                  type="button"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.212-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+                    <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                  </svg>
+                </button>
+              )}
             </Link>
           ))}
         </nav>
-        {isCreateSpaceFormOpen ? (
-          <form
-            className="space-sidebar-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleCreateSpace();
+        <button
+          className="space-sidebar-create"
+          onClick={() => setIsCreateSpaceDialogOpen(true)}
+        >
+          + New space
+        </button>
+        <CreateSpaceDialog
+          isOpen={isCreateSpaceDialogOpen}
+          onClose={() => setIsCreateSpaceDialogOpen(false)}
+          onCreated={(data) => {
+            setSpaces(data.spaces);
+            setIsCreateSpaceDialogOpen(false);
+          }}
+        />
+        {settingsSpace && (
+          <SpaceSettingsDialog
+            space={settingsSpace}
+            isOpen={!!settingsSpaceId}
+            onClose={() => setSettingsSpaceId(null)}
+            onUpdated={(updated) => {
+              setSpaces((prev) =>
+                prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s))
+              );
             }}
-          >
-            <input
-              id="new-space-name"
-              value={newSpaceName}
-              onChange={(event) => {
-                setNewSpaceName(event.target.value);
-                if (spaceError) {
-                  setSpaceError(null);
-                }
-              }}
-              placeholder="Space name"
-              disabled={isCreatingSpace}
-              autoFocus
-            />
-            <div className="space-sidebar-form-actions">
-              <Button type="submit" className="btn-sm" disabled={isCreatingSpace || !newSpaceName.trim()}>
-                {isCreatingSpace ? "Creating..." : "Create"}
-              </Button>
-              <Button
-                className="btn-sm"
-                variant="ghost"
-                onClick={() => {
-                  setIsCreateSpaceFormOpen(false);
-                  setNewSpaceName("");
-                  setSpaceError(null);
-                }}
-                disabled={isCreatingSpace}
-              >
-                Cancel
-              </Button>
-            </div>
-            {spaceError ? <p className="space-sidebar-error">{spaceError}</p> : null}
-          </form>
-        ) : (
-          <button
-            className="space-sidebar-create"
-            onClick={() => setIsCreateSpaceFormOpen(true)}
-          >
-            + New space
-          </button>
+          />
         )}
       </aside>
       <section className="documents-content">
@@ -204,48 +178,27 @@ export function DocumentsPage() {
               </p>
             </div>
             <div className="documents-head-actions">
-              <Button
-                variant={isCreateDocFormOpen ? "ghost" : "primary"}
-                onClick={() => {
-                  setIsCreateDocFormOpen((value) => !value);
-                  setCreateError(null);
-                }}
-                disabled={isCreating}
-              >
-                {isCreateDocFormOpen ? "Cancel" : "Create document"}
-              </Button>
+              {activeSpace && canManageSpaces && (
+                <Button
+                  variant="ghost"
+                  onClick={() => setSettingsSpaceId(activeSpace.id)}
+                >
+                  Settings
+                </Button>
+              )}
+              {!newDocId && (
+                <Button
+                  variant="primary"
+                  onClick={() => void createNewDocument()}
+                  disabled={isCreating}
+                >
+                  {isCreating ? "Creating..." : "Create document"}
+                </Button>
+              )}
             </div>
           </div>
           <SearchBar spaceId={spaceId} />
-          {isCreateDocFormOpen ? (
-            <form
-              className="inline-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void createNewDocument();
-              }}
-            >
-              <label htmlFor="new-document-title">Document title</label>
-              <input
-                id="new-document-title"
-                value={newDocumentTitle}
-                onChange={(event) => {
-                  setNewDocumentTitle(event.target.value);
-                  if (createError) {
-                    setCreateError(null);
-                  }
-                }}
-                placeholder="Untitled Document"
-                disabled={isCreating}
-              />
-              <div className="button-row">
-                <Button type="submit" disabled={isCreating}>
-                  {isCreating ? "Creating document..." : "Create document"}
-                </Button>
-              </div>
-            </form>
-          ) : null}
-          {createError ? <p className="muted">{createError}</p> : null}
+          {createError && <p className="muted">{createError}</p>}
         </div>
         {viewState === "loading" && (
           <div className="grid">
@@ -267,7 +220,7 @@ export function DocumentsPage() {
                 : "Create your first RFC, ADR, or policy draft to begin collaboration."
             }
             actionLabel={isCreating ? "Creating..." : "Create document"}
-            onAction={() => setIsCreateDocFormOpen(true)}
+            onAction={() => void createNewDocument()}
           />
         )}
         {viewState === "error" && (
@@ -295,6 +248,20 @@ export function DocumentsPage() {
           </div>
         )}
       </section>
+      {newDocId && (
+        <ShareDialog
+          documentId={newDocId}
+          documentTitle={newDocTitle}
+          isOpen={true}
+          continueLabel="Open document"
+          onClose={() => {
+            const docId = newDocId;
+            setNewDocId(null);
+            setNewDocTitle("");
+            navigate(`/workspace/${docId}`);
+          }}
+        />
+      )}
     </div>
   );
 }

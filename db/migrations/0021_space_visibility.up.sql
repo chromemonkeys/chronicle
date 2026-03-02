@@ -1,0 +1,1 @@
+ALTER TABLE spaces ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'organization';

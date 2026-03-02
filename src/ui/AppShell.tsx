@@ -3,7 +3,7 @@ import { useAuth } from "../state/AuthProvider";
 import { Button } from "./Button";
 
 export function AppShell() {
-  const { isAuthenticated, isAuthLoading, userName, signOut } = useAuth();
+  const { isAuthenticated, isAuthLoading, userName, isAdmin, signOut } = useAuth();
   const location = useLocation();
   const isWorkspaceRoute = location.pathname.startsWith("/workspace/");
 
@@ -29,6 +29,11 @@ export function AppShell() {
             <NavLink className="nav-link" to="/approvals">
               Approvals
             </NavLink>
+            {isAdmin && (
+              <NavLink className="nav-link" to="/settings">
+                Settings
+              </NavLink>
+            )}
           </nav>
           <div className="user-nav">
             <span className="chip">{userName}</span>

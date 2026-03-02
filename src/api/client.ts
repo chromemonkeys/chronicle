@@ -1,4 +1,5 @@
 import type {
+  ApprovalRulesPayload,
   ApprovalsResponse,
   DecisionLogResponse,
   DocumentBlamePayload,
@@ -6,6 +7,7 @@ import type {
   DocumentHistoryPayload,
   DocumentSummary,
   MergeGateRole,
+  SaveApprovalRulesRequest,
   SearchResponse,
   SyncEvent,
   WorkspaceContent,
@@ -255,7 +257,12 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}, allowRe
 
 export async function loadSession() {
   try {
-    const data = await apiRequest<{ authenticated: boolean; userName: string | null }>("/api/session");
+    const data = await apiRequest<{
+      authenticated: boolean;
+      userName: string | null;
+      userId?: string | null;
+      role?: string | null;
+    }>("/api/session");
     if (!data.authenticated) {
       clearAuthStorage();
     } else {
@@ -332,7 +339,13 @@ export async function resetPassword(token: string, newPassword: string) {
 
 export async function login(name: string) {
   try {
-    const data = await apiRequest<{ token: string; refreshToken: string; userName: string }>("/api/session/login", {
+    const data = await apiRequest<{
+      token: string;
+      refreshToken: string;
+      userName: string;
+      userId?: string;
+      role?: string;
+    }>("/api/session/login", {
       method: "POST",
       body: { name }
     });
@@ -406,10 +419,26 @@ export async function fetchSpaceDocuments(spaceId: string) {
   return data.documents;
 }
 
-export async function createSpace(name: string, description = "") {
+export async function createSpace(
+  nameOrRequest: string | import("./types").CreateSpaceRequest,
+  description = ""
+) {
+  const body = typeof nameOrRequest === "string"
+    ? { name: nameOrRequest, description }
+    : nameOrRequest;
   return apiRequest<WorkspacesResponse>("/api/spaces", {
     method: "POST",
-    body: { name, description }
+    body
+  });
+}
+
+export async function updateSpace(
+  spaceId: string,
+  data: { name: string; description?: string; visibility?: import("./types").SpaceVisibility }
+): Promise<import("./types").Space> {
+  return apiRequest<import("./types").Space>(`/api/spaces/${spaceId}`, {
+    method: "PUT",
+    body: data,
   });
 }
 
@@ -507,6 +536,54 @@ export async function approveProposalRole(documentId: string, proposalId: string
     method: "POST",
     body: { role }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Approval Workflow Rules (V2)
+// ---------------------------------------------------------------------------
+
+export async function fetchApprovalRules(documentId: string): Promise<ApprovalRulesPayload> {
+  return apiRequest<ApprovalRulesPayload>(`/api/documents/${documentId}/approval-rules`);
+}
+
+export async function saveApprovalRules(
+  documentId: string,
+  payload: SaveApprovalRulesRequest
+): Promise<ApprovalRulesPayload> {
+  return apiRequest<ApprovalRulesPayload>(`/api/documents/${documentId}/approval-rules`, {
+    method: "PUT",
+    body: payload,
+  });
+}
+
+export async function approveProposalGroup(
+  documentId: string,
+  proposalId: string,
+  groupId: string,
+  comment?: string
+): Promise<WorkspacePayload> {
+  return apiRequest<WorkspacePayload>(
+    `/api/documents/${documentId}/proposals/${proposalId}/group-approvals`,
+    {
+      method: "POST",
+      body: { groupId, status: "approved", comment },
+    }
+  );
+}
+
+export async function rejectProposalGroup(
+  documentId: string,
+  proposalId: string,
+  groupId: string,
+  comment?: string
+): Promise<WorkspacePayload> {
+  return apiRequest<WorkspacePayload>(
+    `/api/documents/${documentId}/proposals/${proposalId}/group-approvals`,
+    {
+      method: "POST",
+      body: { groupId, status: "rejected", comment },
+    }
+  );
 }
 
 export async function createProposalThread(
@@ -850,18 +927,31 @@ export async function fetchDocumentShare(documentId: string): Promise<DocumentSh
   return apiRequest<DocumentShareResponse>(`/api/documents/${documentId}/share`);
 }
 
+export type GrantPermissionResult =
+  | (PermissionGrant & { type: "permission" })
+  | { type: "invite_link"; id: string; token: string; email: string; role: string; expiresAt?: string; createdAt: string };
+
+export type GrantDocumentPermissionRequest =
+  | { email: string; role: PermissionRole; expiresAt?: string }
+  | { subjectType: SubjectType; subjectId: string; role: PermissionRole; expiresAt?: string };
+
 export async function grantDocumentPermission(
   documentId: string,
-  data: {
-    email: string;
-    role: PermissionRole;
-    expiresAt?: string;
-  }
-): Promise<PermissionGrant> {
-  return apiRequest<PermissionGrant>(`/api/documents/${documentId}/permissions`, {
+  data: GrantDocumentPermissionRequest
+): Promise<GrantPermissionResult> {
+  return apiRequest<GrantPermissionResult>(`/api/documents/${documentId}/permissions`, {
     method: "POST",
     body: data,
   });
+}
+
+export async function searchDocumentShareCandidates(
+  documentId: string,
+  query: string
+): Promise<import("./types").ShareSearchResponse> {
+  return apiRequest<import("./types").ShareSearchResponse>(
+    `/api/documents/${documentId}/share/search?q=${encodeURIComponent(query)}`
+  );
 }
 
 export async function revokeDocumentPermission(documentId: string, userId: string): Promise<void> {
@@ -980,5 +1070,49 @@ export async function addGroupMember(groupId: string, userId: string): Promise<v
 export async function removeGroupMember(groupId: string, userId: string): Promise<void> {
   return apiRequest<void>(`/api/groups/${groupId}/members/${userId}`, {
     method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Admin User Management
+// ---------------------------------------------------------------------------
+
+export async function fetchAdminUsers(params: {
+  search?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<import("./types").AdminUsersResponse> {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set("search", params.search);
+  if (typeof params.limit === "number") qs.set("limit", String(params.limit));
+  if (typeof params.offset === "number") qs.set("offset", String(params.offset));
+  const suffix = qs.toString();
+  return apiRequest<import("./types").AdminUsersResponse>(
+    `/api/admin/users${suffix ? `?${suffix}` : ""}`
+  );
+}
+
+export async function updateUserRole(userId: string, role: string): Promise<void> {
+  return apiRequest<void>(`/api/admin/users/${userId}/role`, {
+    method: "PUT",
+    body: { role },
+  });
+}
+
+export async function setUserStatus(userId: string, active: boolean): Promise<void> {
+  return apiRequest<void>(`/api/admin/users/${userId}/status`, {
+    method: "PUT",
+    body: { active },
+  });
+}
+
+export async function adminCreateUser(data: {
+  displayName: string;
+  email?: string;
+  role?: string;
+}): Promise<import("./types").AdminUser> {
+  return apiRequest<import("./types").AdminUser>("/api/admin/users", {
+    method: "POST",
+    body: data,
   });
 }

@@ -114,7 +114,7 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"authenticated": false, "userName": nil})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "userName": session.UserName})
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "userName": session.UserName, "userId": session.UserID, "role": session.Role})
 		return
 	}
 
@@ -135,6 +135,8 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 			"token":        session.Token,
 			"refreshToken": session.RefreshToken,
 			"userName":     session.UserName,
+			"userId":       session.UserID,
+			"role":         session.Role,
 		})
 		return
 	}
@@ -218,6 +220,15 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, payload)
 		return
+	}
+
+	// Public share links — no authentication required
+	if strings.HasPrefix(r.URL.Path, "/share/") {
+		token := strings.TrimPrefix(r.URL.Path, "/share/")
+		if token != "" {
+			s.handlePublicShare(w, r, token)
+			return
+		}
 	}
 
 	session, ok := s.requireSession(w, r)
@@ -326,14 +337,16 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
+			Name               string              `json:"name"`
+			Description        string              `json:"description"`
+			Visibility         string              `json:"visibility"`
+			InitialPermissions []InitialPermission `json:"initialPermissions"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
 			return
 		}
-		payload, err := s.service.CreateSpace(r.Context(), body.Name, body.Description)
+		payload, err := s.service.CreateSpaceWithOptions(r.Context(), body.Name, body.Description, body.Visibility, body.InitialPermissions, session.UserID)
 		if err != nil {
 			status, code, message, details := mapError(err)
 			writeError(w, status, code, message, details)
@@ -344,6 +357,17 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parts := splitPath(r.URL.Path)
+
+	// Dispatch Sprint 3 RBAC routes (permissions, guests, public-links, admin, groups)
+	if isRBACRoute(r.URL.Path) {
+		apiParts := parts
+		if len(apiParts) > 0 && apiParts[0] == "api" {
+			apiParts = apiParts[1:]
+		}
+		if s.routeRBAC(w, r, session, apiParts) {
+			return
+		}
+	}
 
 	if len(parts) == 3 && parts[0] == "api" && parts[1] == "spaces" {
 		spaceID := parts[2]
@@ -537,12 +561,13 @@ func (s *HTTPServer) handleSpaces(w http.ResponseWriter, r *http.Request, sessio
 		var body struct {
 			Name        string `json:"name"`
 			Description string `json:"description"`
+			Visibility  string `json:"visibility"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
 			return
 		}
-		payload, err := s.service.UpdateSpace(r.Context(), spaceID, body.Name, body.Description)
+		payload, err := s.service.UpdateSpace(r.Context(), spaceID, body.Name, body.Description, body.Visibility)
 		if err != nil {
 			status, code, message, details := mapError(err)
 			writeError(w, status, code, message, details)
@@ -575,7 +600,7 @@ func (s *HTTPServer) handleSpaces(w http.ResponseWriter, r *http.Request, sessio
 
 func (s *HTTPServer) handleWorkspace(w http.ResponseWriter, r *http.Request, session Session, documentID string) {
 	if r.Method == http.MethodGet {
-		payload, err := s.service.GetWorkspace(r.Context(), documentID, session.IsExternal)
+		payload, err := s.service.GetWorkspace(r.Context(), documentID, session.UserID, session.IsExternal)
 		if err != nil {
 			log.Printf("GetWorkspace(%s) error: %v", documentID, err)
 			status, code, message, details := mapError(err)
@@ -617,6 +642,21 @@ func (s *HTTPServer) handleDocuments(w http.ResponseWriter, r *http.Request, ses
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"document": summary})
+		return
+	}
+
+	if len(parts) == 4 && parts[3] == "share" && r.Method == http.MethodGet {
+		if !s.service.Can(session.Role, rbac.ActionRead) {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
+			return
+		}
+		payload, err := s.service.GetDocumentShareData(r.Context(), documentID)
+		if err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, payload)
 		return
 	}
 
@@ -716,6 +756,39 @@ func (s *HTTPServer) handleDocuments(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 
+	// ── Approval Rules V2 ──
+	if len(parts) == 4 && parts[3] == "approval-rules" {
+		if r.Method == http.MethodGet {
+			payload, err := s.service.GetApprovalRules(r.Context(), documentID)
+			if err != nil {
+				status, code, message, details := mapError(err)
+				writeError(w, status, code, message, details)
+				return
+			}
+			writeJSON(w, http.StatusOK, payload)
+			return
+		}
+		if r.Method == http.MethodPut {
+			if !s.service.Can(session.Role, rbac.ActionWrite) {
+				writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
+				return
+			}
+			var body SaveApprovalRulesInput
+			if err := decodeBody(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+				return
+			}
+			payload, err := s.service.SaveApprovalRules(r.Context(), documentID, body)
+			if err != nil {
+				status, code, message, details := mapError(err)
+				writeError(w, status, code, message, details)
+				return
+			}
+			writeJSON(w, http.StatusOK, payload)
+			return
+		}
+	}
+
 	if len(parts) >= 6 && parts[3] == "proposals" {
 		proposalID := parts[4]
 		action := parts[5]
@@ -760,6 +833,36 @@ func (s *HTTPServer) handleProposalAction(w http.ResponseWriter, r *http.Request
 			return
 		}
 		payload, err := s.service.ApproveProposalRole(r.Context(), documentID, proposalID, body.Role, session.UserName, session.IsExternal)
+		if err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+
+	if action == "group-approvals" {
+		var body struct {
+			GroupID string `json:"groupId"`
+			Status  string `json:"status"`
+			Comment string `json:"comment"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+			return
+		}
+		if body.GroupID == "" || (body.Status != "approved" && body.Status != "rejected") {
+			writeError(w, http.StatusBadRequest, "INVALID_BODY", "groupId and status (approved|rejected) are required", nil)
+			return
+		}
+		var payload map[string]any
+		var err error
+		if body.Status == "approved" {
+			payload, err = s.service.ApproveProposalGroup(r.Context(), documentID, proposalID, body.GroupID, session.UserID, body.Comment, session.IsExternal)
+		} else {
+			payload, err = s.service.RejectProposalGroup(r.Context(), documentID, proposalID, body.GroupID, session.UserID, body.Comment, session.IsExternal)
+		}
 		if err != nil {
 			status, code, message, details := mapError(err)
 			writeError(w, status, code, message, details)

@@ -5,6 +5,7 @@ import { DocumentsPage } from "./views/DocumentsPage";
 import { ForgotPasswordPage } from "./views/ForgotPasswordPage";
 import { NotFoundPage } from "./views/NotFoundPage";
 import { ResetPasswordPage } from "./views/ResetPasswordPage";
+import { SettingsPage } from "./views/SettingsPage";
 import { SignInPage } from "./views/SignInPage";
 import { VerificationPendingPage } from "./views/VerificationPendingPage";
 import { VerifyEmailPage } from "./views/VerifyEmailPage";
@@ -39,7 +40,8 @@ export const router = createBrowserRouter([
       { path: "documents", element: <DocumentsPage /> },
       { path: "spaces/:spaceId", element: <DocumentsPage /> },
       { path: "workspace/:docId", element: <WorkspacePage /> },
-      { path: "approvals", element: <ApprovalsPage /> }
+      { path: "approvals", element: <ApprovalsPage /> },
+      { path: "settings", element: <SettingsPage /> }
     ]
   },
   {

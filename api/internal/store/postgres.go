@@ -175,10 +175,10 @@ func (s *PostgresStore) ListDocuments(ctx context.Context) ([]Document, error) {
 func (s *PostgresStore) GetDocument(ctx context.Context, documentID string) (Document, error) {
 	var item Document
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, title, subtitle, status, space_id, updated_by_name, updated_at
+		SELECT id, title, subtitle, status, space_id, COALESCE(share_mode, 'space'), updated_by_name, updated_at
 		FROM documents
 		WHERE id=$1
-	`, documentID).Scan(&item.ID, &item.Title, &item.Subtitle, &item.Status, &item.SpaceID, &item.UpdatedBy, &item.UpdatedAt)
+	`, documentID).Scan(&item.ID, &item.Title, &item.Subtitle, &item.Status, &item.SpaceID, &item.ShareMode, &item.UpdatedBy, &item.UpdatedAt)
 	if err != nil {
 		return Document{}, err
 	}
@@ -879,6 +879,8 @@ func (s *PostgresStore) ProposalQueue(ctx context.Context) ([]map[string]any, er
 		}
 		items = append(items, map[string]any{
 			"id":          documentID + ":" + proposalID,
+			"documentId":  documentID,
+			"proposalId":  proposalID,
 			"title":       title,
 			"requestedBy": requestedBy,
 			"status":      status,
@@ -921,7 +923,7 @@ func (s *PostgresStore) GetDefaultWorkspace(ctx context.Context) (Workspace, err
 
 func (s *PostgresStore) ListSpaces(ctx context.Context, workspaceID string) ([]Space, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, workspace_id, name, slug, description, sort_order, created_at, updated_at
+		SELECT id, workspace_id, name, slug, description, COALESCE(visibility, 'organization'), sort_order, created_at, updated_at
 		FROM spaces
 		WHERE workspace_id=$1
 		ORDER BY sort_order ASC, name ASC
@@ -934,7 +936,7 @@ func (s *PostgresStore) ListSpaces(ctx context.Context, workspaceID string) ([]S
 	items := make([]Space, 0)
 	for rows.Next() {
 		var item Space
-		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Slug, &item.Description, &item.SortOrder, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Slug, &item.Description, &item.Visibility, &item.SortOrder, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan space: %w", err)
 		}
 		items = append(items, item)
@@ -948,10 +950,10 @@ func (s *PostgresStore) ListSpaces(ctx context.Context, workspaceID string) ([]S
 func (s *PostgresStore) GetSpace(ctx context.Context, spaceID string) (Space, error) {
 	var item Space
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, workspace_id, name, slug, description, sort_order, created_at, updated_at
+		SELECT id, workspace_id, name, slug, description, COALESCE(visibility, 'organization'), sort_order, created_at, updated_at
 		FROM spaces
 		WHERE id=$1
-	`, spaceID).Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Slug, &item.Description, &item.SortOrder, &item.CreatedAt, &item.UpdatedAt)
+	`, spaceID).Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Slug, &item.Description, &item.Visibility, &item.SortOrder, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return Space{}, fmt.Errorf("get space: %w", err)
 	}
@@ -959,21 +961,25 @@ func (s *PostgresStore) GetSpace(ctx context.Context, spaceID string) (Space, er
 }
 
 func (s *PostgresStore) InsertSpace(ctx context.Context, space Space) error {
+	vis := space.Visibility
+	if vis == "" {
+		vis = "organization"
+	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO spaces (id, workspace_id, name, slug, description, sort_order)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, space.ID, space.WorkspaceID, space.Name, space.Slug, space.Description, space.SortOrder)
+		INSERT INTO spaces (id, workspace_id, name, slug, description, visibility, sort_order)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, space.ID, space.WorkspaceID, space.Name, space.Slug, space.Description, vis, space.SortOrder)
 	if err != nil {
 		return fmt.Errorf("insert space: %w", err)
 	}
 	return nil
 }
 
-func (s *PostgresStore) UpdateSpace(ctx context.Context, spaceID, name, description string) error {
+func (s *PostgresStore) UpdateSpace(ctx context.Context, spaceID, name, description, visibility string) error {
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE spaces SET name=$2, description=$3, updated_at=NOW()
+		UPDATE spaces SET name=$2, description=$3, visibility=$4, updated_at=NOW()
 		WHERE id=$1
-	`, spaceID, name, description)
+	`, spaceID, name, description, visibility)
 	if err != nil {
 		return fmt.Errorf("update space: %w", err)
 	}
@@ -993,6 +999,19 @@ func (s *PostgresStore) DeleteSpace(ctx context.Context, spaceID string) error {
 		return fmt.Errorf("delete space: %w", err)
 	}
 	return nil
+}
+
+// CountSlugsWithPrefix counts how many spaces in a workspace have slugs matching a base or base-N pattern.
+func (s *PostgresStore) CountSlugsWithPrefix(ctx context.Context, workspaceID, baseSlug string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM spaces
+		WHERE workspace_id=$1 AND (slug=$2 OR slug ~ ($2 || '-[0-9]+$'))
+	`, workspaceID, baseSlug).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count slugs with prefix: %w", err)
+	}
+	return count, nil
 }
 
 func (s *PostgresStore) ListDocumentsBySpace(ctx context.Context, spaceID string) ([]Document, error) {
@@ -1820,6 +1839,20 @@ func (s *PostgresStore) InsertGroup(ctx context.Context, g Group) error {
 	return nil
 }
 
+// InsertGroupReturningID creates a new group, letting the DB generate the UUID
+func (s *PostgresStore) InsertGroupReturningID(ctx context.Context, g Group) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO groups (workspace_id, name, description, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id
+	`, g.WorkspaceID, g.Name, g.Description, g.CreatedAt, g.UpdatedAt).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("insert group: %w", err)
+	}
+	return id, nil
+}
+
 // UpdateGroup updates a group's details
 func (s *PostgresStore) UpdateGroup(ctx context.Context, g Group) error {
 	_, err := s.db.ExecContext(ctx, `
@@ -1961,22 +1994,25 @@ func (s *PostgresStore) ListPermissions(ctx context.Context, resourceType, resou
 	return items, rows.Err()
 }
 
-// UpsertPermission creates or updates a permission grant
-func (s *PostgresStore) UpsertPermission(ctx context.Context, p Permission) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO permissions (id, workspace_id, subject_type, subject_id, resource_type, resource_id, role, granted_by, granted_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+// UpsertPermission creates or updates a permission grant.
+// The permission ID is auto-generated by the database (UUID).
+func (s *PostgresStore) UpsertPermission(ctx context.Context, p Permission) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO permissions (workspace_id, subject_type, subject_id, resource_type, resource_id, role, granted_by, granted_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (workspace_id, subject_type, subject_id, resource_type, resource_id) DO UPDATE SET
 			role = EXCLUDED.role,
 			granted_by = EXCLUDED.granted_by,
 			granted_at = EXCLUDED.granted_at,
 			expires_at = EXCLUDED.expires_at,
 			deleted_at = NULL
-	`, p.ID, p.WorkspaceID, p.SubjectType, p.SubjectID, p.ResourceType, p.ResourceID, p.Role, p.GrantedBy, p.GrantedAt, p.ExpiresAt)
+		RETURNING id
+	`, p.WorkspaceID, p.SubjectType, p.SubjectID, p.ResourceType, p.ResourceID, p.Role, p.GrantedBy, p.GrantedAt, p.ExpiresAt).Scan(&id)
 	if err != nil {
-		return fmt.Errorf("upsert permission: %w", err)
+		return "", fmt.Errorf("upsert permission: %w", err)
 	}
-	return nil
+	return id, nil
 }
 
 // DeletePermission soft-deletes a permission grant
@@ -2068,16 +2104,18 @@ func (s *PostgresStore) ListPublicLinks(ctx context.Context, documentID string) 
 	return items, rows.Err()
 }
 
-// InsertPublicLink creates a new public link
-func (s *PostgresStore) InsertPublicLink(ctx context.Context, pl PublicLink) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO public_links (id, token, document_id, created_by, role, password_hash, expires_at, access_count, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, pl.ID, pl.Token, pl.DocumentID, pl.CreatedBy, pl.Role, pl.PasswordHash, pl.ExpiresAt, pl.AccessCount, pl.CreatedAt)
+// InsertPublicLink creates a new public link. ID is auto-generated by the database (UUID).
+func (s *PostgresStore) InsertPublicLink(ctx context.Context, pl PublicLink) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO public_links (token, document_id, created_by, role, password_hash, expires_at, access_count, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id
+	`, pl.Token, pl.DocumentID, pl.CreatedBy, pl.Role, pl.PasswordHash, pl.ExpiresAt, pl.AccessCount, pl.CreatedAt).Scan(&id)
 	if err != nil {
-		return fmt.Errorf("insert public link: %w", err)
+		return "", fmt.Errorf("insert public link: %w", err)
 	}
-	return nil
+	return id, nil
 }
 
 // RevokePublicLink marks a public link as revoked
@@ -2132,6 +2170,29 @@ func (s *PostgresStore) ListGuestUsers(ctx context.Context, spaceID string) ([]U
 	return items, rows.Err()
 }
 
+// CreateGuestUser inserts a new external/guest user scoped to a single space
+func (s *PostgresStore) CreateGuestUser(ctx context.Context, user User, spaceID string, expiresAt *time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO users (id, display_name, email, role, is_external, external_space_id, external_expires_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, true, $5, $6, NOW(), NOW())
+	`, user.ID, user.DisplayName, user.Email, user.Role, spaceID, expiresAt)
+	if err != nil {
+		return fmt.Errorf("create guest user: %w", err)
+	}
+	return nil
+}
+
+// UpdateDocumentShareMode updates the share_mode column on a document
+func (s *PostgresStore) UpdateDocumentShareMode(ctx context.Context, documentID, mode string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE documents SET share_mode = $1 WHERE id = $2
+	`, mode, documentID)
+	if err != nil {
+		return fmt.Errorf("update document share mode: %w", err)
+	}
+	return nil
+}
+
 // RemoveGuestUser removes a guest user's space access
 func (s *PostgresStore) RemoveGuestUser(ctx context.Context, userID string) error {
 	// Soft-delete approach: mark as deleted
@@ -2140,6 +2201,250 @@ func (s *PostgresStore) RemoveGuestUser(ctx context.Context, userID string) erro
 	`, userID)
 	if err != nil {
 		return fmt.Errorf("remove guest user: %w", err)
+	}
+	return nil
+}
+
+// =============================================================================
+// Admin User Management
+// =============================================================================
+
+// ListWorkspaceUsers returns paginated workspace users with optional search
+func (s *PostgresStore) ListWorkspaceUsers(ctx context.Context, workspaceID, search string, limit, offset int) ([]User, int, error) {
+	baseWhere := "WHERE (wm.workspace_id = $1 OR wm.workspace_id IS NULL)"
+	args := []any{workspaceID}
+	argIdx := 2
+
+	if search != "" {
+		baseWhere += fmt.Sprintf(" AND (u.display_name ILIKE $%d OR u.email ILIKE $%d)", argIdx, argIdx)
+		args = append(args, "%"+search+"%")
+		argIdx++
+	}
+
+	// Count total
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM users u
+		JOIN workspace_memberships wm ON u.id = wm.user_id
+		%s
+	`, baseWhere)
+	var total int
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count workspace users: %w", err)
+	}
+
+	// Fetch page
+	query := fmt.Sprintf(`
+		SELECT u.id, u.display_name, u.email, COALESCE(wm.role, u.role) as role,
+			u.is_external, u.deactivated_at, u.created_at
+		FROM users u
+		JOIN workspace_memberships wm ON u.id = wm.user_id
+		%s
+		ORDER BY u.display_name
+		LIMIT $%d OFFSET $%d
+	`, baseWhere, argIdx, argIdx+1)
+	args = append(args, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list workspace users: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]User, 0)
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.DisplayName, &u.Email, &u.Role, &u.IsExternal, &u.DeactivatedAt, &u.CreatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan user: %w", err)
+		}
+		items = append(items, u)
+	}
+	return items, total, rows.Err()
+}
+
+// UpdateUserRole updates a user's role within a workspace
+func (s *PostgresStore) UpdateUserRole(ctx context.Context, userID, workspaceID, role string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE workspace_memberships SET role = $1
+		WHERE user_id = $2 AND (workspace_id = $3 OR workspace_id IS NULL)
+	`, role, userID, workspaceID)
+	if err != nil {
+		return fmt.Errorf("update user role: %w", err)
+	}
+	return nil
+}
+
+// SetUserDeactivated sets or clears the deactivated_at timestamp for a user
+func (s *PostgresStore) SetUserDeactivated(ctx context.Context, userID string, deactivated bool) error {
+	var query string
+	if deactivated {
+		query = `UPDATE users SET deactivated_at = NOW() WHERE id = $1`
+	} else {
+		query = `UPDATE users SET deactivated_at = NULL WHERE id = $1`
+	}
+	_, err := s.db.ExecContext(ctx, query, userID)
+	if err != nil {
+		return fmt.Errorf("set user deactivated: %w", err)
+	}
+	return nil
+}
+
+// CreateSpaceWithPermissions creates a space and its initial permissions in a transaction
+func (s *PostgresStore) CreateSpaceWithPermissions(ctx context.Context, space Space, permissions []Permission) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	vis := space.Visibility
+	if vis == "" {
+		vis = "organization"
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO spaces (id, workspace_id, name, slug, description, visibility, sort_order, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+	`, space.ID, space.WorkspaceID, space.Name, space.Slug, space.Description, vis, space.SortOrder)
+	if err != nil {
+		return fmt.Errorf("insert space: %w", err)
+	}
+
+	for _, p := range permissions {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO permissions (workspace_id, subject_type, subject_id, resource_type, resource_id, role, granted_by, granted_at, expires_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`, p.WorkspaceID, p.SubjectType, p.SubjectID, p.ResourceType, p.ResourceID, p.Role, p.GrantedBy, p.GrantedAt, p.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("insert permission: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// =============================================================================
+// Approval Workflow V2
+// =============================================================================
+
+func (s *PostgresStore) ListApprovalGroups(ctx context.Context, documentID string) ([]ApprovalGroup, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, document_id, name, COALESCE(description, ''), min_approvals, sort_order, created_at, updated_at
+		FROM approval_groups
+		WHERE document_id = $1
+		ORDER BY sort_order ASC
+	`, documentID)
+	if err != nil {
+		return nil, fmt.Errorf("list approval groups: %w", err)
+	}
+	defer rows.Close()
+
+	var groups []ApprovalGroup
+	for rows.Next() {
+		var g ApprovalGroup
+		if err := rows.Scan(&g.ID, &g.DocumentID, &g.Name, &g.Description, &g.MinApprovals, &g.SortOrder, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan approval group: %w", err)
+		}
+		groups = append(groups, g)
+	}
+	return groups, rows.Err()
+}
+
+func (s *PostgresStore) ListApprovalGroupMembers(ctx context.Context, groupID string) ([]ApprovalGroupMember, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT agm.id, agm.group_id, agm.user_id, u.display_name, COALESCE(u.email, ''), agm.created_at
+		FROM approval_group_members agm
+		JOIN users u ON u.id = agm.user_id
+		WHERE agm.group_id = $1
+		ORDER BY u.display_name ASC
+	`, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("list group members: %w", err)
+	}
+	defer rows.Close()
+
+	var members []ApprovalGroupMember
+	for rows.Next() {
+		var m ApprovalGroupMember
+		if err := rows.Scan(&m.ID, &m.GroupID, &m.UserID, &m.DisplayName, &m.Email, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan group member: %w", err)
+		}
+		members = append(members, m)
+	}
+	return members, rows.Err()
+}
+
+func (s *PostgresStore) SaveApprovalRules(ctx context.Context, documentID string, groups []ApprovalGroup, membersByGroup map[string][]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Delete existing groups (cascade deletes members)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM approval_groups WHERE document_id = $1`, documentID); err != nil {
+		return fmt.Errorf("delete old groups: %w", err)
+	}
+
+	// Insert new groups
+	for _, g := range groups {
+		var groupID string
+		err := tx.QueryRowContext(ctx, `
+			INSERT INTO approval_groups (document_id, name, description, min_approvals, sort_order)
+			VALUES ($1, $2, $3, $4, $5)
+			RETURNING id
+		`, documentID, g.Name, g.Description, g.MinApprovals, g.SortOrder).Scan(&groupID)
+		if err != nil {
+			return fmt.Errorf("insert group %q: %w", g.Name, err)
+		}
+
+		// Insert members for this group using the client-side temp ID
+		memberUserIDs := membersByGroup[g.ID]
+		for _, userID := range memberUserIDs {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO approval_group_members (group_id, user_id) VALUES ($1, $2::uuid)
+			`, groupID, userID); err != nil {
+				return fmt.Errorf("insert member for group %q: %w", g.Name, err)
+			}
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (s *PostgresStore) ListProposalApprovals(ctx context.Context, proposalID string) ([]ProposalApproval, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT pa.id, pa.proposal_id, COALESCE(pa.group_id::text, ''), pa.approved_by::text,
+		       COALESCE(u.display_name, ''), pa.commit_hash, pa.status, COALESCE(pa.comment, ''), pa.created_at
+		FROM proposal_approvals pa
+		LEFT JOIN users u ON u.id = pa.approved_by
+		WHERE pa.proposal_id = $1
+		ORDER BY pa.created_at ASC
+	`, proposalID)
+	if err != nil {
+		return nil, fmt.Errorf("list proposal approvals: %w", err)
+	}
+	defer rows.Close()
+
+	var approvals []ProposalApproval
+	for rows.Next() {
+		var a ProposalApproval
+		if err := rows.Scan(&a.ID, &a.ProposalID, &a.GroupID, &a.ApprovedBy, &a.ApprovedByName, &a.CommitHash, &a.Status, &a.Comment, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan proposal approval: %w", err)
+		}
+		approvals = append(approvals, a)
+	}
+	return approvals, rows.Err()
+}
+
+func (s *PostgresStore) UpsertProposalApproval(ctx context.Context, proposalID, groupID, userID, commitHash, status, comment string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO proposal_approvals (proposal_id, group_id, approved_by, commit_hash, status, comment)
+		VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6)
+		ON CONFLICT (proposal_id, approved_by) DO UPDATE
+		SET group_id = $2::uuid, commit_hash = $4, status = $5, comment = $6, created_at = NOW()
+	`, proposalID, groupID, userID, commitHash, status, comment)
+	if err != nil {
+		return fmt.Errorf("upsert proposal approval: %w", err)
 	}
 	return nil
 }

@@ -5,7 +5,6 @@ import type { ApprovalsResponse } from "../api/types";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { EmptyStateError, EmptyStateEmpty } from "../ui/EmptyState";
-import { MergeGateBadge } from "../ui/MergeGateBadge";
 import { StatusPill } from "../ui/StatusPill";
 
 type ViewState = "success" | "loading" | "empty" | "error";
@@ -104,7 +103,7 @@ export function ApprovalsPage() {
             <p className="muted" role="status" aria-live="polite">
               {loadingSlow
                 ? "This is taking longer than expected. You can retry now or keep waiting."
-                : "Fetching approval chains and merge-gate state."}
+                : "Fetching approval queue."}
             </p>
             {loadingSlow ? (
               <div className="button-row">
@@ -146,31 +145,7 @@ export function ApprovalsPage() {
       )}
 
       {viewState === "success" && approvals && (
-        <>
-          <div className="grid approvals-summary-grid">
-            <Card>
-              <p className="muted">Needs your action</p>
-              <p className="approvals-metric">{blockedQueue.length}</p>
-            </Card>
-            <Card>
-              <p className="muted">Waiting on others</p>
-              <p className="approvals-metric">{readyQueue.length}</p>
-            </Card>
-            <Card>
-              <p className="muted">Total queue</p>
-              <p className="approvals-metric">{queue.length}</p>
-            </Card>
-          </div>
-
-          <Card>
-            <h2>Current gate status</h2>
-            <p className="muted">
-              Merge stays blocked until required approvers sign off and open annotations are resolved.
-            </p>
-            <MergeGateBadge gate={approvals.mergeGate} />
-          </Card>
-
-          <div className="grid approvals-grid">
+        <div className="grid approvals-grid">
             <Card>
               <h2>Needs your review</h2>
               <div className="approvals-list" role="list">
@@ -208,8 +183,7 @@ export function ApprovalsPage() {
                 ))}
               </div>
             </Card>
-          </div>
-        </>
+        </div>
       )}
     </section>
   );

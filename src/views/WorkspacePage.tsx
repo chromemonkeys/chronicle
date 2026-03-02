@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../state/AuthProvider";
 import {
+  approveProposalGroup,
   approveProposalRole,
   connectWorkspaceRealtime,
   createDocument,
   createProposal,
   createProposalThread,
+  fetchAdminUsers,
   fetchDocuments,
   fetchDecisionLog,
   fetchWorkspaces,
+  rejectProposalGroup,
+  saveApprovalRules,
   sendWorkspaceRealtimeUpdate,
   fetchDocumentBlame,
   fetchDocumentCompare,
@@ -30,6 +35,7 @@ import {
   updateChangeReviewState
 } from "../api/client";
 import type {
+  AdminUser,
   BlameEntry,
   CompareContentSnapshot,
   DecisionLogEntry,
@@ -37,17 +43,21 @@ import type {
   DocumentHistoryPayload,
   DocumentSummary,
   MergeGateRole,
+  SaveApprovalRulesRequest,
   Space,
   TreeItemData,
   WorkspaceContent,
   WorkspacePayload
 } from "../api/types";
 import { ApprovalChain } from "../ui/ApprovalChain";
+import { ApprovalRulesEditor } from "../ui/ApprovalRulesEditor";
 import { BlameView } from "../ui/BlameView";
 import { BranchGraph } from "../ui/BranchGraph";
 import { DecisionLogTable } from "../ui/DecisionLogTable";
 import { DocumentTree } from "../ui/DocumentTree";
 import { EmptyStateError, EmptyState } from "../ui/EmptyState";
+import { ShareDialog } from "../ui/ShareDialog";
+import { SpacePermissions } from "../ui/SpacePermissions";
 import { Tabs } from "../ui/Tabs";
 import { ThreadComposer } from "../ui/ThreadComposer";
 import { ThreadList } from "../ui/ThreadList";
@@ -204,11 +214,12 @@ const panelTabs: { id: PanelTab; label: string; ariaLabel: string; icon: JSX.Ele
     ariaLabel: "Branch timeline",
     icon: (
       <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
-        <path d="M4 4v12M4 6c2 0 4-1.5 4-4M4 14c2 0 4 1.5 4 4M4 10c3 0 6-2 6-5h4a2 2 0 0 1 2 2v6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx="4" cy="6" r="1.5" fill="currentColor" />
-        <circle cx="4" cy="14" r="1.5" fill="currentColor" />
-        <circle cx="4" cy="10" r="1.5" fill="currentColor" />
-        <circle cx="16" cy="10" r="1.5" fill="currentColor" />
+        <path d="M7 4v12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M13 4v4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M13 8c0 2.5-2 4-6 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="7" cy="4" r="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <circle cx="13" cy="4" r="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <circle cx="7" cy="16" r="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
       </svg>
     )
   },
@@ -264,10 +275,6 @@ function parseRealtimeTimestamp(value?: string): number | null {
     return null;
   }
   return parsed;
-}
-
-function pluralize(value: number, singular: string, plural: string) {
-  return value === 1 ? singular : plural;
 }
 
 function compareTypeRank(type: CompareChangeType): number {
@@ -332,19 +339,6 @@ function normalizeCompareChanges(payload: DocumentComparePayload): CompareChange
     });
 }
 
-function roleLabel(role: string): string {
-  switch (role) {
-    case "security":
-      return "Security";
-    case "architectureCommittee":
-      return "Architecture Committee";
-    case "legal":
-      return "Legal";
-    default:
-      return role;
-  }
-}
-
 function normalizeMergeGateBlockers(value: unknown): MergeGateBlockerRow[] {
   if (!Array.isArray(value)) {
     return [];
@@ -389,6 +383,7 @@ function normalizeMergeGateBlockers(value: unknown): MergeGateBlockerRow[] {
 export function WorkspacePage() {
   const { docId = "" } = useParams();
   const navigate = useNavigate();
+  const { userId: currentUserId } = useAuth();
   const [viewState, setViewState] = useState<ViewState>("loading");
   const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
   const [activeTab, setActiveTab] = useState<PanelTab>("discussions");
@@ -402,6 +397,10 @@ export function WorkspacePage() {
   const [approvalStateOverride, setApprovalStateOverride] = useState<ViewState | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [approvalRefreshBusy, setApprovalRefreshBusy] = useState(false);
+  const [showApprovalRules, setShowApprovalRules] = useState(false);
+  const [workspaceUsers, setWorkspaceUsers] = useState<AdminUser[]>([]);
+  const [approvalRulesSaving, setApprovalRulesSaving] = useState(false);
+  const [approvingGroupId, setApprovingGroupId] = useState<string | null>(null);
   const [contentDraft, setContentDraft] = useState<WorkspaceContent | null>(null);
   const [docDraft, setDocDraft] = useState<DocumentContent | null>(null);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
@@ -440,10 +439,11 @@ export function WorkspacePage() {
   const [compareFilterState, setCompareFilterState] = useState<CompareReviewState | "all">("all");
   const [compareUnresolvedOnly, setCompareUnresolvedOnly] = useState(false);
   const [activeCompareChangeId, setActiveCompareChangeId] = useState<string>("");
-  const [mergeGateBlockers, setMergeGateBlockers] = useState<MergeGateBlockerRow[]>([]);
+  const [_mergeGateBlockers, setMergeGateBlockers] = useState<MergeGateBlockerRow[]>([]);
   const [mergeGatePolicy, setMergeGatePolicy] = useState<MergeGatePolicySnapshot | null>(null);
   const [approveBusyRole, setApproveBusyRole] = useState<MergeGateRole | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "connected" | "offline">("connecting");
   const [onlineCount, setOnlineCount] = useState(1);
   const threadRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -586,6 +586,20 @@ export function WorkspacePage() {
     }
   }, []);
 
+  // Load workspace users when approval rules editor opens
+  useEffect(() => {
+    if (!showApprovalRules) return;
+    let cancelled = false;
+    fetchAdminUsers({ limit: 200 }).then((res) => {
+      if (!cancelled) {
+        setWorkspaceUsers(res.users);
+      }
+    }).catch(() => {
+      // Silently fail — editor will show empty user list
+    });
+    return () => { cancelled = true; };
+  }, [showApprovalRules]);
+
   const nodeLabelMap = useMemo(() => buildNodeLabelMap(docDraft), [docDraft]);
   const compareAuthorOptions = useMemo(() => {
     const options = new Set<string>();
@@ -701,6 +715,7 @@ export function WorkspacePage() {
 
   // Fetch spaces for folder hierarchy
   const [spaces, setSpaces] = useState<Space[]>([]);
+  const [activeSpaceForPermissions, setActiveSpaceForPermissions] = useState<Space | null>(null);
   useEffect(() => {
     fetchWorkspaces()
       .then((response) => setSpaces(response.spaces))
@@ -1117,47 +1132,6 @@ export function WorkspacePage() {
     setActiveTab("discussions");
   }
 
-  async function openMergeBlocker(row: MergeGateBlockerRow) {
-    const targetTab = row.link?.tab;
-    if (targetTab) {
-      setActiveTab(targetTab);
-    }
-    if (row.type === "thread") {
-      const threadID = row.threadId ?? row.link?.threadId;
-      if (threadID) {
-        selectThread(threadID);
-      }
-      return;
-    }
-    if (row.type === "change") {
-      const changeID = row.changeId ?? row.link?.changeId;
-      let availableChanges = compareChanges;
-      if (!compareActive) {
-        const loadedChanges = await compareLatestCommits();
-        if (loadedChanges) {
-          availableChanges = loadedChanges;
-        }
-      }
-      const fallbackNodeId = row.link?.nodeId;
-      if (!changeID) {
-        if (fallbackNodeId) {
-          setActiveNodeId(fallbackNodeId);
-          setComposerAnchorNodeId(fallbackNodeId);
-        }
-        return;
-      }
-      const match = availableChanges.find((item) => item.id === changeID);
-      if (match) {
-        focusCompareChange(match);
-      } else if (fallbackNodeId) {
-        setActiveNodeId(fallbackNodeId);
-        setComposerAnchorNodeId(fallbackNodeId);
-      }
-      return;
-    }
-    setActiveTab("approvals");
-  }
-
   const focusCompareChange = useCallback((change: CompareChangeRow, navigationMethod: "click" | "keyboard" | "step" = "click") => {
     setActiveCompareChangeId(change.id);
     setActiveNodeId(change.anchor.nodeId);
@@ -1363,6 +1337,68 @@ export function WorkspacePage() {
       }
     } finally {
       setApproveBusyRole(null);
+    }
+  }
+
+  async function handleApproveGroup(groupId: string) {
+    if (!workspace?.document.proposalId) return;
+    setApprovingGroupId(groupId);
+    setActionError(null);
+    setApprovalError(null);
+    setApprovalStateOverride(null);
+    try {
+      const updated = await approveProposalGroup(
+        workspace.document.id,
+        workspace.document.proposalId,
+        groupId
+      );
+      applyWorkspacePayload(updated);
+    } catch (error) {
+      const message = isApiError(error) ? error.message : "Group approval failed.";
+      setActionError(message);
+      setApprovalError(message);
+    } finally {
+      setApprovingGroupId(null);
+    }
+  }
+
+  async function handleRejectGroup(groupId: string) {
+    if (!workspace?.document.proposalId) return;
+    setApprovingGroupId(groupId);
+    setActionError(null);
+    setApprovalError(null);
+    setApprovalStateOverride(null);
+    try {
+      const updated = await rejectProposalGroup(
+        workspace.document.id,
+        workspace.document.proposalId,
+        groupId
+      );
+      applyWorkspacePayload(updated);
+    } catch (error) {
+      const message = isApiError(error) ? error.message : "Group rejection failed.";
+      setActionError(message);
+      setApprovalError(message);
+    } finally {
+      setApprovingGroupId(null);
+    }
+  }
+
+  async function handleSaveApprovalRules(payload: SaveApprovalRulesRequest) {
+    if (!workspace) return;
+    setApprovalRulesSaving(true);
+    setActionError(null);
+    try {
+      await saveApprovalRules(workspace.document.id, payload);
+      setShowApprovalRules(false);
+      // Refresh workspace to get updated approval workflow
+      const updated = await fetchWorkspace(workspace.document.id);
+      applyWorkspacePayload(updated);
+    } catch (error) {
+      const message = isApiError(error) ? error.message : "Failed to save approval rules.";
+      setActionError(message);
+    } finally {
+      setApprovalRulesSaving(false);
     }
   }
 
@@ -2007,32 +2043,6 @@ export function WorkspacePage() {
         : "success";
   const effectiveApprovalState: ViewState = approvalStateOverride ?? runtimeApprovalState;
   const mergeReady = hasActiveProposal && pendingApprovals === 0 && openThreads === 0 && runtimeApprovalState === "success";
-  const showMergeBlockers = hasActiveProposal && !mergeReady && effectiveApprovalState === "success";
-  const mergeBlockerSummary = `Merge blockers: ${pendingApprovals} pending ${pluralize(pendingApprovals, "approval", "approvals")}, ${openThreads} open ${pluralize(openThreads, "thread", "threads")}.`;
-  const fallbackMergeBlockers: MergeGateBlockerRow[] = workspace
-    ? (() => {
-        const approvalRows: MergeGateBlockerRow[] = (Object.entries(workspace.approvals) as Array<[MergeGateRole, string]>)
-      .filter(([, status]) => status !== "Approved")
-      .map(([role]) => ({
-        id: `approval:${role}`,
-        type: "approval" as const,
-        label: `${roleLabel(role)} approval is pending`,
-        role,
-        link: { tab: "approvals" as PanelTab, role }
-      }));
-        const threadRows: MergeGateBlockerRow[] = workspace.threads
-      .filter((thread) => thread.status !== "RESOLVED")
-      .map((thread) => ({
-        id: `thread:${thread.id}`,
-        type: "thread" as const,
-        label: `Thread ${thread.id} is still open`,
-        threadId: thread.id,
-        link: { tab: "discussions" as PanelTab, threadId: thread.id, nodeId: thread.anchorNodeId }
-      }));
-        return [...approvalRows, ...threadRows];
-      })()
-    : [];
-  const activeMergeBlockers = mergeGateBlockers.length > 0 ? mergeGateBlockers : fallbackMergeBlockers;
   const content = contentDraft ?? workspace.content;
   const workspaceDoc = workspace.doc ?? legacyContentToDoc(workspace.content, workspace.nodeIds);
   const activeDoc = docDraft ?? workspaceDoc;
@@ -2108,6 +2118,14 @@ export function WorkspacePage() {
               title="View history"
             >
               <span>View History</span>
+            </button>
+            <button
+              className="cm-action-btn cm-action-btn--primary"
+              type="button"
+              onClick={() => setShareDialogOpen(true)}
+              title="Share document"
+            >
+              <span>Share</span>
             </button>
           </div>
 
@@ -2227,6 +2245,12 @@ export function WorkspacePage() {
                   }}
                   onCreateDocument={handleCreateDocument}
                   onMoveDocument={handleMoveDocument}
+                  onManageSpacePermissions={(spaceId) => {
+                    const space = spaces.find(s => s.id === spaceId);
+                    if (space) {
+                      setActiveSpaceForPermissions(space);
+                    }
+                  }}
                   emptyMessage={
                     sidebarSection === "all"
                       ? "No documents yet. Create your first document to get started."
@@ -2528,7 +2552,7 @@ export function WorkspacePage() {
 
           {activeTab === "approvals" && (
             <div className="cm-panel-content active">
-              {!hasActiveProposal && (
+              {!hasActiveProposal && !showApprovalRules && (
                 <div className="cm-panel-scroll">
                   <div className="cm-panel-fallback-card">
                     <h3>No active proposal approvals</h3>
@@ -2542,16 +2566,71 @@ export function WorkspacePage() {
                     >
                       Start Proposal
                     </button>
+                    <button
+                      className="cm-thread-action-btn"
+                      type="button"
+                      style={{ marginTop: 8 }}
+                      onClick={() => setShowApprovalRules(true)}
+                    >
+                      Configure approval workflow
+                    </button>
                   </div>
                 </div>
               )}
 
-              {hasActiveProposal && (
+              {showApprovalRules && (
+                <div className="cm-panel-scroll cm-panel-scroll-approval">
+                  <ApprovalRulesEditor
+                    documentId={workspace?.document.id ?? ""}
+                    mode={workspace?.approvalWorkflow?.mode ?? "sequential"}
+                    groups={workspace?.approvalWorkflow?.groups.map((g) => ({
+                      id: g.groupId,
+                      documentId: workspace?.document.id ?? "",
+                      name: g.groupName,
+                      minApprovals: g.minApprovals,
+                      sortOrder: g.sortOrder,
+                      members: g.members,
+                      createdAt: "",
+                      updatedAt: "",
+                    })) ?? []}
+                    workspaceUsers={workspaceUsers.map((u) => ({
+                      id: u.id,
+                      displayName: u.displayName,
+                      email: u.email,
+                    }))}
+                    saving={approvalRulesSaving}
+                    onSave={(payload) => {
+                      void handleSaveApprovalRules(payload);
+                    }}
+                    onCancel={() => setShowApprovalRules(false)}
+                  />
+                </div>
+              )}
+
+              {hasActiveProposal && !showApprovalRules && (
                 <div className="cm-panel-scroll cm-panel-scroll-approval">
                   <div className="cm-approval-panel cm-approval-panel-tab">
                     <div className="cm-approval-header">
                       Required Approvals
-                      <span className="cm-approval-progress">{3 - pendingApprovals} / 3</span>
+                      <span className="cm-approval-header-actions">
+                        <button
+                          className="cm-rules-configure-btn"
+                          type="button"
+                          onClick={() => setShowApprovalRules(true)}
+                          title="Configure approval workflow"
+                          aria-label="Configure approval workflow"
+                        >
+                          <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                            <path d="M6.5 1.2l-.5 1.5-.8.3-1.3-.8L2.2 3.9l.8 1.3-.3.8-1.5.5v2.1l1.5.5.3.8-.8 1.3 1.5 1.5 1.3-.8.8.3.5 1.5h2.1l.5-1.5.8-.3 1.3.8 1.5-1.5-.8-1.3.3-.8 1.5-.5V6.5l-1.5-.5-.3-.8.8-1.3-1.5-1.5-1.3.8-.8-.3L8.6 1.2H6.5Z" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+                            <circle cx="7.5" cy="7.5" r="2" fill="none" stroke="currentColor" strokeWidth="1.2"/>
+                          </svg>
+                        </button>
+                        <span className="cm-approval-progress">
+                          {workspace.approvalWorkflow
+                            ? `${workspace.approvalWorkflow.groups.filter((g) => g.status === "approved").length} / ${workspace.approvalWorkflow.groups.length}`
+                            : `${3 - pendingApprovals} / 3`}
+                        </span>
+                      </span>
                     </div>
                     {showDebugStateToggles && (
                       <div className="cm-panel-state cm-panel-state-subtle" aria-label="Approvals panel state">
@@ -2592,7 +2671,7 @@ export function WorkspacePage() {
                             ? "Refreshing approval chain..."
                             : mergeBusy
                               ? "Submitting merge..."
-                              : approveBusyRole
+                              : approveBusyRole || approvingGroupId
                                 ? "Recording approval..."
                                 : "Loading approval state..."}
                         </p>
@@ -2620,55 +2699,31 @@ export function WorkspacePage() {
                       </div>
                     )}
                     {effectiveApprovalState === "success" && (
-                      <>
-                        {showMergeBlockers ? (
-                          <div className="cm-merge-blockers" role="status">
-                            <p>{mergeBlockerSummary}</p>
-                            {activeMergeBlockers.length > 0 ? (
-                              <ul className="cm-merge-blockers-list">
-                                {activeMergeBlockers.map((row) => (
-                                  <li key={row.id}>
-                                    <button
-                                      className="cm-thread-action-btn"
-                                      type="button"
-                                      onClick={() => {
-                                        void openMergeBlocker(row);
-                                      }}
-                                    >
-                                      {row.label}
-                                    </button>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : null}
-                            {mergeGatePolicy ? (
-                              <p className="cm-merge-blockers-policy">
-                                Policy: deferred changes {mergeGatePolicy.allowMergeWithDeferredChanges ? "allowed" : "block merge"}, format-only changes {mergeGatePolicy.ignoreFormatOnlyChangesForGate ? "ignored" : "block merge"}.
-                              </p>
-                            ) : null}
-                          </div>
-                        ) : null}
-                        <ApprovalChain
-                          gate={workspace.approvals}
-                          details={workspace.approvalDetails}
-                          stages={workspace.approvalStages}
-                          approvingRole={approveBusyRole}
-                          onApprove={(role) => {
-                            void approveRole(role);
-                          }}
-                          onMerge={() => {
-                            void mergeCurrentProposal();
-                          }}
-                          canMerge={hasActiveProposal && mergeReady && !mergeBusy}
-                          mergeLabel={
-                            mergeBusy
-                              ? "Merging..."
-                              : !hasActiveProposal
-                                ? "⊘ Start proposal"
-                                : undefined
-                          }
-                        />
-                      </>
+                      <ApprovalChain
+                        gate={workspace.approvals}
+                        details={workspace.approvalDetails}
+                        stages={workspace.approvalStages}
+                        approvingRole={approveBusyRole}
+                        onApprove={(role) => {
+                          void approveRole(role);
+                        }}
+                        workflow={workspace.approvalWorkflow}
+                        approvingGroupId={approvingGroupId}
+                        onApproveGroup={handleApproveGroup}
+                        onRejectGroup={handleRejectGroup}
+                        currentUserId={currentUserId}
+                        onMerge={() => {
+                          void mergeCurrentProposal();
+                        }}
+                        canMerge={hasActiveProposal && mergeReady && !mergeBusy}
+                        mergeLabel={
+                          mergeBusy
+                            ? "Merging..."
+                            : !hasActiveProposal
+                              ? "⊘ Start proposal"
+                              : undefined
+                        }
+                      />
                     )}
                   </div>
                 </div>
@@ -3092,6 +3147,23 @@ export function WorkspacePage() {
         <div className="cm-statusbar-spacer" />
         <div className="cm-statusbar-item">Autosaved · now</div>
       </div>
+
+      {/* Share Dialog */}
+      <ShareDialog
+        documentId={workspace.document.id}
+        documentTitle={content.title}
+        isOpen={shareDialogOpen}
+        onClose={() => setShareDialogOpen(false)}
+      />
+
+      {/* Space Permissions Dialog */}
+      {activeSpaceForPermissions && (
+        <SpacePermissions
+          space={activeSpaceForPermissions}
+          isOpen={!!activeSpaceForPermissions}
+          onClose={() => setActiveSpaceForPermissions(null)}
+        />
+      )}
     </div>
   );
 }

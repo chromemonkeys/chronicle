@@ -152,7 +152,7 @@ type dataStore interface {
 	ListSpaces(context.Context, string) ([]store.Space, error)
 	GetSpace(context.Context, string) (store.Space, error)
 	InsertSpace(context.Context, store.Space) error
-	UpdateSpace(context.Context, string, string, string) error
+	UpdateSpace(context.Context, string, string, string, string) error
 	DeleteSpace(context.Context, string) error
 	ListDocumentsBySpace(context.Context, string) ([]store.Document, error)
 	MoveDocument(context.Context, string, string) error
@@ -183,14 +183,41 @@ type dataStore interface {
 	// Permission methods
 	ListPermissions(context.Context, string, string) ([]store.PermissionWithDetails, error)
 	ListGuestUsers(context.Context, string) ([]store.User, error)
-	UpsertPermission(context.Context, store.Permission) error
+	UpsertPermission(context.Context, store.Permission) (string, error)
 	DeletePermission(context.Context, string) error
 	RemoveGuestUser(context.Context, string) error
+	CreateGuestUser(context.Context, store.User, string, *time.Time) error
+	// Document share mode
+	UpdateDocumentShareMode(context.Context, string, string) error
 	// Public links
-	InsertPublicLink(context.Context, store.PublicLink) error
+	InsertPublicLink(context.Context, store.PublicLink) (string, error)
 	RevokePublicLink(context.Context, string) error
 	GetPublicLinkByToken(context.Context, string) (*store.PublicLink, error)
 	IncrementPublicLinkAccess(context.Context, string) error
+	ListPublicLinks(context.Context, string) ([]store.PublicLink, error)
+	// Admin user management
+	ListWorkspaceUsers(ctx context.Context, workspaceID, search string, limit, offset int) ([]store.User, int, error)
+	UpdateUserRole(ctx context.Context, userID, workspaceID, role string) error
+	SetUserDeactivated(ctx context.Context, userID string, deactivated bool) error
+	// Groups
+	ListGroups(context.Context, string) ([]store.Group, error)
+	GetGroup(context.Context, string) (*store.Group, error)
+	InsertGroup(context.Context, store.Group) error
+	InsertGroupReturningID(context.Context, store.Group) (string, error)
+	UpdateGroup(context.Context, store.Group) error
+	DeleteGroup(context.Context, string) error
+	ListGroupMembers(context.Context, string) ([]store.User, error)
+	AddGroupMember(context.Context, string, string) error
+	RemoveGroupMember(context.Context, string, string) error
+	// Space creation with permissions
+	CreateSpaceWithPermissions(ctx context.Context, space store.Space, permissions []store.Permission) error
+	CountSlugsWithPrefix(ctx context.Context, workspaceID, baseSlug string) (int, error)
+	// Approval workflow V2
+	ListApprovalGroups(context.Context, string) ([]store.ApprovalGroup, error)
+	ListApprovalGroupMembers(context.Context, string) ([]store.ApprovalGroupMember, error)
+	SaveApprovalRules(ctx context.Context, documentID string, groups []store.ApprovalGroup, membersByGroup map[string][]string) error
+	ListProposalApprovals(context.Context, string) ([]store.ProposalApproval, error)
+	UpsertProposalApproval(ctx context.Context, proposalID, groupID, userID, commitHash, status, comment string) error
 }
 
 type gitService interface {
@@ -860,7 +887,7 @@ func (s *Service) CreateProposal(ctx context.Context, documentID, userName, titl
 	if err := s.store.UpdateDocumentState(ctx, documentID, firstNonBlank(proposalTitle, doc.Title), doc.Subtitle, "Draft", userName); err != nil {
 		return nil, err
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) CreateDocument(ctx context.Context, title, subtitle, spaceID, userName string, viewerIsExternal bool) (map[string]any, error) {
@@ -902,7 +929,7 @@ func (s *Service) CreateDocument(ctx context.Context, title, subtitle, spaceID, 
 			Status:   "Draft",
 		})
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) SaveWorkspace(ctx context.Context, documentID string, content WorkspaceContent, userName string, viewerIsExternal bool) (map[string]any, error) {
@@ -962,7 +989,7 @@ func (s *Service) SaveWorkspace(ctx context.Context, documentID string, content 
 		}
 	}
 
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) SubmitProposal(ctx context.Context, documentID, proposalID string, viewerIsExternal bool) (map[string]any, error) {
@@ -983,7 +1010,7 @@ func (s *Service) SubmitProposal(ctx context.Context, documentID, proposalID str
 	if err := s.store.UpdateDocumentState(ctx, documentID, doc.Title, doc.Subtitle, "In review", doc.UpdatedBy); err != nil {
 		return nil, err
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) ApproveProposalRole(ctx context.Context, documentID, proposalID, role, userName string, viewerIsExternal bool) (map[string]any, error) {
@@ -1019,7 +1046,7 @@ func (s *Service) ApproveProposalRole(ctx context.Context, documentID, proposalI
 	if err := s.store.UpdateProposalStatus(ctx, proposalID, "UNDER_REVIEW"); err != nil {
 		return nil, err
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) CreateThread(ctx context.Context, documentID, proposalID, userName string, viewerIsExternal bool, input CreateThreadInput) (map[string]any, error) {
@@ -1085,7 +1112,7 @@ func (s *Service) CreateThread(ctx context.Context, documentID, proposalID, user
 			})
 		}
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) ReplyThread(ctx context.Context, documentID, proposalID, threadID, userName string, viewerIsExternal bool, input ThreadReplyInput) (map[string]any, error) {
@@ -1121,7 +1148,7 @@ func (s *Service) ReplyThread(ctx context.Context, documentID, proposalID, threa
 	}); err != nil {
 		return nil, err
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) ResolveThread(ctx context.Context, documentID, proposalID, threadID, userName string, viewerIsExternal bool, input ResolveThreadInput) (map[string]any, error) {
@@ -1227,7 +1254,7 @@ func (s *Service) ResolveThread(ctx context.Context, documentID, proposalID, thr
 			}
 		}
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) ReopenThread(ctx context.Context, documentID, proposalID, threadID string, viewerIsExternal bool) (map[string]any, error) {
@@ -1252,7 +1279,7 @@ func (s *Service) ReopenThread(ctx context.Context, documentID, proposalID, thre
 	if !changed {
 		return nil, sql.ErrNoRows
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) SetThreadVisibility(ctx context.Context, documentID, proposalID, threadID string, viewerIsExternal bool, input UpdateThreadVisibilityInput) (map[string]any, error) {
@@ -1274,7 +1301,7 @@ func (s *Service) SetThreadVisibility(ctx context.Context, documentID, proposalI
 	if !changed {
 		return nil, sql.ErrNoRows
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) VoteThread(ctx context.Context, documentID, proposalID, threadID, userName string, viewerIsExternal bool, input VoteThreadInput) (map[string]any, error) {
@@ -1306,7 +1333,7 @@ func (s *Service) VoteThread(ctx context.Context, documentID, proposalID, thread
 	if err := s.store.ToggleThreadVote(ctx, proposalID, threadID, userName, vote); err != nil {
 		return nil, err
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) ReactThread(ctx context.Context, documentID, proposalID, threadID, userName string, viewerIsExternal bool, input ReactThreadInput) (map[string]any, error) {
@@ -1334,7 +1361,7 @@ func (s *Service) ReactThread(ctx context.Context, documentID, proposalID, threa
 	if err := s.store.ToggleThreadReaction(ctx, proposalID, threadID, userName, emoji); err != nil {
 		return nil, err
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func (s *Service) DecisionLog(ctx context.Context, documentID string, filters DecisionLogFilterInput) (map[string]any, error) {
@@ -1399,7 +1426,7 @@ func (s *Service) SaveNamedVersion(ctx context.Context, documentID, proposalID, 
 	if err := s.store.InsertNamedVersion(ctx, proposalID, label, commit.Hash, userName); err != nil {
 		return nil, err
 	}
-	return s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }
 
 func buildNamedVersionTagName(label, commitHash string) string {
@@ -1693,7 +1720,7 @@ func (s *Service) MergeProposal(ctx context.Context, documentID, proposalID, use
 		}
 	}
 
-	workspace, err := s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	workspace, err := s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2104,38 +2131,16 @@ func shortHash(input string) string {
 }
 
 func (s *Service) Approvals(ctx context.Context) (map[string]any, error) {
-	primaryDocID := "adr-142"
-	proposal, err := s.store.GetActiveProposal(ctx, primaryDocID)
-	if err != nil {
-		return nil, err
-	}
-
-	mergeGate := map[string]string{
-		"security":              "Approved",
-		"architectureCommittee": "Approved",
-		"legal":                 "Approved",
-	}
-	if proposal != nil {
-		approvals, err := s.store.ListApprovals(ctx, proposal.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, approval := range approvals {
-			mergeGate[approval.Role] = approval.Status
-		}
-	}
-
 	queue, err := s.store.ProposalQueue(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{
-		"mergeGate": mergeGate,
-		"queue":     queue,
+		"queue": queue,
 	}, nil
 }
 
-func (s *Service) GetWorkspace(ctx context.Context, documentID string, viewerIsExternal bool) (map[string]any, error) {
+func (s *Service) GetWorkspace(ctx context.Context, documentID string, viewerUserID string, viewerIsExternal bool) (map[string]any, error) {
 	document, err := s.store.GetDocument(ctx, documentID)
 	if err != nil {
 		return nil, err
@@ -2358,6 +2363,13 @@ func (s *Service) GetWorkspace(ctx context.Context, documentID string, viewerIsE
 			"name": spaceName,
 		}
 	}
+
+	// Add V2 approval workflow if groups are configured
+	workflow, wErr := s.GetApprovalWorkflow(ctx, documentID, proposalID, viewerUserID)
+	if wErr == nil && workflow != nil {
+		result["approvalWorkflow"] = workflow
+	}
+
 	return result, nil
 }
 
@@ -2382,6 +2394,7 @@ func (s *Service) GetOrgWorkspace(ctx context.Context) (map[string]any, error) {
 			"name":          sp.Name,
 			"slug":          sp.Slug,
 			"description":   sp.Description,
+			"visibility":    sp.Visibility,
 			"documentCount": docCount,
 		})
 	}
@@ -2410,39 +2423,119 @@ func (s *Service) GetSpace(ctx context.Context, spaceID string) (map[string]any,
 		"name":          space.Name,
 		"slug":          space.Slug,
 		"description":   space.Description,
+		"visibility":    space.Visibility,
 		"documentCount": docCount,
 	}, nil
 }
 
+type InitialPermission struct {
+	SubjectType string `json:"subjectType"`
+	SubjectID   string `json:"subjectId"`
+	Role        string `json:"role"`
+}
+
 func (s *Service) CreateSpace(ctx context.Context, name, description string) (map[string]any, error) {
+	return s.CreateSpaceWithOptions(ctx, name, description, "organization", nil, "")
+}
+
+func (s *Service) CreateSpaceWithOptions(ctx context.Context, name, description, visibility string, initialPermissions []InitialPermission, creatorID string) (map[string]any, error) {
 	spaceName := strings.TrimSpace(name)
 	if spaceName == "" {
 		return nil, domainError(http.StatusUnprocessableEntity, "VALIDATION_ERROR", "name is required", nil)
 	}
+	if visibility == "" {
+		visibility = "organization"
+	}
+	if visibility != "organization" && visibility != "restricted" {
+		return nil, domainError(http.StatusUnprocessableEntity, "VALIDATION_ERROR", "visibility must be 'organization' or 'restricted'", nil)
+	}
+
 	ws, err := s.store.GetDefaultWorkspace(ctx)
 	if err != nil {
 		return nil, err
 	}
-	slug := strings.ToLower(strings.ReplaceAll(spaceName, " ", "-"))
+	baseSlug := strings.ToLower(strings.ReplaceAll(spaceName, " ", "-"))
+	slug := baseSlug
+	// Deduplicate slug: if "test" exists, try "test-2", "test-3", etc.
+	existingCount, err := s.store.CountSlugsWithPrefix(ctx, ws.ID, baseSlug)
+	if err != nil {
+		return nil, err
+	}
+	if existingCount > 0 {
+		slug = fmt.Sprintf("%s-%d", baseSlug, existingCount+1)
+	}
+
 	space := store.Space{
 		ID:          util.NewID("sp"),
 		WorkspaceID: ws.ID,
 		Name:        spaceName,
 		Slug:        slug,
 		Description: strings.TrimSpace(description),
+		Visibility:  visibility,
 	}
-	if err := s.store.InsertSpace(ctx, space); err != nil {
-		return nil, err
+
+	// Build permissions list
+	var permissions []store.Permission
+
+	// Add initial permissions first
+	creatorInList := false
+	for _, ip := range initialPermissions {
+		normalizedRole := rbac.Normalize(ip.Role)
+		grantedBy := creatorID
+		if ip.SubjectType == "user" && ip.SubjectID == creatorID {
+			creatorInList = true
+		}
+		permissions = append(permissions, store.Permission{
+			WorkspaceID:  ws.ID,
+			SubjectType:  ip.SubjectType,
+			SubjectID:    ip.SubjectID,
+			ResourceType: "space",
+			ResourceID:   space.ID,
+			Role:         string(normalizedRole),
+			GrantedBy:    &grantedBy,
+			GrantedAt:    time.Now(),
+		})
+	}
+
+	// Auto-add creator as admin if not already in the permissions list
+	if creatorID != "" && !creatorInList {
+		permissions = append(permissions, store.Permission{
+			WorkspaceID:  ws.ID,
+			SubjectType:  "user",
+			SubjectID:    creatorID,
+			ResourceType: "space",
+			ResourceID:   space.ID,
+			Role:         "admin",
+			GrantedBy:    &creatorID,
+			GrantedAt:    time.Now(),
+		})
+	}
+
+	if len(permissions) > 0 {
+		if err := s.store.CreateSpaceWithPermissions(ctx, space, permissions); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.store.InsertSpace(ctx, space); err != nil {
+			return nil, err
+		}
 	}
 	return s.GetOrgWorkspace(ctx)
 }
 
-func (s *Service) UpdateSpace(ctx context.Context, spaceID, name, description string) (map[string]any, error) {
+func (s *Service) UpdateSpace(ctx context.Context, spaceID, name, description, visibility string) (map[string]any, error) {
 	spaceName := strings.TrimSpace(name)
 	if spaceName == "" {
 		return nil, domainError(http.StatusUnprocessableEntity, "VALIDATION_ERROR", "name is required", nil)
 	}
-	if err := s.store.UpdateSpace(ctx, spaceID, spaceName, strings.TrimSpace(description)); err != nil {
+	vis := strings.TrimSpace(visibility)
+	if vis == "" {
+		vis = "organization"
+	}
+	if vis != "organization" && vis != "restricted" {
+		return nil, domainError(http.StatusUnprocessableEntity, "VALIDATION_ERROR", "visibility must be 'organization' or 'restricted'", nil)
+	}
+	if err := s.store.UpdateSpace(ctx, spaceID, spaceName, strings.TrimSpace(description), vis); err != nil {
 		return nil, err
 	}
 	space, err := s.store.GetSpace(ctx, spaceID)
@@ -2459,6 +2552,7 @@ func (s *Service) UpdateSpace(ctx context.Context, spaceID, name, description st
 		"name":          space.Name,
 		"slug":          space.Slug,
 		"description":   space.Description,
+		"visibility":    space.Visibility,
 		"documentCount": docCount,
 	}, nil
 }
@@ -3214,7 +3308,7 @@ func (s *Service) UpdateChangeReviewState(ctx context.Context, documentID, propo
 		log.Printf("failed to insert audit event for change review: %v", err)
 	}
 
-	workspace, err := s.GetWorkspace(ctx, documentID, viewerIsExternal)
+	workspace, err := s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 	if err != nil {
 		return nil, err
 	}
@@ -3277,4 +3371,274 @@ func (s *Service) ListAuditEvents(ctx context.Context, documentID, proposalID st
 		result = append(result, item)
 	}
 	return result, nil
+}
+
+// =============================================================================
+// Approval Workflow V2
+// =============================================================================
+
+func (s *Service) GetApprovalRules(ctx context.Context, documentID string) (map[string]any, error) {
+	groups, err := s.store.ListApprovalGroups(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+
+	groupList := make([]map[string]any, 0, len(groups))
+	for _, g := range groups {
+		members, mErr := s.store.ListApprovalGroupMembers(ctx, g.ID)
+		if mErr != nil {
+			return nil, mErr
+		}
+
+		memberList := make([]map[string]any, 0, len(members))
+		for _, m := range members {
+			memberList = append(memberList, map[string]any{
+				"id":          m.ID,
+				"userId":      m.UserID,
+				"displayName": m.DisplayName,
+				"email":       m.Email,
+			})
+		}
+
+		groupList = append(groupList, map[string]any{
+			"id":           g.ID,
+			"documentId":   g.DocumentID,
+			"name":         g.Name,
+			"description":  g.Description,
+			"minApprovals": g.MinApprovals,
+			"sortOrder":    g.SortOrder,
+			"members":      memberList,
+			"createdAt":    g.CreatedAt.Format(time.RFC3339),
+			"updatedAt":    g.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+
+	return map[string]any{
+		"documentId": documentID,
+		"mode":       "sequential",
+		"groups":     groupList,
+	}, nil
+}
+
+type SaveApprovalRulesInput struct {
+	Mode   string
+	Groups []struct {
+		ID            string   `json:"id"`
+		Name          string   `json:"name"`
+		Description   string   `json:"description"`
+		MinApprovals  int      `json:"minApprovals"`
+		SortOrder     int      `json:"sortOrder"`
+		MemberUserIds []string `json:"memberUserIds"`
+	}
+}
+
+func (s *Service) SaveApprovalRules(ctx context.Context, documentID string, input SaveApprovalRulesInput) (map[string]any, error) {
+	storeGroups := make([]store.ApprovalGroup, 0, len(input.Groups))
+	membersByGroup := make(map[string][]string, len(input.Groups))
+
+	for _, g := range input.Groups {
+		groupID := g.ID
+		if groupID == "" {
+			groupID = fmt.Sprintf("temp-%d", g.SortOrder)
+		}
+		storeGroups = append(storeGroups, store.ApprovalGroup{
+			ID:           groupID,
+			DocumentID:   documentID,
+			Name:         g.Name,
+			Description:  g.Description,
+			MinApprovals: g.MinApprovals,
+			SortOrder:    g.SortOrder,
+		})
+		membersByGroup[groupID] = g.MemberUserIds
+	}
+
+	if err := s.store.SaveApprovalRules(ctx, documentID, storeGroups, membersByGroup); err != nil {
+		return nil, err
+	}
+
+	return s.GetApprovalRules(ctx, documentID)
+}
+
+func (s *Service) GetApprovalWorkflow(ctx context.Context, documentID, proposalID, currentUserID string) (map[string]any, error) {
+	groups, err := s.store.ListApprovalGroups(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(groups) == 0 {
+		return nil, nil
+	}
+
+	var approvals []store.ProposalApproval
+	if proposalID != "" {
+		approvals, err = s.store.ListProposalApprovals(ctx, proposalID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Get the current commit hash for stale detection
+	currentHash := ""
+	if proposalID != "" {
+		proposal, pErr := s.store.GetActiveProposal(ctx, documentID)
+		if pErr == nil && proposal != nil {
+			commits, cErr := s.git.History(documentID, proposal.BranchName, 1)
+			if cErr == nil && len(commits) > 0 {
+				currentHash = commits[0].Hash
+			}
+		}
+	}
+
+	approvalsByGroup := make(map[string][]store.ProposalApproval)
+	for _, a := range approvals {
+		approvalsByGroup[a.GroupID] = append(approvalsByGroup[a.GroupID], a)
+	}
+
+	sorted := make([]map[string]any, 0, len(groups))
+	allApproved := true
+	currentUserGroups := make([]string, 0)
+
+	for i, g := range groups {
+		members, mErr := s.store.ListApprovalGroupMembers(ctx, g.ID)
+		if mErr != nil {
+			return nil, mErr
+		}
+
+		memberList := make([]map[string]any, 0, len(members))
+		for _, m := range members {
+			memberList = append(memberList, map[string]any{
+				"id":          m.ID,
+				"userId":      m.UserID,
+				"displayName": m.DisplayName,
+				"email":       m.Email,
+			})
+			if m.UserID == currentUserID {
+				currentUserGroups = append(currentUserGroups, g.ID)
+			}
+		}
+
+		groupApprovals := approvalsByGroup[g.ID]
+		approvalCount := 0
+		approvalList := make([]map[string]any, 0)
+		for _, a := range groupApprovals {
+			if a.Status == "approved" {
+				approvalCount++
+			}
+			isStale := currentHash != "" && a.CommitHash != currentHash
+			approvalList = append(approvalList, map[string]any{
+				"id":             a.ID,
+				"proposalId":     a.ProposalID,
+				"groupId":        a.GroupID,
+				"approvedBy":     a.ApprovedBy,
+				"approvedByName": a.ApprovedByName,
+				"commitHash":     a.CommitHash,
+				"status":         a.Status,
+				"comment":        a.Comment,
+				"createdAt":      a.CreatedAt.Format(time.RFC3339),
+				"isStale":        isStale,
+			})
+		}
+
+		status := "pending"
+		if approvalCount >= g.MinApprovals {
+			status = "approved"
+		} else {
+			hasRejection := false
+			for _, a := range groupApprovals {
+				if a.Status == "rejected" {
+					hasRejection = true
+					break
+				}
+			}
+			if hasRejection {
+				status = "rejected"
+			}
+		}
+
+		// Check if blocked (sequential mode: previous groups must be approved)
+		isBlocked := false
+		for j := 0; j < i; j++ {
+			prevApprovals := approvalsByGroup[groups[j].ID]
+			prevCount := 0
+			for _, a := range prevApprovals {
+				if a.Status == "approved" {
+					prevCount++
+				}
+			}
+			if prevCount < groups[j].MinApprovals {
+				isBlocked = true
+				break
+			}
+		}
+		if isBlocked && status == "pending" {
+			status = "blocked"
+		}
+
+		if status != "approved" {
+			allApproved = false
+		}
+
+		sorted = append(sorted, map[string]any{
+			"groupId":       g.ID,
+			"groupName":     g.Name,
+			"minApprovals":  g.MinApprovals,
+			"sortOrder":     g.SortOrder,
+			"status":        status,
+			"approvalCount": approvalCount,
+			"members":       memberList,
+			"approvals":     approvalList,
+		})
+	}
+
+	return map[string]any{
+		"documentId":        documentID,
+		"mode":              "sequential",
+		"groups":            sorted,
+		"allApproved":       allApproved,
+		"currentUserGroups": currentUserGroups,
+	}, nil
+}
+
+func (s *Service) ApproveProposalGroup(ctx context.Context, documentID, proposalID, groupID, userID, comment string, viewerIsExternal bool) (map[string]any, error) {
+	proposal, err := s.store.GetProposal(ctx, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	if proposal.DocumentID != documentID {
+		return nil, domainError(http.StatusNotFound, "NOT_FOUND", "Proposal not found", nil)
+	}
+
+	commitHash := ""
+	commits, cErr := s.git.History(documentID, proposal.BranchName, 1)
+	if cErr == nil && len(commits) > 0 {
+		commitHash = commits[0].Hash
+	}
+
+	if err := s.store.UpsertProposalApproval(ctx, proposalID, groupID, userID, commitHash, "approved", comment); err != nil {
+		return nil, err
+	}
+
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
+}
+
+func (s *Service) RejectProposalGroup(ctx context.Context, documentID, proposalID, groupID, userID, comment string, viewerIsExternal bool) (map[string]any, error) {
+	proposal, err := s.store.GetProposal(ctx, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	if proposal.DocumentID != documentID {
+		return nil, domainError(http.StatusNotFound, "NOT_FOUND", "Proposal not found", nil)
+	}
+
+	commitHash := ""
+	commits, cErr := s.git.History(documentID, proposal.BranchName, 1)
+	if cErr == nil && len(commits) > 0 {
+		commitHash = commits[0].Hash
+	}
+
+	if err := s.store.UpsertProposalApproval(ctx, proposalID, groupID, userID, commitHash, "rejected", comment); err != nil {
+		return nil, err
+	}
+
+	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
 }

@@ -1,8 +1,14 @@
 # Chronicle Architecture Model
 
-> **Last Updated:** 2026-02-28 (RBAC-101/102: Permission middleware enforcement, suggester role, document-level permissions, permission denial audit logging)
+> **Last Updated:** 2026-03-02 (Redesigned ShareDialog with layered permissions model; added GET /api/documents/{id}/share/search endpoint; extended POST /api/documents/{id}/permissions for group grants)
 > **Version:** 1.0  
 > **Status:** Canonical reference for system architecture
+
+## Quick Links for Developers
+
+- 🆕 **[Permissions & Sharing Handoff](../HANDOFF_PERMISSIONS_SHARING.md)** - Current status and implementation roadmap for document sharing, space permissions, and reviewer management
+- [Technical Architecture (Full)](../agent-memory/Chronicle_Technical_Architecture.txt)
+- [Product Vision](../agent-memory/Chronicle_Product_Vision_v2.txt)
 
 This document is the single source of truth for Chronicle's system architecture. It must be updated whenever structural changes are made to the codebase.
 
@@ -74,6 +80,7 @@ chronicle/
 │   ├── state/                   # React context providers
 │   ├── ui/                      # UI components (DocumentTree, etc.)
 │   ├── views/                   # Page-level components
+│   │   └── settings/            # Settings page tab components
 │   ├── main.tsx                 # Application entry point
 │   ├── router.tsx               # React Router configuration
 │   └── styles.css               # Global CSS styles
@@ -133,9 +140,10 @@ Stores all operational metadata. **Never stores document content** (that lives i
 
 | Domain | Tables |
 |--------|--------|
-| Identity | `users`, `workspace_memberships`, `email_verifications`, `password_resets` |
-| Permissions | `document_permissions` *(RBAC-102)*, `permission_denials` *(RBAC-101 audit)* |
-| Documents | `workspaces`, `spaces`, `documents`, `document_versions` |
+| Identity | `users` *(deactivated_at)*, `workspace_memberships`, `email_verifications`, `password_resets` |
+| Permissions | `permissions` *(unified space+document)*, `document_permissions` *(RBAC-102)*, `permission_denials` *(RBAC-101 audit)* |
+| Groups | `groups`, `group_memberships` |
+| Documents | `workspaces`, `spaces` *(visibility column)*, `documents`, `document_versions` |
 | Version Control | `branches`, `branch_approvals` |
 | Deliberation | `threads`, `annotations`, `decision_log` |
 | Audit | `audit_log`, `permission_denials` |
@@ -457,17 +465,28 @@ When making structural changes, update this document:
 - [x] **Security model changed?** → Update Security Model section (Auth v1.0 reality check)
 - [ ] **Deployment changed?** → Update Deployment section
 - [x] **Milestone completed?** → Update Build Sequence status (SSO/SCIM→v2.0)
+- [x] **Developer handoff created?** → Created `docs/HANDOFF_PERMISSIONS_SHARING.md` documenting schema-complete, API-pending status for permissions system
 
 - [x] **Security model changed?** → Updated Permission Model section with RBAC v1.1 details, user types, sharing modes, and thread visibility
 - [x] **New database table?** → Added `permission_denials` (RBAC-101 audit), `document_permissions` (RBAC-102)
 - [x] **Security model changed?** → Updated Permission Model to reflect implemented RBAC-101/102: enforced role hierarchy with suggester, document-level permissions, permission denial audit logging
 - [x] **New API endpoint pattern?** → Added `/api/documents/{id}/permissions` endpoints (GET/POST/DELETE) for document permission management
+- [x] **New API endpoint pattern?** → Added admin endpoints: `/api/admin/users` (GET), `/api/admin/users/{id}/role` (PUT), `/api/admin/users/{id}/status` (PUT)
+- [x] **New API endpoint pattern?** → Added group endpoints: `/api/groups` (GET/POST), `/api/groups/{id}` (GET/PUT/DELETE), `/api/groups/{id}/members` (GET/POST), `/api/groups/{id}/members/{userId}` (DELETE)
+- [x] **New database table?** → Added `visibility` column to `spaces` table (migration 0021)
+- [x] **Directory structure changed?** → Added `src/views/settings/` for Settings page tab components
+- [x] **New API endpoint pattern?** → Extended `PUT /api/spaces/{id}` to accept `visibility` field; all space list/detail responses now include `visibility`
+- [x] **New API endpoint pattern?** → Added `GET /api/documents/{id}/share/search?q=...` for user/group search in ShareDialog; extended `POST /api/documents/{id}/permissions` to accept `subjectType`+`subjectId` for direct group/user grants
 
 ## Related Documents
 
+### Permissions & Sharing
+- 🆕 **[Developer Handoff: Permissions & Sharing](../HANDOFF_PERMISSIONS_SHARING.md)** - Current implementation status and roadmap
 - [Auth & Permissions v1.0 Design](../specs/auth-permissions-v1.md)
-- [Role & User Management Spec](../specs/role-user-management-spec.md) *(NEW)*
-- [Role & User Management Tickets](../specs/role-user-management-tickets.md) *(NEW)*
+- [Role & User Management Spec](../specs/role-user-management-spec.md)
+- [Role & User Management Tickets](../specs/role-user-management-tickets.md)
+
+### Core Architecture
 - [Technical Architecture (Full)](../agent-memory/Chronicle_Technical_Architecture.txt)
 - [Product Vision](../agent-memory/Chronicle_Product_Vision_v2.txt)
 - [Agent README](../agent-memory/README.md)
