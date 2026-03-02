@@ -338,21 +338,14 @@ func (s *HTTPServer) handlePublicShare(w http.ResponseWriter, r *http.Request, t
 		return
 	}
 
-	link, err := s.service.GetPublicLink(r.Context(), token)
+	payload, err := s.service.GetSharedDocument(r.Context(), token)
 	if err != nil {
 		status, code, message, details := mapError(err)
 		writeError(w, status, code, message, details)
 		return
 	}
 
-	// Record access
-	_ = s.service.RecordPublicLinkAccess(r.Context(), link["id"].(string))
-
-	// Return document with limited role
-	writeJSON(w, http.StatusOK, map[string]any{
-		"link": link,
-		// TODO: Include document content with limited role
-	})
+	writeJSON(w, http.StatusOK, payload)
 }
 
 // =============================================================================

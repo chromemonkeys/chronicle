@@ -223,8 +223,8 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Public share links — no authentication required
-	if strings.HasPrefix(r.URL.Path, "/share/") {
-		token := strings.TrimPrefix(r.URL.Path, "/share/")
+	if strings.HasPrefix(r.URL.Path, "/api/share/") {
+		token := strings.TrimPrefix(r.URL.Path, "/api/share/")
 		if token != "" {
 			s.handlePublicShare(w, r, token)
 			return
@@ -234,6 +234,15 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 	session, ok := s.requireSession(w, r)
 	if !ok {
 		return
+	}
+
+	// Serve uploaded files (images)
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/uploads/") {
+		key := strings.TrimPrefix(r.URL.Path, "/api/uploads/")
+		if key != "" {
+			s.service.ServeUpload(w, r, key)
+			return
+		}
 	}
 
 	if r.Method == http.MethodGet && r.URL.Path == "/api/search" {
@@ -600,7 +609,8 @@ func (s *HTTPServer) handleSpaces(w http.ResponseWriter, r *http.Request, sessio
 
 func (s *HTTPServer) handleWorkspace(w http.ResponseWriter, r *http.Request, session Session, documentID string) {
 	if r.Method == http.MethodGet {
-		payload, err := s.service.GetWorkspace(r.Context(), documentID, session.UserID, session.IsExternal)
+		viewPublished := r.URL.Query().Get("view") == "published"
+		payload, err := s.service.GetWorkspace(r.Context(), documentID, session.UserID, session.IsExternal, viewPublished)
 		if err != nil {
 			log.Printf("GetWorkspace(%s) error: %v", documentID, err)
 			status, code, message, details := mapError(err)
@@ -636,6 +646,28 @@ func (s *HTTPServer) handleWorkspace(w http.ResponseWriter, r *http.Request, ses
 func (s *HTTPServer) handleDocuments(w http.ResponseWriter, r *http.Request, session Session, documentID string, parts []string) {
 	if len(parts) == 3 && r.Method == http.MethodGet {
 		summary, err := s.service.GetDocumentSummary(r.Context(), documentID)
+		if err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"document": summary})
+		return
+	}
+
+	if len(parts) == 3 && r.Method == http.MethodPut {
+		var body struct {
+			Title string `json:"title"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_BODY", "Invalid request body", nil)
+			return
+		}
+		if strings.TrimSpace(body.Title) == "" {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "title is required", nil)
+			return
+		}
+		summary, err := s.service.RenameDocument(r.Context(), documentID, body.Title, session.UserName)
 		if err != nil {
 			status, code, message, details := mapError(err)
 			writeError(w, status, code, message, details)
@@ -735,6 +767,22 @@ func (s *HTTPServer) handleDocuments(w http.ResponseWriter, r *http.Request, ses
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"events": events})
+		return
+	}
+
+	// Upload image
+	if len(parts) == 4 && parts[3] == "uploads" && r.Method == http.MethodPost {
+		if !s.service.Can(session.Role, rbac.ActionWrite) {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
+			return
+		}
+		url, err := s.service.UploadImage(r, documentID)
+		if err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"url": url})
 		return
 	}
 

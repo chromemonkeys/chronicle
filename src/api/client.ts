@@ -442,6 +442,13 @@ export async function updateSpace(
   });
 }
 
+export async function renameDocument(documentId: string, title: string) {
+  return apiRequest<{ document: DocumentSummary }>(`/api/documents/${documentId}`, {
+    method: "PUT",
+    body: { title },
+  });
+}
+
 export async function moveDocument(documentId: string, spaceId: string) {
   return apiRequest<{ ok: boolean; documentId: string; spaceId: string }>(
     `/api/documents/${documentId}/move`,
@@ -449,8 +456,9 @@ export async function moveDocument(documentId: string, spaceId: string) {
   );
 }
 
-export async function fetchWorkspace(documentId: string) {
-  const payload = await apiRequest<WorkspacePayload>(`/api/workspace/${documentId}`);
+export async function fetchWorkspace(documentId: string, view?: "published") {
+  const suffix = view ? `?view=${view}` : "";
+  const payload = await apiRequest<WorkspacePayload>(`/api/workspace/${documentId}${suffix}`);
   // Ensure ProseMirror JSON doc is always present (convert from legacy if needed)
   if (!payload.doc) {
     payload.doc = legacyContentToDoc(payload.content, payload.nodeIds);
@@ -925,6 +933,30 @@ export async function revokeSpacePermission(spaceId: string, permissionId: strin
 
 export async function fetchDocumentShare(documentId: string): Promise<DocumentShareResponse> {
   return apiRequest<DocumentShareResponse>(`/api/documents/${documentId}/share`);
+}
+
+export type SharedDocumentPayload = {
+  link: { role: string };
+  document: {
+    id: string;
+    title: string;
+    subtitle: string;
+    status: string;
+    editedBy: string;
+    editedAt: string;
+  };
+  content: {
+    title: string;
+    subtitle: string;
+    purpose: string;
+    tiers: string;
+    enforce: string;
+  };
+  doc?: unknown;
+};
+
+export async function fetchSharedDocument(token: string): Promise<SharedDocumentPayload> {
+  return apiRequest<SharedDocumentPayload>(`/api/share/${token}`);
 }
 
 export type GrantPermissionResult =

@@ -6,6 +6,7 @@ import { ForgotPasswordPage } from "./views/ForgotPasswordPage";
 import { NotFoundPage } from "./views/NotFoundPage";
 import { ResetPasswordPage } from "./views/ResetPasswordPage";
 import { SettingsPage } from "./views/SettingsPage";
+import { SharedDocumentPage } from "./views/SharedDocumentPage";
 import { SignInPage } from "./views/SignInPage";
 import { VerificationPendingPage } from "./views/VerificationPendingPage";
 import { VerifyEmailPage } from "./views/VerifyEmailPage";
@@ -31,6 +32,10 @@ export const router = createBrowserRouter([
   {
     path: "/reset-password",
     element: <ResetPasswordPage />
+  },
+  {
+    path: "/share/:token",
+    element: <SharedDocumentPage />
   },
   {
     path: "/",

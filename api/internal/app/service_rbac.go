@@ -313,6 +313,58 @@ func (s *Service) RecordPublicLinkAccess(ctx context.Context, linkID string) err
 	return nil
 }
 
+// GetSharedDocument returns a document's content via a public share link token
+func (s *Service) GetSharedDocument(ctx context.Context, token string) (map[string]any, error) {
+	link, err := s.store.GetPublicLinkByToken(ctx, token)
+	if err != nil {
+		return nil, fmt.Errorf("get public link: %w", err)
+	}
+	if link == nil {
+		return nil, &DomainError{Status: 404, Code: "NOT_FOUND", Message: "Link not found or expired"}
+	}
+	if link.RevokedAt != nil {
+		return nil, &DomainError{Status: 410, Code: "LINK_REVOKED", Message: "This share link has been revoked"}
+	}
+	if link.ExpiresAt != nil && link.ExpiresAt.Before(time.Now()) {
+		return nil, &DomainError{Status: 410, Code: "LINK_EXPIRED", Message: "This share link has expired"}
+	}
+
+	// Record access
+	_ = s.store.IncrementPublicLinkAccess(ctx, link.ID)
+
+	document, err := s.store.GetDocument(ctx, link.DocumentID)
+	if err != nil {
+		return nil, fmt.Errorf("get document: %w", err)
+	}
+
+	content, headCommit, err := s.git.GetHeadContent(link.DocumentID, "main")
+	if err != nil {
+		return nil, fmt.Errorf("get content: %w", err)
+	}
+
+	return map[string]any{
+		"link": map[string]any{
+			"role": link.Role,
+		},
+		"document": map[string]any{
+			"id":       document.ID,
+			"title":    content.Title,
+			"subtitle": content.Subtitle,
+			"status":   document.Status,
+			"editedBy": headCommit.Author,
+			"editedAt": relative(headCommit.CreatedAt),
+		},
+		"content": map[string]string{
+			"title":    content.Title,
+			"subtitle": content.Subtitle,
+			"purpose":  content.Purpose,
+			"tiers":    content.Tiers,
+			"enforce":  content.Enforce,
+		},
+		"doc": content.Doc,
+	}, nil
+}
+
 // GetDocumentShareData returns the composite share state for a document
 func (s *Service) GetDocumentShareData(ctx context.Context, documentID string) (map[string]any, error) {
 	doc, err := s.store.GetDocument(ctx, documentID)
