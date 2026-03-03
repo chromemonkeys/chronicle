@@ -197,6 +197,79 @@ export const SlashCommands = Extension.create({
           dispatch(state.tr.replaceWith($from.before(), $from.after(), quote));
         },
       },
+      {
+        label: "Task List",
+        description: "Checklist with checkboxes",
+        action: (view) => {
+          const { state, dispatch } = view;
+          const { taskList, taskItem } = state.schema.nodes;
+          if (!taskList || !taskItem) return;
+          const { $from } = state.selection;
+          const paragraph = state.schema.nodes.paragraph.create();
+          const item = taskItem.create(null, paragraph);
+          const list = taskList.create(null, item);
+          dispatch(state.tr.replaceWith($from.before(), $from.after(), list));
+        },
+      },
+      {
+        label: "Table",
+        description: "Insert a 3×3 table",
+        action: (view) => {
+          const { state, dispatch } = view;
+          const { table, tableRow, tableCell, tableHeader } = state.schema.nodes;
+          if (!table || !tableRow || !tableCell || !tableHeader) return;
+          const { $from } = state.selection;
+          const headerCells = Array.from({ length: 3 }, () =>
+            tableHeader.create(null, state.schema.nodes.paragraph.create()),
+          );
+          const headerRow = tableRow.create(null, headerCells);
+          const bodyRows = Array.from({ length: 2 }, () => {
+            const cells = Array.from({ length: 3 }, () =>
+              tableCell.create(null, state.schema.nodes.paragraph.create()),
+            );
+            return tableRow.create(null, cells);
+          });
+          const tbl = table.create(null, [headerRow, ...bodyRows]);
+          dispatch(state.tr.replaceWith($from.before(), $from.after(), tbl));
+        },
+      },
+      {
+        label: "Horizontal Rule",
+        description: "Divider line",
+        action: (view) => {
+          const { state, dispatch } = view;
+          const { horizontalRule } = state.schema.nodes;
+          const { $from } = state.selection;
+          const hr = horizontalRule.create();
+          const paragraph = state.schema.nodes.paragraph.create();
+          dispatch(state.tr.replaceWith($from.before(), $from.after(), [hr, paragraph]));
+        },
+      },
+      {
+        label: "Image",
+        description: "Insert an image from file",
+        action: (view) => {
+          const input = document.createElement("input");
+          input.type = "file";
+          input.accept = "image/*";
+          input.onchange = () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+              if (typeof reader.result === "string") {
+                const { state, dispatch } = view;
+                const imageType = state.schema.nodes.image;
+                if (!imageType) return;
+                const node = imageType.create({ src: reader.result });
+                dispatch(state.tr.replaceSelectionWith(node));
+              }
+            };
+            reader.readAsDataURL(file);
+          };
+          input.click();
+        },
+      },
     ];
 
     return [

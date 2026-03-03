@@ -7,7 +7,24 @@ import { TextStyle } from "@tiptap/extension-text-style";
 import Highlight from "@tiptap/extension-highlight";
 import FontFamily from "@tiptap/extension-font-family";
 import Underline from "@tiptap/extension-underline";
-import { useCallback, useEffect, useRef, useState } from "react";
+import Subscript from "@tiptap/extension-subscript";
+import Superscript from "@tiptap/extension-superscript";
+import Typography from "@tiptap/extension-typography";
+import CharacterCount from "@tiptap/extension-character-count";
+import { FontSize } from "./extensions/font-size";
+import TaskList from "@tiptap/extension-task-list";
+import TaskItem from "@tiptap/extension-task-item";
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import { Table } from "@tiptap/extension-table";
+import { TableRow } from "@tiptap/extension-table-row";
+import { TableCell } from "@tiptap/extension-table-cell";
+import { TableHeader } from "@tiptap/extension-table-header";
+import Image from "@tiptap/extension-image";
+import { FindReplace } from "./extensions/find-replace";
+import { common, createLowlight } from "lowlight";
+import { useCallback, useEffect, useRef } from "react";
+
+const lowlight = createLowlight(common);
 import { NodeId } from "./extensions/node-id";
 import { ActiveBlockTracker } from "./extensions/active-block-tracker";
 import { ActiveBlockHighlight } from "./extensions/active-block-highlight";
@@ -18,8 +35,6 @@ import { DiffDecorations, type DiffState } from "./extensions/diff-decorations";
 import { ThreadMarkers, type ThreadAnchor } from "./extensions/thread-markers";
 import type { DiffManifest } from "./diff";
 import type { DocumentContent } from "./schema";
-import type { BlameEntry } from "../api/types";
-
 type Props = {
   content: DocumentContent;
   editable?: boolean;
@@ -34,8 +49,6 @@ type Props = {
   activeChangeNodeId?: string | null;
   threadAnchors?: ThreadAnchor[];
   className?: string;
-  enableHoverAttribution?: boolean;
-  blameEntries?: BlameEntry[];
 };
 
 export function ChronicleEditor({
@@ -52,12 +65,8 @@ export function ChronicleEditor({
   activeChangeNodeId = null,
   threadAnchors = [],
   className = "",
-  enableHoverAttribution = false,
-  blameEntries = [],
 }: Props) {
   const serializedContent = JSON.stringify(content);
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
 
   // Mutable ref for diff state so the ProseMirror plugin always reads latest values
   const diffStateRef = useRef<DiffState>({ manifest: diffManifest, visible: diffVisible, mode: diffMode, activeChangeNodeId });
@@ -65,7 +74,9 @@ export function ChronicleEditor({
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({
+        codeBlock: false,
+      }),
       Placeholder.configure({
         placeholder: "Start writing...",
       }),
@@ -74,6 +85,20 @@ export function ChronicleEditor({
       Highlight.configure({ multicolor: true }),
       FontFamily,
       Underline,
+      Subscript,
+      Superscript,
+      Typography,
+      CharacterCount,
+      FontSize,
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      CodeBlockLowlight.configure({ lowlight }),
+      Table.configure({ resizable: true }),
+      TableRow,
+      TableCell,
+      TableHeader,
+      Image,
+      FindReplace,
       TextAlign.configure({
         types: ["heading", "paragraph"],
       }),
@@ -85,16 +110,9 @@ export function ChronicleEditor({
       }),
       ActiveBlockHighlight,
       HoverBlockTracker.configure({
-        onHoverBlockChange: (nodeId: string | null, event?: MouseEvent) => {
-          setHoveredNodeId(nodeId);
+        onHoverBlockChange: (nodeId: string | null) => {
           onHoverBlockChange?.(nodeId);
-          if (nodeId && event) {
-            setTooltipPosition({ x: event.clientX, y: event.clientY });
-          } else {
-            setTooltipPosition(null);
-          }
         },
-        enabled: enableHoverAttribution,
       }),
       SlashCommands,
       SuggestionInsert,
@@ -159,41 +177,11 @@ export function ChronicleEditor({
     }
   }, [editor]);
 
-  // Find blame info for hovered node
-  const hoveredBlame = hoveredNodeId
-    ? blameEntries.find((entry) => entry.nodeId === hoveredNodeId)
-    : null;
-
-  // Format relative time
-  const formatRelativeTime = (isoDate: string): string => {
-    const then = new Date(isoDate).getTime();
-    const diffMs = Date.now() - then;
-    const diffMinutes = Math.max(1, Math.round(diffMs / 60_000));
-
-    if (diffMinutes < 60) {
-      return `${diffMinutes}m ago`;
-    }
-    const hours = Math.round(diffMinutes / 60);
-    if (hours < 24) {
-      return `${hours}h ago`;
-    }
-    const days = Math.round(hours / 24);
-    if (days < 30) {
-      return `${days}d ago`;
-    }
-    const months = Math.round(days / 30);
-    if (months < 12) {
-      return `${months}mo ago`;
-    }
-    const years = Math.round(months / 12);
-    return `${years}y ago`;
-  };
-
   if (!editor) return null;
 
   return (
     <div
-      className={`chronicle-editor ${className}`.trim()}
+      className={`chronicle-editor ${!editable ? "chronicle-editor--readonly" : ""} ${className}`.trim()}
       role="textbox"
       aria-multiline="true"
       aria-label="Document editor"
@@ -201,28 +189,6 @@ export function ChronicleEditor({
       onKeyDown={handleKeyDown}
     >
       <EditorContent editor={editor} />
-      
-      {/* Blame Attribution Tooltip */}
-      {enableHoverAttribution && hoveredBlame && tooltipPosition && (
-        <div
-          className="cm-blame-tooltip"
-          style={{
-            position: "fixed",
-            left: tooltipPosition.x + 12,
-            top: tooltipPosition.y - 8,
-            pointerEvents: "none",
-            zIndex: 1000,
-          }}
-        >
-          <div className="cm-blame-tooltip-content">
-            <div className="cm-blame-tooltip-author">{hoveredBlame.author}</div>
-            <div className="cm-blame-tooltip-meta">
-              {formatRelativeTime(hoveredBlame.editedAt)} · {hoveredBlame.commitHash.slice(0, 7)}
-            </div>
-          </div>
-          <div className="cm-blame-tooltip-arrow" />
-        </div>
-      )}
     </div>
   );
 }

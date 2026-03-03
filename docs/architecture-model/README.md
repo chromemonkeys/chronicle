@@ -1,6 +1,6 @@
 # Chronicle Architecture Model
 
-> **Last Updated:** 2026-03-02 (Redesigned ShareDialog with layered permissions model; added GET /api/documents/{id}/share/search endpoint; extended POST /api/documents/{id}/permissions for group grants)
+> **Last Updated:** 2026-03-03 (Removed Blame tab and /api/documents/{id}/blame endpoint; contributor attribution now derived from commit history within History tab)
 > **Version:** 1.0  
 > **Status:** Canonical reference for system architecture
 
@@ -107,7 +107,7 @@ chronicle/
 | `internal/permissions` | RBAC evaluation, row-level security |
 | `internal/search` | Meilisearch indexing and query |
 | `internal/export` | Document export pipeline (ProseMirror -> HTML -> PDF/DOCX) |
-| `internal/storage` | S3-compatible object store abstraction |
+| `internal/storage` | S3-compatible object store (MinIO) — upload, serve, bucket management |
 | `internal/notifications` | Email, webhook, Redis pub/sub event dispatch |
 
 ### Sync Gateway (Node.js)
@@ -255,30 +255,6 @@ go-git performs three-way merge
        └──► Conflict ──► Block merge ──► Visual conflict UI
 ```
 
-### Blame View Flow (RM-009)
-
-```
-User clicks "Blame" tab
-       │
-       ▼
-Frontend requests /api/documents/{id}/blame
-       │
-       ▼
-API walks commit history from newest to oldest
-       │
-       ▼
-For each node in document, record first (most recent) author
-       │
-       ▼
-Returns blame entries: nodeId, author, timestamp, commit info
-       │
-       ▼
-Frontend renders contributor summary + block-level attribution
-       │
-       ▼
-User clicks blame entry ──► Navigate to commit in History tab
-```
-
 ---
 
 ## Security Model
@@ -325,7 +301,7 @@ Document permissions override workspace-level roles via `document_permissions` t
 - API endpoints: `GET/POST /api/documents/{id}/permissions`, `DELETE /api/documents/{id}/permissions/{userId}`
 
 **Permission Granularity:**
-- **Read**: View documents, see version history, blame, compare
+- **Read**: View documents, see version history, compare
 - **Comment**: Add annotations, replies, vote, react
 - **Suggest**: Propose tracked changes (future: suggestion mode)
 - **Write**: Create/edit documents, proposals, resolve threads
@@ -461,7 +437,7 @@ When making structural changes, update this document:
 - [ ] **New service added?** → Update Service Architecture section
 - [x] **New database table?** → Update Data Stores → PostgreSQL tables (document_permissions, email_verifications, password_resets)
 - [x] **Directory structure changed?** → Updated Directory Structure section (added src/ui, src/views, src/editor, src/lib, src/state)
-- [x] **New API endpoint pattern?** → Added `/api/documents/{id}/blame` endpoint for paragraph-level attribution (RM-009)
+- [x] **API endpoint removed?** → Removed `/api/documents/{id}/blame` endpoint; contributor attribution now part of History tab (derived from commit data, no API needed)
 - [x] **Security model changed?** → Update Security Model section (Auth v1.0 reality check)
 - [ ] **Deployment changed?** → Update Deployment section
 - [x] **Milestone completed?** → Update Build Sequence status (SSO/SCIM→v2.0)
@@ -477,6 +453,11 @@ When making structural changes, update this document:
 - [x] **Directory structure changed?** → Added `src/views/settings/` for Settings page tab components
 - [x] **New API endpoint pattern?** → Extended `PUT /api/spaces/{id}` to accept `visibility` field; all space list/detail responses now include `visibility`
 - [x] **New API endpoint pattern?** → Added `GET /api/documents/{id}/share/search?q=...` for user/group search in ShareDialog; extended `POST /api/documents/{id}/permissions` to accept `subjectType`+`subjectId` for direct group/user grants
+- [x] **New API endpoint pattern?** → Added `PUT /api/documents/{id}` for renaming documents (title update via sidebar context menu)
+- [x] **New service added?** → Added `internal/storage` package (MinIO/S3 client for image uploads)
+- [x] **New API endpoint pattern?** → Added `POST /api/documents/{id}/uploads` (image upload) and `GET /api/uploads/{key}` (serve uploaded files)
+- [x] **Deployment changed?** → Added S3 environment variables to docker-compose API service; API now depends on MinIO service
+- [x] **New API endpoint pattern?** → Added `?view=published` query param to `GET /api/workspace/{id}` to skip proposal detection and return main branch content read-only
 
 ## Related Documents
 

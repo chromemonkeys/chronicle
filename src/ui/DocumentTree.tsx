@@ -19,6 +19,7 @@ type Props = {
   onSelect: (id: string) => void;
   onCreateDocument?: (folderId?: string) => void;
   onMoveDocument?: (documentId: string, targetFolderId: string) => void;
+  onRenameDocument?: (documentId: string, newTitle: string) => void;
   onManageSpacePermissions?: (spaceId: string) => void;
   className?: string;
   emptyMessage?: string;
@@ -106,6 +107,11 @@ type TreeNodeProps = {
   onDrop: (e: React.DragEvent, targetId: string) => void;
   dragOverItem: string | null;
   draggedItem: string | null;
+  renamingId: string | null;
+  renameValue: string;
+  onRenameValueChange: (value: string) => void;
+  onRenameSubmit: (id: string) => void;
+  onRenameCancel: () => void;
 };
 
 function TreeNode({
@@ -124,6 +130,11 @@ function TreeNode({
   onDrop,
   dragOverItem,
   draggedItem,
+  renamingId,
+  renameValue,
+  onRenameValueChange,
+  onRenameSubmit,
+  onRenameCancel,
 }: TreeNodeProps) {
   const statusConfig = item.status ? STATUS_CONFIG[item.status] : null;
   const isDragOver = dragOverItem === item.id;
@@ -168,9 +179,29 @@ function TreeNode({
           )}
           {item.isFolder && !hasChildren && <span className="cm-tree-toggle-placeholder" />}
           <span className="cm-tree-icon">{item.icon}</span>
-          <span className="cm-tree-label" title={item.label}>
-            {item.label}
-          </span>
+          {renamingId === item.id ? (
+            <input
+              className="cm-tree-rename-input"
+              value={renameValue}
+              onChange={(e) => onRenameValueChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  onRenameSubmit(item.id);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  onRenameCancel();
+                }
+              }}
+              onBlur={() => onRenameSubmit(item.id)}
+              onClick={(e) => e.stopPropagation()}
+              autoFocus
+            />
+          ) : (
+            <span className="cm-tree-label" title={item.label}>
+              {item.label}
+            </span>
+          )}
           {item.isFolder && childCount > 0 && (
             <span className="cm-tree-count">{childCount}</span>
           )}
@@ -228,6 +259,11 @@ function TreeNode({
           onDrop={onDrop}
           dragOverItem={dragOverItem}
           draggedItem={draggedItem}
+          renamingId={renamingId}
+          renameValue={renameValue}
+          onRenameValueChange={onRenameValueChange}
+          onRenameSubmit={onRenameSubmit}
+          onRenameCancel={onRenameCancel}
         />
       ))}
     </>
@@ -240,6 +276,7 @@ export function DocumentTree({
   onSelect,
   onCreateDocument,
   onMoveDocument,
+  onRenameDocument,
   onManageSpacePermissions,
   className = "",
   emptyMessage = "No documents in this section.",
@@ -250,6 +287,8 @@ export function DocumentTree({
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [dragOverItem, setDragOverItem] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const treeRef = useRef<HTMLDivElement>(null);
 
   // Auto-expand folders with active document
@@ -357,6 +396,20 @@ export function DocumentTree({
     handleCloseContextMenu();
   }, [onCreateDocument, handleCloseContextMenu]);
 
+  const handleRenameSubmit = useCallback((id: string) => {
+    const trimmed = renameValue.trim();
+    if (trimmed && onRenameDocument) {
+      onRenameDocument(id, trimmed);
+    }
+    setRenamingId(null);
+    setRenameValue("");
+  }, [renameValue, onRenameDocument]);
+
+  const handleRenameCancel = useCallback(() => {
+    setRenamingId(null);
+    setRenameValue("");
+  }, []);
+
   const isEmpty = items.length === 0;
 
   // Flatten items for context menu
@@ -426,6 +479,11 @@ export function DocumentTree({
             onDrop={handleDrop}
             dragOverItem={dragOverItem}
             draggedItem={draggedItem}
+            renamingId={renamingId}
+            renameValue={renameValue}
+            onRenameValueChange={setRenameValue}
+            onRenameSubmit={handleRenameSubmit}
+            onRenameCancel={handleRenameCancel}
           />
         ))
       )}
@@ -462,6 +520,19 @@ export function DocumentTree({
             </>
           ) : (
             <>
+              {onRenameDocument && (
+                <button
+                  className="cm-context-item"
+                  onClick={() => {
+                    setRenamingId(contextMenu.itemId);
+                    setRenameValue(contextMenuItem.label);
+                    handleCloseContextMenu();
+                  }}
+                  type="button"
+                >
+                  <span>✏️</span> Rename
+                </button>
+              )}
               <div className="cm-context-label">Move to...</div>
               {allItems
                 .filter((i) => i.isFolder && i.id !== contextMenu.itemId)

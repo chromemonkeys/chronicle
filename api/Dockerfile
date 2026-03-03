@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 WORKDIR /src
 
-COPY api/go.mod ./api/go.mod
+COPY api/go.mod api/go.sum ./api/
 RUN cd api && go mod download
 
 COPY api ./api

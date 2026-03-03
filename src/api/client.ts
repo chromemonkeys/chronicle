@@ -2,7 +2,6 @@ import type {
   ApprovalRulesPayload,
   ApprovalsResponse,
   DecisionLogResponse,
-  DocumentBlamePayload,
   DocumentComparePayload,
   DocumentHistoryPayload,
   DocumentSummary,
@@ -97,7 +96,7 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
-function codeFromStatus(status: number): ApiErrorCode {
+export function codeFromStatus(status: number): ApiErrorCode {
   if (status === 401) {
     return "AUTH_REQUIRED";
   }
@@ -116,11 +115,11 @@ function codeFromStatus(status: number): ApiErrorCode {
   return "REQUEST_FAILED";
 }
 
-function isInternalRouteError(message: string): boolean {
+export function isInternalRouteError(message: string): boolean {
   return /Unhandled mocked API route/i.test(message) || /\/api\//i.test(message);
 }
 
-function mapErrorMessage(code: ApiErrorCode, fallback: string, path: string): string {
+export function mapErrorMessage(code: ApiErrorCode, fallback: string, path: string): string {
   if (code === "AUTH_REQUIRED") {
     return "Your session expired. Please sign in again.";
   }
@@ -145,7 +144,7 @@ function mapErrorMessage(code: ApiErrorCode, fallback: string, path: string): st
   return fallback;
 }
 
-function parseApiErrorCode(value: unknown): ApiErrorCode | null {
+export function parseApiErrorCode(value: unknown): ApiErrorCode | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -841,12 +840,6 @@ export async function fetchAuditEvents(
   }> }>(`/api/documents/${documentId}/audit-events?${params.toString()}`);
 }
 
-export async function fetchDocumentBlame(documentId: string, proposalId: string | null) {
-  const suffix = proposalId ? `?proposalId=${encodeURIComponent(proposalId)}` : "";
-  return apiRequest<DocumentBlamePayload>(`/api/documents/${documentId}/blame${suffix}`);
-}
-
-
 export async function exportDocument(
   documentId: string,
   format: "pdf" | "docx",
@@ -952,7 +945,7 @@ export type SharedDocumentPayload = {
     tiers: string;
     enforce: string;
   };
-  doc?: unknown;
+  doc?: DocumentContent;
 };
 
 export async function fetchSharedDocument(token: string): Promise<SharedDocumentPayload> {

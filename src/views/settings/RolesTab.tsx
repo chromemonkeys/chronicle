@@ -2,7 +2,7 @@ const ROLES = ["Viewer", "Commenter", "Suggester", "Editor", "Admin"] as const;
 
 const CAPABILITIES = [
   { label: "Read documents", viewer: true, commenter: true, suggester: true, editor: true, admin: true },
-  { label: "View history & blame", viewer: true, commenter: true, suggester: true, editor: true, admin: true },
+  { label: "View history", viewer: true, commenter: true, suggester: true, editor: true, admin: true },
   { label: "Add comments", viewer: false, commenter: true, suggester: true, editor: true, admin: true },
   { label: "Vote & react on threads", viewer: false, commenter: true, suggester: true, editor: true, admin: true },
   { label: "Suggest tracked changes", viewer: false, commenter: false, suggester: true, editor: true, admin: true },

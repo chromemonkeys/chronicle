@@ -22,6 +22,7 @@ import (
 	"chronicle/api/internal/gitrepo"
 	"chronicle/api/internal/rbac"
 	"chronicle/api/internal/search"
+	"chronicle/api/internal/storage"
 	"chronicle/api/internal/store"
 	"chronicle/api/internal/util"
 )
@@ -252,6 +253,7 @@ type Service struct {
 	search         *search.Service
 	export         *export.Service
 	authPw         *authpw.Service
+	objectStore    *storage.Client
 	syncSessionTTL time.Duration
 	syncMu         sync.Mutex
 	syncSessions   map[string]syncSessionRecord
@@ -277,6 +279,11 @@ func NewWithSessionStore(cfg config.Config, dataStore *store.PostgresStore, sess
 		syncSessionTTL: 15 * time.Minute,
 		syncSessions:   make(map[string]syncSessionRecord),
 	}
+}
+
+// SetObjectStore attaches an S3-compatible storage client for file uploads.
+func (s *Service) SetObjectStore(client *storage.Client) {
+	s.objectStore = client
 }
 
 // exportStoreAdapter adapts the app's dataStore to export.DataStore interface
@@ -2140,14 +2147,19 @@ func (s *Service) Approvals(ctx context.Context) (map[string]any, error) {
 	}, nil
 }
 
-func (s *Service) GetWorkspace(ctx context.Context, documentID string, viewerUserID string, viewerIsExternal bool) (map[string]any, error) {
+func (s *Service) GetWorkspace(ctx context.Context, documentID string, viewerUserID string, viewerIsExternal bool, viewPublished ...bool) (map[string]any, error) {
 	document, err := s.store.GetDocument(ctx, documentID)
 	if err != nil {
 		return nil, err
 	}
-	proposal, err := s.store.GetActiveProposal(ctx, documentID)
-	if err != nil {
-		return nil, err
+
+	forcePublished := len(viewPublished) > 0 && viewPublished[0]
+	var proposal *store.Proposal
+	if !forcePublished {
+		proposal, err = s.store.GetActiveProposal(ctx, documentID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	branch := "main"
@@ -2589,6 +2601,21 @@ func (s *Service) ListDocumentsBySpace(ctx context.Context, spaceID string) ([]m
 		})
 	}
 	return items, nil
+}
+
+func (s *Service) RenameDocument(ctx context.Context, documentID, title, userName string) (map[string]any, error) {
+	newTitle := strings.TrimSpace(title)
+	if newTitle == "" {
+		return nil, domainError(http.StatusUnprocessableEntity, "VALIDATION_ERROR", "title is required", nil)
+	}
+	doc, err := s.store.GetDocument(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.UpdateDocumentState(ctx, documentID, newTitle, doc.Subtitle, doc.Status, userName); err != nil {
+		return nil, err
+	}
+	return s.GetDocumentSummary(ctx, documentID)
 }
 
 func (s *Service) MoveDocument(ctx context.Context, documentID, newSpaceID string) (map[string]any, error) {
@@ -3641,4 +3668,46 @@ func (s *Service) RejectProposalGroup(ctx context.Context, documentID, proposalI
 	}
 
 	return s.GetWorkspace(ctx, documentID, "", viewerIsExternal)
+}
+
+// UploadImage handles multipart image upload and stores it in the object store.
+func (s *Service) UploadImage(r *http.Request, documentID string) (string, error) {
+	if s.objectStore == nil {
+		return "", fmt.Errorf("image uploads not configured")
+	}
+
+	const maxUploadSize = 10 << 20 // 10 MB
+	r.Body = http.MaxBytesReader(nil, r.Body, maxUploadSize)
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		return "", fmt.Errorf("file too large (max 10MB)")
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		return "", fmt.Errorf("missing file field")
+	}
+	defer file.Close()
+
+	ct := header.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "image/") {
+		return "", fmt.Errorf("only image files are allowed")
+	}
+
+	imageID := fmt.Sprintf("%s-%d", documentID, time.Now().UnixNano())
+	key := fmt.Sprintf("uploads/%s/%s", documentID, imageID)
+
+	if err := s.objectStore.PutObject(r.Context(), key, file, header.Size, ct); err != nil {
+		return "", fmt.Errorf("upload failed: %w", err)
+	}
+
+	return s.objectStore.GetObjectURL(key), nil
+}
+
+// ServeUpload proxies a stored object from S3 to the HTTP response.
+func (s *Service) ServeUpload(w http.ResponseWriter, r *http.Request, key string) {
+	if s.objectStore == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	s.objectStore.ServeObject(w, r, key)
 }

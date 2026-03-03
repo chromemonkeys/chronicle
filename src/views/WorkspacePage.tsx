@@ -11,18 +11,19 @@ import {
   createProposalThread,
   fetchAdminUsers,
   fetchDocuments,
+  fetchSpaceDocuments,
   fetchDecisionLog,
   fetchWorkspaces,
   rejectProposalGroup,
   saveApprovalRules,
   sendWorkspaceRealtimeUpdate,
-  fetchDocumentBlame,
   fetchDocumentCompare,
   fetchDocumentHistory,
   fetchWorkspace,
   isApiError,
   mergeProposal,
   moveDocument,
+  renameDocument,
   reactProposalThread,
   reopenProposalThread,
   replyProposalThread,
@@ -36,7 +37,6 @@ import {
 } from "../api/client";
 import type {
   AdminUser,
-  BlameEntry,
   CompareContentSnapshot,
   DecisionLogEntry,
   DocumentComparePayload,
@@ -51,7 +51,6 @@ import type {
 } from "../api/types";
 import { ApprovalChain } from "../ui/ApprovalChain";
 import { ApprovalRulesEditor } from "../ui/ApprovalRulesEditor";
-import { BlameView } from "../ui/BlameView";
 import { BranchGraph } from "../ui/BranchGraph";
 import { DecisionLogTable } from "../ui/DecisionLogTable";
 import { DocumentTree } from "../ui/DocumentTree";
@@ -82,10 +81,10 @@ import {
   trackMergeBlocked,
 } from "../lib/metrics";
 
-type PanelTab = "discussions" | "approvals" | "history" | "decisions" | "changes" | "blame" | "branches";
+type PanelTab = "discussions" | "approvals" | "history" | "decisions" | "changes" | "branches";
 type DiffMode = "split" | "unified";
 type ViewState = "success" | "loading" | "empty" | "error";
-type WorkspaceMode = "proposal" | "review";
+type WorkspaceMode = "proposal" | "review" | "published";
 type SidebarSection = "all" | "open" | "merged" | "decisions";
 type CompareOption = {
   hash: string;
@@ -194,17 +193,6 @@ const panelTabs: { id: PanelTab; label: string; ariaLabel: string; icon: JSX.Ele
       <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
         <path d="M4 6h12M4 10h12M4 14h8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         <path d="M15 12l2 2-2 2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    )
-  },
-  {
-    id: "blame",
-    label: "Blame",
-    ariaLabel: "Blame attribution",
-    icon: (
-      <svg viewBox="0 0 20 20" width="16" height="16" focusable="false" aria-hidden="true">
-        <circle cx="10" cy="7" r="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
-        <path d="M4 17c0-3 2.7-5 6-5s6 2 6 5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
     )
   },
@@ -404,7 +392,6 @@ export function WorkspacePage() {
   const [contentDraft, setContentDraft] = useState<WorkspaceContent | null>(null);
   const [docDraft, setDocDraft] = useState<DocumentContent | null>(null);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -421,10 +408,6 @@ export function WorkspacePage() {
   const [decisionAuthor, setDecisionAuthor] = useState("");
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-  // Blame view state
-  const [blameEntries, setBlameEntries] = useState<BlameEntry[]>([]);
-  const [blameLoading, setBlameLoading] = useState(false);
-  const [blameError, setBlameError] = useState<string | null>(null);
   const [compareSummary, setCompareSummary] = useState<string | null>(null);
   const [compareFromHash, setCompareFromHash] = useState("");
   const [compareToHash, setCompareToHash] = useState("");
@@ -438,6 +421,7 @@ export function WorkspacePage() {
   const [compareFilterAuthor, setCompareFilterAuthor] = useState("all");
   const [compareFilterState, setCompareFilterState] = useState<CompareReviewState | "all">("all");
   const [compareUnresolvedOnly, setCompareUnresolvedOnly] = useState(false);
+  const [diffExpandedFullscreen, setDiffExpandedFullscreen] = useState(false);
   const [activeCompareChangeId, setActiveCompareChangeId] = useState<string>("");
   const [_mergeGateBlockers, setMergeGateBlockers] = useState<MergeGateBlockerRow[]>([]);
   const [mergeGatePolicy, setMergeGatePolicy] = useState<MergeGatePolicySnapshot | null>(null);
@@ -455,8 +439,12 @@ export function WorkspacePage() {
   const [reviewDiffState, setReviewDiffState] = useState<"idle" | "loading" | "error" | "ready">("idle");
   const [isNarrowLayout, setIsNarrowLayout] = useState(() => window.matchMedia("(max-width: 980px)").matches);
   const baseDocRef = useRef<DocumentContent | null>(null);
+  const proposalPayloadRef = useRef<WorkspacePayload | null>(null);
   const [diffManifest, setDiffManifest] = useState<DiffManifest | null>(null);
   const proposalMode = workspaceMode === "proposal";
+  // Derive current space from the loaded workspace
+  const currentSpaceId = workspace?.space?.id ?? null;
+  const currentSpaceName = workspace?.space?.name ?? null;
   const showDebugStateToggles = import.meta.env.DEV;
   const handleDiffModeChange = useCallback((mode: DiffMode) => {
     setDiffMode(mode);
@@ -476,6 +464,14 @@ export function WorkspacePage() {
     setMergeGatePolicy(null);
     latestRealtimeAtRef.current = Date.now();
   }, []);
+
+  // Lock body scroll when fullscreen diff is open
+  useEffect(() => {
+    if (diffExpandedFullscreen) {
+      document.body.style.overflow = "hidden";
+      return () => { document.body.style.overflow = ""; };
+    }
+  }, [diffExpandedFullscreen]);
 
   useEffect(() => {
     let active = true;
@@ -511,6 +507,7 @@ export function WorkspacePage() {
     setApprovalRefreshBusy(false);
     setRealtimeStatus("connecting");
     setOnlineCount(1);
+    setWorkspaceMode("proposal");
     fetchWorkspace(docId)
       .then((response) => {
         if (!active) {
@@ -536,12 +533,12 @@ export function WorkspacePage() {
     };
   }, [applyWorkspacePayload, docId]);
 
-  const refreshDocumentIndex = useCallback(async (mode: "foreground" | "background" = "foreground") => {
+  const refreshDocumentIndex = useCallback(async (mode: "foreground" | "background" = "foreground", spaceId?: string) => {
     if (mode === "foreground") {
       setDocumentIndexState("loading");
     }
     try {
-      const documents = await fetchDocuments();
+      const documents = spaceId ? await fetchSpaceDocuments(spaceId) : await fetchDocuments();
       setDocumentIndex(documents);
       setDocumentIndexState(documents.length === 0 ? "empty" : "success");
     } catch {
@@ -553,8 +550,9 @@ export function WorkspacePage() {
   }, []);
 
   useEffect(() => {
-    void refreshDocumentIndex("foreground");
-  }, [refreshDocumentIndex]);
+    if (viewState !== "success") return;
+    void refreshDocumentIndex("foreground", currentSpaceId ?? undefined);
+  }, [refreshDocumentIndex, currentSpaceId, viewState]);
 
   useEffect(() => {
     return () => {
@@ -722,23 +720,32 @@ export function WorkspacePage() {
       .catch(() => setSpaces([]));
   }, []);
 
-  // Transform documents to hierarchical tree items (spaces as folders with nested children)
+  // Transform documents to tree items — flat when space-scoped, grouped by space otherwise
   const treeItems: TreeItemData[] = useMemo(() => {
-    // Group documents by space
+    // When scoped to a space, return a flat list (no folder wrappers)
+    if (currentSpaceId) {
+      return sidebarDocuments.map((doc) => ({
+        id: doc.id,
+        label: doc.title,
+        icon: "📄",
+        badge: doc.openThreads > 0 ? "pending" : doc.status === "Approved" ? "approved" : undefined,
+        status: doc.status,
+        openThreads: doc.openThreads,
+      }));
+    }
+
+    // Unscoped: group documents by space
     const docsBySpace = new Map<string, DocumentSummary[]>();
     for (const doc of sidebarDocuments) {
       const spaceDocs = docsBySpace.get(doc.spaceId) ?? [];
       spaceDocs.push(doc);
       docsBySpace.set(doc.spaceId, spaceDocs);
     }
-    
-    // Create space folders with nested documents as children
+
     const items: TreeItemData[] = [];
-    
+
     for (const space of spaces) {
       const spaceDocs = docsBySpace.get(space.id) ?? [];
-      
-      // Create children array (nested documents)
       const children: TreeItemData[] = spaceDocs.map((doc) => ({
         id: doc.id,
         label: doc.title,
@@ -747,8 +754,7 @@ export function WorkspacePage() {
         status: doc.status,
         openThreads: doc.openThreads,
       }));
-      
-      // Add space as folder with children
+
       items.push({
         id: `space-${space.id}`,
         label: space.name,
@@ -757,8 +763,8 @@ export function WorkspacePage() {
         children,
       });
     }
-    
-    // Add documents with unknown space (at root level, not in folder)
+
+    // Documents with unknown space at root level
     const unknownSpaceDocs = sidebarDocuments.filter((d) => !spaces.some((s) => s.id === d.spaceId));
     for (const doc of unknownSpaceDocs) {
       items.push({
@@ -770,33 +776,51 @@ export function WorkspacePage() {
         openThreads: doc.openThreads,
       });
     }
-    
+
     return items;
-  }, [sidebarDocuments, spaces]);
+  }, [sidebarDocuments, spaces, currentSpaceId]);
 
   // Handle creating a new document
   const handleCreateDocument = useCallback(async (spaceId?: string) => {
     try {
-      const result = await createDocument("Untitled Document", "", spaceId);
+      const targetSpaceId = spaceId ?? currentSpaceId ?? undefined;
+      const result = await createDocument("Untitled Document", "", targetSpaceId);
       navigate(`/workspace/${result.document.id}`);
     } catch (error) {
       const message = isApiError(error) ? error.message : "Failed to create document";
       setActionError(message);
     }
-  }, [navigate]);
+  }, [navigate, currentSpaceId]);
 
   // Handle moving a document
   const handleMoveDocument = useCallback(async (documentId: string, targetSpaceId: string) => {
     try {
       await moveDocument(documentId, targetSpaceId);
       // Refresh the document index to reflect the move
-      const docs = await fetchDocuments();
+      const docs = currentSpaceId ? await fetchSpaceDocuments(currentSpaceId) : await fetchDocuments();
       setDocumentIndex(docs);
     } catch (error) {
       const message = isApiError(error) ? error.message : "Failed to move document";
       setActionError(message);
     }
-  }, []);
+  }, [currentSpaceId]);
+
+  // Handle renaming a document
+  const handleRenameDocument = useCallback(async (documentId: string, newTitle: string) => {
+    try {
+      await renameDocument(documentId, newTitle);
+      const docs = currentSpaceId ? await fetchSpaceDocuments(currentSpaceId) : await fetchDocuments();
+      setDocumentIndex(docs);
+      // If renaming the active document, refresh workspace to update breadcrumb/title
+      if (documentId === workspace?.document.id) {
+        const updated = await fetchWorkspace(docId);
+        applyWorkspacePayload(updated);
+      }
+    } catch (error) {
+      const message = isApiError(error) ? error.message : "Failed to rename document";
+      setActionError(message);
+    }
+  }, [workspace?.document.id, docId, currentSpaceId]);
 
   const sidebarAllCount = documentIndexState === "loading" ? (workspace?.counts.allDocuments ?? 0) : documentIndex.length;
   const sidebarOpenReviewCount =
@@ -900,31 +924,6 @@ export function WorkspacePage() {
       active = false;
     };
   }, [activeTab, workspace?.document.id, workspace?.document.proposalId, decisionOutcomeFilter, decisionQuery, decisionAuthor]);
-
-  // Blame view data fetching
-  useEffect(() => {
-    if (activeTab !== "blame" || !workspace) {
-      return;
-    }
-    let active = true;
-    setBlameLoading(true);
-    setBlameError(null);
-    fetchDocumentBlame(workspace.document.id, workspace.document.proposalId)
-      .then((response) => {
-        if (!active) return;
-        setBlameEntries(response.entries);
-        setBlameLoading(false);
-      })
-      .catch((error) => {
-        if (!active) return;
-        setBlameEntries([]);
-        setBlameError(isApiError(error) ? error.message : "Failed to load blame data.");
-        setBlameLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [activeTab, workspace?.document.id, workspace?.document.proposalId]);
 
   useEffect(() => {
     if (!workspace?.document.proposalId) {
@@ -1242,9 +1241,6 @@ export function WorkspacePage() {
     }
   }, [workspace?.threads]);
 
-  const handleHoverBlockChange = useCallback((nodeId: string | null) => {
-    setHoveredNodeId(nodeId);
-  }, []);
 
   function getCurrentAnchorOffsets() {
     if (!editorInstance) {
@@ -1307,6 +1303,37 @@ export function WorkspacePage() {
       applyWorkspacePayload(updated);
     } catch (error) {
       setActionError(isApiError(error) ? error.message : "Could not start proposal.");
+    }
+  }
+
+  async function handleViewPublished() {
+    if (!workspace) return;
+    // Stash current proposal workspace so we can restore without refetching
+    proposalPayloadRef.current = workspace;
+    try {
+      const published = await fetchWorkspace(workspace.document.id, "published");
+      applyWorkspacePayload(published);
+      setWorkspaceMode("published");
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not load published version.");
+    }
+  }
+
+  async function handleReturnToProposal() {
+    if (!workspace) return;
+    if (proposalPayloadRef.current) {
+      applyWorkspacePayload(proposalPayloadRef.current);
+      proposalPayloadRef.current = null;
+      setWorkspaceMode("proposal");
+    } else {
+      // Fallback: refetch workspace (will get proposal if one exists)
+      try {
+        const updated = await fetchWorkspace(workspace.document.id);
+        applyWorkspacePayload(updated);
+        setWorkspaceMode("proposal");
+      } catch (error) {
+        setActionError(isApiError(error) ? error.message : "Could not load proposal.");
+      }
     }
   }
 
@@ -1662,7 +1689,6 @@ export function WorkspacePage() {
         }
         const message = `Merge gate is blocked. Pending approvals: ${pending}, open threads: ${open}.`;
         setActionError(message);
-        setApprovalError(message);
         
         // Track blocked merge
         const blockerRows = normalizeMergeGateBlockers(details?.blockers);
@@ -1680,7 +1706,6 @@ export function WorkspacePage() {
         setMergeGatePolicy(null);
         const message = isApiError(error) ? error.message : "Merge gate is still blocked.";
         setActionError(message);
-        setApprovalError(message);
       }
     } finally {
       setMergeBusy(false);
@@ -1783,7 +1808,7 @@ export function WorkspacePage() {
   function clearCompare() {
     // End review session metrics if active
     endReviewSession({ merged: false });
-    
+
     setCompareActive(false);
     setCompareDoc(null);
     setCompareManifest(null);
@@ -1793,6 +1818,7 @@ export function WorkspacePage() {
     setActiveCompareChangeId("");
     setCompareSummary(null);
     setDiffVisible(false);
+    setDiffExpandedFullscreen(false);
   }
 
   async function compareCommits(fromHash: string, toHash: string, statusLabel = "Comparing selected commits..."): Promise<CompareChangeRow[] | null> {
@@ -2079,22 +2105,31 @@ export function WorkspacePage() {
         </div>
         <div className="cm-topnav-spacer" />
         <div className="cm-topnav-context">
-          <div className="cm-mode-toggle" aria-label="Workspace mode">
-            <button
-              className={workspaceMode === "proposal" ? "active" : ""}
-              onClick={() => setWorkspaceMode("proposal")}
-              type="button"
-            >
-              Proposal
-            </button>
-            <button
-              className={workspaceMode === "review" ? "active" : ""}
-              onClick={() => setWorkspaceMode("review")}
-              type="button"
-            >
-              Review
-            </button>
-          </div>
+          {hasActiveProposal && (
+            <div className="cm-mode-toggle" aria-label="Workspace mode">
+              <button
+                className={workspaceMode === "published" ? "active" : ""}
+                onClick={() => void handleViewPublished()}
+                type="button"
+              >
+                Published
+              </button>
+              <button
+                className={workspaceMode === "proposal" ? "active" : ""}
+                onClick={() => void handleReturnToProposal()}
+                type="button"
+              >
+                Proposal
+              </button>
+              <button
+                className={workspaceMode === "review" ? "active" : ""}
+                onClick={() => setWorkspaceMode("review")}
+                type="button"
+              >
+                Review
+              </button>
+            </div>
+          )}
           <div className="cm-branch-badge" aria-label="Current branch">
             <div className="cm-branch-dot" />
             {workspace.document.branch.split(" -> ")[0]}
@@ -2143,7 +2178,7 @@ export function WorkspacePage() {
             <button
               className="cm-action-btn"
               type="button"
-              disabled={!proposalMode || !hasUnsavedChanges || saveState === "saving"}
+              disabled={!proposalMode || !hasActiveProposal || !hasUnsavedChanges || saveState === "saving"}
               onClick={() => void saveDraft()}
               title="Save draft"
             >
@@ -2181,11 +2216,23 @@ export function WorkspacePage() {
             </svg>
           </button>
           <div className="cm-sidebar-section">
-            <div className="cm-sidebar-label">Workspace</div>
+            {currentSpaceId ? (
+              <>
+                <button className="cm-sidebar-back" type="button" onClick={() => navigate("/documents")}>
+                  ← All Spaces
+                </button>
+                <div className="cm-sidebar-label">{currentSpaceName ?? "Space"}</div>
+              </>
+            ) : (
+              <div className="cm-sidebar-label">Workspace</div>
+            )}
             <button
               className={`cm-sidebar-item ${sidebarSection === "all" ? "active" : ""}`.trim()}
               type="button"
-              onClick={() => navigate("/documents")}
+              onClick={() => {
+                setSidebarSection("all");
+                if (!currentSpaceId) navigate("/documents");
+              }}
             >
               All Documents
               <span className="cm-sidebar-count">{sidebarAllCount}</span>
@@ -2229,9 +2276,6 @@ export function WorkspacePage() {
           </div>
           {sidebarSection !== "decisions" && (
             <>
-              <div className="cm-sidebar-label">
-                {sidebarSection === "all" ? "All Documents" : sidebarSection === "open" ? "Open Reviews" : "Merged"}
-              </div>
               {documentIndexState === "loading" && <div className="cm-sidebar-hint">Loading documents...</div>}
               {documentIndexState === "error" && <div className="cm-sidebar-hint">Could not load document list.</div>}
               {documentIndexState !== "loading" && documentIndexState !== "error" && (
@@ -2245,6 +2289,7 @@ export function WorkspacePage() {
                   }}
                   onCreateDocument={handleCreateDocument}
                   onMoveDocument={handleMoveDocument}
+                  onRenameDocument={handleRenameDocument}
                   onManageSpacePermissions={(spaceId) => {
                     const space = spaces.find(s => s.id === spaceId);
                     if (space) {
@@ -2271,36 +2316,46 @@ export function WorkspacePage() {
         </aside>
 
         <main className="cm-doc-area">
-          <EditorToolbar
-            editor={editorInstance}
-            diffVisible={diffVisible}
-            onToggleDiff={() => setDiffVisible((value) => !value)}
-            diffMode={diffMode}
-            onSetDiffMode={handleDiffModeChange}
-          />
-          <div className={`cm-merge-gate-banner ${mergeReady ? "ready" : "blocked"}`}>
-            <div className="cm-merge-gate-title">
-              {hasActiveProposal
-                ? (apiUnavailable ? "Merge Gate Unavailable" : (mergeReady ? "Merge Gate Ready" : "Merge Gate Blocked"))
-                : "No Active Proposal"}
+          {hasActiveProposal && proposalMode && (
+            <EditorToolbar
+              editor={editorInstance}
+              diffVisible={diffVisible}
+              onToggleDiff={() => setDiffVisible((value) => !value)}
+              diffMode={diffMode}
+              onSetDiffMode={handleDiffModeChange}
+            />
+          )}
+          {hasActiveProposal && (
+            <div className={`cm-merge-gate-banner ${mergeReady ? "ready" : "blocked"}`}>
+              <div className="cm-merge-gate-title">
+                {apiUnavailable ? "Merge Gate Unavailable" : (mergeReady ? "Merge Gate Ready" : "Merge Gate Blocked")}
+              </div>
+              <div className="cm-merge-gate-copy">
+                {apiUnavailable
+                  ? "Approval state is temporarily unavailable. Retry once the API recovers."
+                  : mergeReady
+                  ? "All required approvals are complete and all threads are resolved."
+                  : `Awaiting ${pendingApprovals} approvals and ${openThreads} open thread resolutions.`}
+              </div>
             </div>
-            <div className="cm-merge-gate-copy">
-              {hasActiveProposal
-                ? (
-                  apiUnavailable
-                    ? "Approval state is temporarily unavailable. Retry once the API recovers."
-                    : mergeReady
-                    ? "All required approvals are complete and all threads are resolved."
-                    : `Awaiting ${pendingApprovals} approvals and ${openThreads} open thread resolutions.`
-                )
-                : "Start a proposal to open discussions, collect approvals, and merge changes."}
-            </div>
-          </div>
+          )}
           {compareSummary ? (
             <div className="cm-compare-banner" role="status">
               <strong>Latest Compare:</strong> {compareSummary}
             </div>
           ) : null}
+          {!hasActiveProposal && (
+            <div className="cm-readonly-banner" role="status">
+              <span>You are viewing the published document.</span>
+              <button type="button" onClick={() => void startProposal()}>Start Proposal</button>
+            </div>
+          )}
+          {hasActiveProposal && workspaceMode === "published" && (
+            <div className="cm-readonly-banner" role="status">
+              <span>You are viewing the published snapshot.</span>
+              <button type="button" onClick={() => void handleReturnToProposal()}>Switch to Proposal</button>
+            </div>
+          )}
           {workspaceMode === "review" && (
             <div className="cm-review-diff-card">
               <div className="cm-review-diff-head">Review Diff vs Main</div>
@@ -2328,16 +2383,13 @@ export function WorkspacePage() {
               )}
             </div>
           )}
-          {(saveError || saveState === "saved" || hasUnsavedChanges) && (
+          {(saveError || ((saveState === "saved" || hasUnsavedChanges) && hasActiveProposal && proposalMode)) && (
             <div className="cm-save-indicator" role="status">
               {saveError && <span>{saveError}</span>}
               {!saveError && saveState === "saved" && <span>Saved.</span>}
               {!saveError && saveState !== "saved" && hasUnsavedChanges && <span>Unsaved changes.</span>}
             </div>
           )}
-          <div className="cm-save-indicator">
-            Add blocks: press <strong>Enter</strong> for a new paragraph, or type <strong>/</strong> at line start for block types.
-          </div>
 
           <div className="cm-doc-scroll">
             <div className="cm-doc-content">
@@ -2350,7 +2402,7 @@ export function WorkspacePage() {
                 <div className="cm-doc-author">
                   Edited by <strong>{workspace.document.editedBy}</strong> · {workspace.document.editedAt}
                 </div>
-                <div className="cm-doc-author">{proposalMode ? "Proposal mode enabled" : "Direct edit mode"}</div>
+                <div className="cm-doc-author">{workspaceMode === "published" ? "Published — read-only" : hasActiveProposal ? (proposalMode ? "Editing proposal" : "Reviewing proposal") : "Published — read-only"}</div>
                 <div className="cm-doc-branch">{workspace.document.branch}</div>
               </div>
 
@@ -2366,6 +2418,9 @@ export function WorkspacePage() {
                       afterHash={compareToHash}
                       scrollToNodeId={activeCompareNodeId}
                       activeChangeNodeId={activeCompareNodeId}
+                      isExpanded={diffExpandedFullscreen}
+                      onExpand={() => setDiffExpandedFullscreen(true)}
+                      onClose={() => setDiffExpandedFullscreen(false)}
                     />
                   ) : (
                     <UnifiedDiff
@@ -2382,10 +2437,9 @@ export function WorkspacePage() {
                 ) : (compareDoc ?? docDraft) ? (
                   <ChronicleEditor
                     content={compareDoc ?? docDraft!}
-                    editable={proposalMode && !compareActive}
+                    editable={proposalMode && hasActiveProposal && !compareActive}
                     onUpdate={handleEditorUpdate}
                     onSelectionChange={handleSelectionChange}
-                    onHoverBlockChange={handleHoverBlockChange}
                     onEditorReady={setEditorInstance}
                     diffManifest={compareActive ? compareManifest : diffManifest}
                     diffVisible={diffVisible}
@@ -2393,8 +2447,6 @@ export function WorkspacePage() {
                     activeChangeNodeId={compareActive ? activeCompareNodeId : null}
                     threadAnchors={threadAnchors}
                     className="cm-editor-wrapper"
-                    enableHoverAttribution={activeTab === "blame"}
-                    blameEntries={blameEntries}
                   />
                 ) : null}
               </div>
@@ -2502,40 +2554,33 @@ export function WorkspacePage() {
               )}
 
               {discussionState === "success" && workspace.threads.length > 0 && (
-                <ThreadList
-                  threads={workspace.threads}
-                  activeThreadId={activeThread}
-                  onSelectThread={selectThread}
-                  onReplyThread={(threadId, body) => { void replyToThread(threadId, body); }}
-                  onResolveThread={(threadId, resolution) => { void resolveActiveThread(threadId, resolution); }}
-                  onReopenThread={(threadId) => { void reopenThread(threadId); }}
-                  onVoteThread={(threadId, direction) => { void voteThread(threadId, direction); }}
-                  onReactThread={(threadId, emoji) => { void reactThread(threadId, emoji); }}
-                  onToggleThreadVisibility={(threadId) => { void toggleThreadVisibility(threadId); }}
-                  threadRefs={threadRefs}
-                />
+                <div className="cm-panel-scroll-threadlist">
+                  <ThreadList
+                    threads={workspace.threads}
+                    activeThreadId={activeThread}
+                    onSelectThread={selectThread}
+                    onReplyThread={(threadId, body) => { void replyToThread(threadId, body); }}
+                    onResolveThread={(threadId, resolution) => { void resolveActiveThread(threadId, resolution); }}
+                    onReopenThread={(threadId) => { void reopenThread(threadId); }}
+                    onVoteThread={(threadId, direction) => { void voteThread(threadId, direction); }}
+                    onReactThread={(threadId, emoji) => { void reactThread(threadId, emoji); }}
+                    onToggleThreadVisibility={(threadId) => { void toggleThreadVisibility(threadId); }}
+                    threadRefs={threadRefs}
+                  />
+                </div>
               )}
 
               {discussionState === "success" && workspace.threads.length === 0 && (
                 <div className="cm-panel-scroll">
-                  <div className="cm-panel-fallback-card">
-                    <h3>{hasActiveProposal ? "No discussion threads yet" : "No active proposal discussion"}</h3>
-                    <p>
-                      {hasActiveProposal
-                        ? "Create the first thread to collect review feedback."
-                        : "Start a proposal to enable comment threads and merge-gate discussion."}
-                    </p>
-                    {!hasActiveProposal ? (
-                      <button
-                        className="cm-compose-send"
-                        type="button"
-                        onClick={() => {
-                          void startProposal();
-                        }}
-                      >
+                  <div className="cm-panel-fallback-card cm-panel-fallback-card--compact">
+                    <span className="cm-panel-fallback-text">
+                      {hasActiveProposal ? "No threads yet." : "No active proposal."}
+                    </span>
+                    {!hasActiveProposal && (
+                      <button className="cm-compose-send" type="button" onClick={() => { void startProposal(); }}>
                         Start Proposal
                       </button>
-                    ) : null}
+                    )}
                   </div>
                 </div>
               )}
@@ -2554,22 +2599,14 @@ export function WorkspacePage() {
             <div className="cm-panel-content active">
               {!hasActiveProposal && !showApprovalRules && (
                 <div className="cm-panel-scroll">
-                  <div className="cm-panel-fallback-card">
-                    <h3>No active proposal approvals</h3>
-                    <p>Start a proposal to open the required approval chain and merge gate.</p>
-                    <button
-                      className="cm-compose-send"
-                      type="button"
-                      onClick={() => {
-                        void startProposal();
-                      }}
-                    >
+                  <div className="cm-panel-fallback-card cm-panel-fallback-card--compact">
+                    <span className="cm-panel-fallback-text">No active proposal.</span>
+                    <button className="cm-compose-send" type="button" onClick={() => { void startProposal(); }}>
                       Start Proposal
                     </button>
                     <button
                       className="cm-thread-action-btn"
                       type="button"
-                      style={{ marginTop: 8 }}
                       onClick={() => setShowApprovalRules(true)}
                     >
                       Configure approval workflow
@@ -2734,6 +2771,74 @@ export function WorkspacePage() {
           {activeTab === "history" && (
             <div className="cm-panel-content active">
               <div className="cm-panel-scroll">
+                {/* Contributors summary derived from commit history */}
+                {(() => {
+                  const commits = historyData?.commits ?? workspace.history;
+                  const authorMap = new Map<string, number>();
+                  let latestAuthor = "";
+                  let latestTime = "";
+                  for (const c of commits) {
+                    // meta is formatted as "Author Name · time ago"
+                    const parts = c.meta.split(" · ");
+                    const author = parts[0]?.trim();
+                    if (!author) continue;
+                    authorMap.set(author, (authorMap.get(author) ?? 0) + 1);
+                    if (!latestAuthor) {
+                      latestAuthor = author;
+                      latestTime = parts[1]?.trim() ?? "";
+                    }
+                  }
+                  const contributors = Array.from(authorMap.entries())
+                    .sort((a, b) => b[1] - a[1]);
+                  if (contributors.length === 0) return null;
+
+                  const toneForName = (name: string): string => {
+                    const hash = name.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+                    const tones = ["emerald", "sky", "violet", "rose", "amber"];
+                    return tones[hash % tones.length];
+                  };
+                  const toneClasses: Record<string, string> = {
+                    emerald: "bg-emerald-100 text-emerald-700 border-emerald-200",
+                    sky: "bg-sky-100 text-sky-700 border-sky-200",
+                    violet: "bg-violet-100 text-violet-700 border-violet-200",
+                    rose: "bg-rose-100 text-rose-700 border-rose-200",
+                    amber: "bg-amber-100 text-amber-700 border-amber-200",
+                  };
+                  const initials = (name: string) =>
+                    name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+
+                  return (
+                    <div className="cm-approval-fallback" style={{ paddingBottom: 8 }}>
+                      <div className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+                        Contributors ({contributors.length})
+                      </div>
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {contributors.map(([author, count]) => {
+                          const tone = toneForName(author);
+                          return (
+                            <div
+                              key={author}
+                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-white border border-slate-200 text-xs"
+                            >
+                              <span
+                                className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-medium border ${toneClasses[tone]}`}
+                              >
+                                {initials(author)}
+                              </span>
+                              <span className="text-slate-700">{author}</span>
+                              <span className="text-slate-400">{count} {count === 1 ? "edit" : "edits"}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {latestAuthor && (
+                        <div className="text-xs text-slate-500">
+                          Latest: {latestAuthor}{latestTime ? ` · ${latestTime}` : ""}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="cm-approval-fallback">
                   <strong>Current Branch</strong>
                   <p className="cm-commit-meta">{historyData?.branch ?? workspace.document.branch.split(" -> ")[0]}</p>
@@ -3077,35 +3182,6 @@ export function WorkspacePage() {
                 onChangeClick={focusCompareChange}
                 onStepChange={stepCompareChange}
                 onReviewAction={(changeId, action) => void handleChangeReviewAction(changeId, action)}
-              />
-            </div>
-          )}
-
-          {activeTab === "blame" && (
-            <div className="cm-panel-content active">
-              <BlameView
-                entries={blameEntries}
-                nodeId={hoveredNodeId}
-                onSelectCommit={(commitHash) => {
-                  setActiveTab("history");
-                  const commitElement = document.querySelector(`[data-commit-hash="${commitHash}"]`);
-                  if (commitElement) {
-                    commitElement.scrollIntoView({ behavior: "smooth", block: "center" });
-                  }
-                }}
-                onSelectThread={(threadId) => {
-                  setActiveTab("discussions");
-                  setActiveThread(threadId);
-                  // Scroll to thread
-                  setTimeout(() => {
-                    const threadElement = document.querySelector(`[data-thread-id="${threadId}"]`);
-                    if (threadElement) {
-                      threadElement.scrollIntoView({ behavior: "smooth", block: "center" });
-                    }
-                  }, 100);
-                }}
-                loading={blameLoading}
-                error={blameError}
               />
             </div>
           )}

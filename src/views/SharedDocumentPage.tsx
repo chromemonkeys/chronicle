@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { fetchSharedDocument, type SharedDocumentPayload } from "../api/client";
+import { ChronicleEditor } from "../editor/ChronicleEditor";
+import { legacyContentToDoc } from "../editor/schema";
 
 type ViewState = "loading" | "error" | "ready";
 
@@ -56,6 +58,7 @@ export function SharedDocumentPage() {
   }
 
   const { document: doc, content, link } = data;
+  const docContent = data.doc ?? legacyContentToDoc(content);
 
   return (
     <div className="cm-share-page">
@@ -75,32 +78,12 @@ export function SharedDocumentPage() {
       </header>
 
       <article className="cm-share-document">
-        <h1 className="cm-share-title">{doc.title}</h1>
-        {doc.subtitle && (
-          <p className="cm-share-subtitle">{doc.subtitle}</p>
-        )}
         <div className="cm-share-status">{doc.status}</div>
-
-        {content.purpose && (
-          <section className="cm-share-section">
-            <h2>Purpose</h2>
-            <div className="cm-share-content">{content.purpose}</div>
-          </section>
-        )}
-
-        {content.tiers && (
-          <section className="cm-share-section">
-            <h2>Tiers</h2>
-            <div className="cm-share-content">{content.tiers}</div>
-          </section>
-        )}
-
-        {content.enforce && (
-          <section className="cm-share-section">
-            <h2>Enforcement</h2>
-            <div className="cm-share-content">{content.enforce}</div>
-          </section>
-        )}
+        <ChronicleEditor
+          content={docContent}
+          editable={false}
+          className="cm-editor-wrapper"
+        />
       </article>
 
       <footer className="cm-share-footer">

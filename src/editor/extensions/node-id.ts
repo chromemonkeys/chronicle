@@ -10,6 +10,13 @@ const BLOCK_TYPES = new Set([
   "orderedList",
   "listItem",
   "horizontalRule",
+  "taskList",
+  "taskItem",
+  "table",
+  "tableRow",
+  "tableCell",
+  "tableHeader",
+  "image",
 ]);
 
 const nodeIdPluginKey = new PluginKey("nodeId");

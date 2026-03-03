@@ -349,26 +349,6 @@ export type SearchResponse = {
   query: string;
 };
 
-export type BlameEntry = {
-  nodeId: string;
-  author: string;
-  editedAt: string;
-  commitHash: string;
-  commitMessage: string;
-  threads?: {
-    id: string;
-    author: string;
-    status: "OPEN" | "RESOLVED" | "ORPHANED";
-    replyCount: number;
-  }[];
-};
-
-export type DocumentBlamePayload = {
-  documentId: string;
-  branch: string;
-  entries: BlameEntry[];
-};
-
 export type TreeItemData = {
   id: string;
   label: string;

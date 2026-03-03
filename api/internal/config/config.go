@@ -27,6 +27,12 @@ type Config struct {
 	SMTPFromName string
 	// Redis Configuration
 	RedisURL string
+	// S3-compatible Object Store (MinIO)
+	S3Endpoint  string
+	S3Bucket    string
+	S3AccessKey string
+	S3SecretKey string
+	S3UseSSL    bool
 }
 
 func Load() Config {
@@ -51,6 +57,12 @@ func Load() Config {
 		SMTPFromName: getenv("SMTP_FROM_NAME", "Chronicle"),
 		// Redis - required for refresh token storage (AUTH-102)
 		RedisURL: getenv("REDIS_URL", "redis://localhost:6379/0"),
+		// S3-compatible Object Store (MinIO)
+		S3Endpoint:  getenv("S3_ENDPOINT", "localhost:9000"),
+		S3Bucket:    getenv("S3_BUCKET", "chronicle"),
+		S3AccessKey: getenv("S3_ACCESS_KEY", "chronicle"),
+		S3SecretKey: getenv("S3_SECRET_KEY", "chronicle123"),
+		S3UseSSL:    getenv("S3_USE_SSL", "false") == "true",
 	}
 }
 

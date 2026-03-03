@@ -15,6 +15,7 @@ import (
 	"chronicle/api/internal/gitrepo"
 	"chronicle/api/internal/search"
 	"chronicle/api/internal/session"
+	"chronicle/api/internal/storage"
 	"chronicle/api/internal/store"
 )
 
@@ -64,6 +65,26 @@ func main() {
 	}
 	if err := service.Bootstrap(ctx); err != nil {
 		log.Printf("WARNING: bootstrap error (will retry on next restart): %v", err)
+	}
+
+	// Initialize S3-compatible object store for file uploads
+	if strings.TrimSpace(cfg.S3Endpoint) != "" {
+		s3Client, err := storage.New(storage.Config{
+			Endpoint:  cfg.S3Endpoint,
+			Bucket:    cfg.S3Bucket,
+			AccessKey: cfg.S3AccessKey,
+			SecretKey: cfg.S3SecretKey,
+			UseSSL:    cfg.S3UseSSL,
+		})
+		if err != nil {
+			log.Printf("WARNING: S3 storage init failed (image uploads disabled): %v", err)
+		} else {
+			if err := s3Client.EnsureBucket(ctx); err != nil {
+				log.Printf("WARNING: S3 bucket creation failed: %v", err)
+			}
+			service.SetObjectStore(s3Client)
+			log.Printf("S3 storage connected (bucket: %s)", cfg.S3Bucket)
+		}
 	}
 
 	httpServer := app.NewHTTPServer(service, cfg.CORSOrigin)
