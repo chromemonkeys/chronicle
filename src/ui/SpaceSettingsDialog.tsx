@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import type {
   GuestUser,
   PermissionGrant,
@@ -13,6 +14,7 @@ import {
   inviteGuest,
   removeGuest,
   updateSpace,
+  deleteSpace,
   fetchAdminUsers,
   fetchGroups,
 } from "../api/client";
@@ -68,7 +70,12 @@ export function SpaceSettingsDialog({
   onClose,
   onUpdated,
 }: SpaceSettingsDialogProps) {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>("details");
+
+  // Delete space state
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Details tab state
   const [name, setName] = useState(space.name);
@@ -317,6 +324,55 @@ export function SpaceSettingsDialog({
                 {saving ? "Saving\u2026" : "Save changes"}
               </button>
             </div>
+
+            <section className="sd-danger-zone">
+              <span className="sd-danger-label">Danger Zone</span>
+              {space.documentCount > 0 ? (
+                <p className="sd-danger-disabled">Move or delete all documents before deleting this space.</p>
+              ) : deleteConfirmOpen ? (
+                <div className="sd-confirm-delete">
+                  <p>Are you sure? This cannot be undone.</p>
+                  <div className="sd-actions">
+                    <button
+                      className="sd-btn sd-btn-delete"
+                      type="button"
+                      disabled={deleting}
+                      onClick={async () => {
+                        setDeleting(true);
+                        setError(null);
+                        try {
+                          await deleteSpace(space.id);
+                          onClose();
+                          navigate("/documents");
+                        } catch (err) {
+                          setError(err instanceof Error ? err.message : "Failed to delete space");
+                        } finally {
+                          setDeleting(false);
+                          setDeleteConfirmOpen(false);
+                        }
+                      }}
+                    >
+                      {deleting ? "Deleting\u2026" : "Yes, delete"}
+                    </button>
+                    <button
+                      className="sd-btn"
+                      type="button"
+                      onClick={() => setDeleteConfirmOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  className="sd-btn sd-btn-delete"
+                  type="button"
+                  onClick={() => setDeleteConfirmOpen(true)}
+                >
+                  Delete this space
+                </button>
+              )}
+            </section>
           </>
         )}
 

@@ -123,6 +123,7 @@ type dataStore interface {
 	IsAccessTokenRevoked(context.Context, string) (bool, error)
 	GetUserByID(context.Context, string) (store.User, error)
 	GetActiveProposal(context.Context, string) (*store.Proposal, error)
+	ListOpenProposals(context.Context, string) ([]store.Proposal, error)
 	OpenThreadCount(context.Context, string) (int, error)
 	GetProposal(context.Context, string) (store.Proposal, error)
 	UpdateDocumentState(context.Context, string, string, string, string, string) error
@@ -849,10 +850,14 @@ func (s *Service) EnsureWorkflowProposal(ctx context.Context, documentID, userNa
 		return active, nil
 	}
 
+	defaultTitle := userName + "'s edits"
+	if userName == "" {
+		defaultTitle = "Untitled edits"
+	}
 	proposal := store.Proposal{
 		ID:           util.NewID("prop"),
 		DocumentID:   documentID,
-		Title:        "New proposal",
+		Title:        defaultTitle,
 		Status:       "DRAFT",
 		BranchName:   "proposal-" + util.NewID(documentID),
 		TargetBranch: "main",
@@ -867,10 +872,34 @@ func (s *Service) EnsureWorkflowProposal(ctx context.Context, documentID, userNa
 	return &proposal, nil
 }
 
+func (s *Service) ListOpenProposals(ctx context.Context, documentID string) ([]map[string]any, error) {
+	proposals, err := s.store.ListOpenProposals(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+	var result []map[string]any
+	for _, p := range proposals {
+		result = append(result, map[string]any{
+			"id":         p.ID,
+			"documentId": p.DocumentID,
+			"title":      p.Title,
+			"status":     p.Status,
+			"branchName": p.BranchName,
+			"createdBy":  p.CreatedBy,
+			"createdAt":  p.CreatedAt,
+		})
+	}
+	return result, nil
+}
+
 func (s *Service) CreateProposal(ctx context.Context, documentID, userName, title string, viewerIsExternal bool) (map[string]any, error) {
 	proposalTitle := strings.TrimSpace(title)
 	if proposalTitle == "" {
-		proposalTitle = "New proposal"
+		if userName != "" {
+			proposalTitle = userName + "'s edits"
+		} else {
+			proposalTitle = "Untitled edits"
+		}
 	}
 	proposal := store.Proposal{
 		ID:           util.NewID("prop"),

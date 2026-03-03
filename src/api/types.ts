@@ -567,6 +567,16 @@ export type AdminUsersResponse = {
   total: number;
 };
 
+export type OpenProposalSummary = {
+  id: string;
+  documentId: string;
+  title: string;
+  status: string;
+  branchName: string;
+  createdBy: string;
+  createdAt: string;
+};
+
 export type SpaceVisibility = "restricted" | "organization";
 
 export type InitialPermission = {

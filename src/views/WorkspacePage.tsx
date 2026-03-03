@@ -8,6 +8,7 @@ import {
   connectWorkspaceRealtime,
   createDocument,
   createProposal,
+  fetchOpenProposals,
   createProposalThread,
   fetchAdminUsers,
   fetchDocuments,
@@ -38,6 +39,7 @@ import {
 import type {
   AdminUser,
   CompareContentSnapshot,
+  OpenProposalSummary,
   DecisionLogEntry,
   DocumentComparePayload,
   DocumentHistoryPayload,
@@ -55,6 +57,7 @@ import { BranchGraph } from "../ui/BranchGraph";
 import { DecisionLogTable } from "../ui/DecisionLogTable";
 import { DocumentTree } from "../ui/DocumentTree";
 import { EmptyStateError, EmptyState } from "../ui/EmptyState";
+import { Dialog } from "../ui/Dialog";
 import { ShareDialog } from "../ui/ShareDialog";
 import { SpacePermissions } from "../ui/SpacePermissions";
 import { Tabs } from "../ui/Tabs";
@@ -371,8 +374,12 @@ function normalizeMergeGateBlockers(value: unknown): MergeGateBlockerRow[] {
 export function WorkspacePage() {
   const { docId = "" } = useParams();
   const navigate = useNavigate();
-  const { userId: currentUserId } = useAuth();
+  const { userId: currentUserId, userName } = useAuth();
   const [viewState, setViewState] = useState<ViewState>("loading");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [proposalPickerOpen, setProposalPickerOpen] = useState(false);
+  const [existingProposals, setExistingProposals] = useState<OpenProposalSummary[]>([]);
   const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
   const [activeTab, setActiveTab] = useState<PanelTab>("discussions");
   const [activeThread, setActiveThread] = useState("");
@@ -821,6 +828,25 @@ export function WorkspacePage() {
       setActionError(message);
     }
   }, [workspace?.document.id, docId, currentSpaceId]);
+
+  async function handleTitleSave() {
+    const trimmed = titleDraft.trim();
+    if (!trimmed || !workspace || trimmed === content.title) {
+      setEditingTitle(false);
+      return;
+    }
+    try {
+      await renameDocument(workspace.document.id, trimmed);
+      const updated = await fetchWorkspace(docId);
+      applyWorkspacePayload(updated);
+      const docs = currentSpaceId ? await fetchSpaceDocuments(currentSpaceId) : await fetchDocuments();
+      setDocumentIndex(docs);
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Failed to rename document");
+    } finally {
+      setEditingTitle(false);
+    }
+  }
 
   const sidebarAllCount = documentIndexState === "loading" ? (workspace?.counts.allDocuments ?? 0) : documentIndex.length;
   const sidebarOpenReviewCount =
@@ -1299,10 +1325,38 @@ export function WorkspacePage() {
     setApprovalError(null);
     setApprovalStateOverride(null);
     try {
-      const updated = await createProposal(workspace.document.id);
+      const openProposals = await fetchOpenProposals(workspace.document.id);
+      if (openProposals.length > 0) {
+        setExistingProposals(openProposals);
+        setProposalPickerOpen(true);
+        return;
+      }
+      const updated = await createProposal(workspace.document.id, userName ? `${userName}'s edits` : undefined);
       applyWorkspacePayload(updated);
     } catch (error) {
       setActionError(isApiError(error) ? error.message : "Could not start proposal.");
+    }
+  }
+
+  async function handlePickExistingProposal() {
+    if (!workspace) return;
+    setProposalPickerOpen(false);
+    try {
+      const updated = await fetchWorkspace(workspace.document.id);
+      applyWorkspacePayload(updated);
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not load proposal.");
+    }
+  }
+
+  async function handleCreateNewProposal() {
+    if (!workspace) return;
+    setProposalPickerOpen(false);
+    try {
+      const updated = await createProposal(workspace.document.id, userName ? `${userName}'s edits` : undefined);
+      applyWorkspacePayload(updated);
+    } catch (error) {
+      setActionError(isApiError(error) ? error.message : "Could not create proposal.");
     }
   }
 
@@ -1784,7 +1838,8 @@ export function WorkspacePage() {
     }
   }
 
-  async function createNamedVersion() {
+  // @ts-expect-error Reserved for history panel / keyboard shortcut use
+  async function createNamedVersion() { // eslint-disable-line @typescript-eslint/no-unused-vars
     if (!workspace?.document.proposalId) {
       return;
     }
@@ -2101,11 +2156,35 @@ export function WorkspacePage() {
               <span className="cm-breadcrumb-sep">/</span>
             </>
           ) : null}
-          <span className="cm-breadcrumb-current">{content.title}</span>
+          {editingTitle ? (
+            <input
+              className="cm-breadcrumb-edit"
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void handleTitleSave();
+                } else if (e.key === "Escape") {
+                  setEditingTitle(false);
+                }
+              }}
+              onBlur={() => void handleTitleSave()}
+              autoFocus
+            />
+          ) : (
+            <span
+              className="cm-breadcrumb-current cm-breadcrumb-editable"
+              title="Click to rename"
+              onClick={() => { setTitleDraft(content.title); setEditingTitle(true); }}
+            >
+              {content.title}
+            </span>
+          )}
         </div>
         <div className="cm-topnav-spacer" />
         <div className="cm-topnav-context">
-          {hasActiveProposal && (
+          {(hasActiveProposal || (workspaceMode === "published" && proposalPayloadRef.current !== null)) && (
             <div className="cm-mode-toggle" aria-label="Workspace mode">
               <button
                 className={workspaceMode === "published" ? "active" : ""}
@@ -2146,14 +2225,6 @@ export function WorkspacePage() {
             >
               <span>{compareActive ? "Close Compare" : "Compare Versions"}</span>
             </button>
-            <button 
-              className="cm-action-btn" 
-              type="button" 
-              onClick={() => setActiveTab("history")}
-              title="View history"
-            >
-              <span>View History</span>
-            </button>
             <button
               className="cm-action-btn cm-action-btn--primary"
               type="button"
@@ -2166,23 +2237,14 @@ export function WorkspacePage() {
 
 	          <div className="cm-action-group cm-action-group--document">
 	            <ExportMenu documentId={workspace.document.id} documentTitle={content.title} />
-	            <button
-	              className="cm-action-btn"
-	              type="button"
-	              disabled={!workspace.document.proposalId}
-              onClick={() => void createNamedVersion()}
-              title="Save named version"
-            >
-              <span>Save Version</span>
-            </button>
             <button
               className="cm-action-btn"
               type="button"
               disabled={!proposalMode || !hasActiveProposal || !hasUnsavedChanges || saveState === "saving"}
               onClick={() => void saveDraft()}
-              title="Save draft"
+              title="Save changes"
             >
-              <span>{saveState === "saving" ? "Saving..." : "Save Draft"}</span>
+              <span>{saveState === "saving" ? "Saving..." : "Save"}</span>
             </button>
           </div>
 
@@ -2344,13 +2406,13 @@ export function WorkspacePage() {
               <strong>Latest Compare:</strong> {compareSummary}
             </div>
           ) : null}
-          {!hasActiveProposal && (
+          {!hasActiveProposal && workspaceMode !== "published" && proposalPayloadRef.current === null && (
             <div className="cm-readonly-banner" role="status">
               <span>You are viewing the published document.</span>
               <button type="button" onClick={() => void startProposal()}>Start Proposal</button>
             </div>
           )}
-          {hasActiveProposal && workspaceMode === "published" && (
+          {(hasActiveProposal || proposalPayloadRef.current !== null) && workspaceMode === "published" && (
             <div className="cm-readonly-banner" role="status">
               <span>You are viewing the published snapshot.</span>
               <button type="button" onClick={() => void handleReturnToProposal()}>Switch to Proposal</button>
@@ -2600,16 +2662,9 @@ export function WorkspacePage() {
               {!hasActiveProposal && !showApprovalRules && (
                 <div className="cm-panel-scroll">
                   <div className="cm-panel-fallback-card cm-panel-fallback-card--compact">
-                    <span className="cm-panel-fallback-text">No active proposal.</span>
+                    <span className="cm-panel-fallback-text">Start a proposal to begin the approval process.</span>
                     <button className="cm-compose-send" type="button" onClick={() => { void startProposal(); }}>
                       Start Proposal
-                    </button>
-                    <button
-                      className="cm-thread-action-btn"
-                      type="button"
-                      onClick={() => setShowApprovalRules(true)}
-                    >
-                      Configure approval workflow
                     </button>
                   </div>
                 </div>
@@ -2736,31 +2791,52 @@ export function WorkspacePage() {
                       </div>
                     )}
                     {effectiveApprovalState === "success" && (
-                      <ApprovalChain
-                        gate={workspace.approvals}
-                        details={workspace.approvalDetails}
-                        stages={workspace.approvalStages}
-                        approvingRole={approveBusyRole}
-                        onApprove={(role) => {
-                          void approveRole(role);
-                        }}
-                        workflow={workspace.approvalWorkflow}
-                        approvingGroupId={approvingGroupId}
-                        onApproveGroup={handleApproveGroup}
-                        onRejectGroup={handleRejectGroup}
-                        currentUserId={currentUserId}
-                        onMerge={() => {
-                          void mergeCurrentProposal();
-                        }}
-                        canMerge={hasActiveProposal && mergeReady && !mergeBusy}
-                        mergeLabel={
-                          mergeBusy
-                            ? "Merging..."
-                            : !hasActiveProposal
-                              ? "⊘ Start proposal"
-                              : undefined
-                        }
-                      />
+                      !workspace.approvalWorkflow || workspace.approvalWorkflow.groups.length === 0 ? (
+                        <div className="cm-approval-fallback">
+                          <p>Document owner approval required by default. Customize the approval workflow to add reviewers.</p>
+                          <button
+                            className="cm-compose-send"
+                            type="button"
+                            onClick={() => setShowApprovalRules(true)}
+                          >
+                            Set up approval rules
+                          </button>
+                          <button
+                            className={`cm-merge-btn ${mergeReady ? "" : "disabled"}`}
+                            type="button"
+                            disabled={!mergeReady || mergeBusy}
+                            onClick={mergeReady ? () => void mergeCurrentProposal() : undefined}
+                          >
+                            {mergeBusy ? "Merging..." : mergeReady ? "Ready to merge" : `Awaiting ${openThreads} open thread resolutions`}
+                          </button>
+                        </div>
+                      ) : (
+                        <ApprovalChain
+                          gate={workspace.approvals}
+                          details={workspace.approvalDetails}
+                          stages={workspace.approvalStages}
+                          approvingRole={approveBusyRole}
+                          onApprove={(role) => {
+                            void approveRole(role);
+                          }}
+                          workflow={workspace.approvalWorkflow}
+                          approvingGroupId={approvingGroupId}
+                          onApproveGroup={handleApproveGroup}
+                          onRejectGroup={handleRejectGroup}
+                          currentUserId={currentUserId}
+                          onMerge={() => {
+                            void mergeCurrentProposal();
+                          }}
+                          canMerge={hasActiveProposal && mergeReady && !mergeBusy}
+                          mergeLabel={
+                            mergeBusy
+                              ? "Merging..."
+                              : !hasActiveProposal
+                                ? "⊘ Start proposal"
+                                : undefined
+                          }
+                        />
+                      )
                     )}
                   </div>
                 </div>
@@ -3231,6 +3307,37 @@ export function WorkspacePage() {
         isOpen={shareDialogOpen}
         onClose={() => setShareDialogOpen(false)}
       />
+
+      {/* Proposal Picker Dialog */}
+      <Dialog isOpen={proposalPickerOpen} onClose={() => setProposalPickerOpen(false)} title="Open Proposals" size="medium">
+        <div className="cm-proposal-picker">
+          <p className="cm-proposal-picker-intro">
+            This document has existing open proposals. You can continue working on one, or start a new proposal.
+          </p>
+          <div className="cm-proposal-picker-list">
+            {existingProposals.map((p) => (
+              <button
+                key={p.id}
+                className="cm-proposal-picker-item"
+                type="button"
+                onClick={() => void handlePickExistingProposal()}
+              >
+                <span className="cm-proposal-picker-title">{p.title}</span>
+                <span className="cm-proposal-picker-meta">
+                  by {p.createdBy} · {p.status.toLowerCase()} · {new Date(p.createdAt).toLocaleDateString()}
+                </span>
+              </button>
+            ))}
+          </div>
+          <button
+            className="cm-compose-send"
+            type="button"
+            onClick={() => void handleCreateNewProposal()}
+          >
+            Create New Proposal
+          </button>
+        </div>
+      </Dialog>
 
       {/* Space Permissions Dialog */}
       {activeSpaceForPermissions && (

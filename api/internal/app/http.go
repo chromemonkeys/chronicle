@@ -786,6 +786,17 @@ func (s *HTTPServer) handleDocuments(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 
+	if len(parts) == 4 && parts[3] == "proposals" && r.Method == http.MethodGet {
+		proposals, err := s.service.ListOpenProposals(r.Context(), documentID)
+		if err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"proposals": proposals})
+		return
+	}
+
 	if len(parts) == 4 && parts[3] == "proposals" && r.Method == http.MethodPost {
 		if !s.service.Can(session.Role, rbac.ActionWrite) {
 			writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)

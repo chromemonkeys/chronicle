@@ -241,6 +241,38 @@ func (s *PostgresStore) GetActiveProposal(ctx context.Context, documentID string
 	return &item, nil
 }
 
+func (s *PostgresStore) ListOpenProposals(ctx context.Context, documentID string) ([]Proposal, error) {
+	const query = `
+		SELECT id, document_id, title, status, branch_name, target_branch, created_by_name, created_at
+		FROM proposals
+		WHERE document_id=$1 AND status IN ('DRAFT', 'UNDER_REVIEW')
+		ORDER BY created_at DESC
+	`
+	rows, err := s.db.QueryContext(ctx, query, documentID)
+	if err != nil {
+		return nil, fmt.Errorf("list open proposals: %w", err)
+	}
+	defer rows.Close()
+	var proposals []Proposal
+	for rows.Next() {
+		var item Proposal
+		if err := rows.Scan(
+			&item.ID,
+			&item.DocumentID,
+			&item.Title,
+			&item.Status,
+			&item.BranchName,
+			&item.TargetBranch,
+			&item.CreatedBy,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("list open proposals scan: %w", err)
+		}
+		proposals = append(proposals, item)
+	}
+	return proposals, rows.Err()
+}
+
 func (s *PostgresStore) GetProposal(ctx context.Context, proposalID string) (Proposal, error) {
 	var item Proposal
 	err := s.db.QueryRowContext(ctx, `

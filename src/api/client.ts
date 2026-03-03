@@ -441,6 +441,12 @@ export async function updateSpace(
   });
 }
 
+export async function deleteSpace(spaceId: string) {
+  return apiRequest<{ ok: boolean }>(`/api/spaces/${spaceId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function renameDocument(documentId: string, title: string) {
   return apiRequest<{ document: DocumentSummary }>(`/api/documents/${documentId}`, {
     method: "PUT",
@@ -528,6 +534,12 @@ export async function requestProposalReview(documentId: string, proposalId: stri
   return apiRequest<WorkspacePayload>(`/api/documents/${documentId}/proposals/${proposalId}/submit`, {
     method: "POST"
   });
+}
+
+export async function fetchOpenProposals(documentId: string) {
+  return apiRequest<{ proposals: import("./types").OpenProposalSummary[] }>(
+    `/api/documents/${documentId}/proposals`
+  ).then((r) => r.proposals ?? []);
 }
 
 export async function createProposal(documentId: string, title?: string) {

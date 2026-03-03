@@ -7,12 +7,7 @@ import type {
   MergeGateRole,
 } from "../api/types";
 
-// ─── Legacy gate entries for V1 fallback ────────────────────────────────
-const gateEntries: { key: MergeGateRole; label: string; role: string }[] = [
-  { key: "security", label: "Security", role: "Security Review" },
-  { key: "architectureCommittee", label: "Architecture Committee", role: "Required approver" },
-  { key: "legal", label: "Legal", role: "Required approver" },
-];
+// V1 gate entries removed — approval groups are now configured dynamically via V2 workflow.
 
 type Props = {
   // V1 legacy props (backward compatible)
@@ -231,11 +226,11 @@ function ApprovalGroupRow({
 
 // ─── Main Component ─────────────────────────────────────────────────────
 export function ApprovalChain({
-  gate,
-  details,
-  stages,
-  approvingRole = null,
-  onApprove,
+  gate: _gate,
+  details: _details,
+  stages: _stages,
+  approvingRole: _approvingRole = null,
+  onApprove: _onApprove,
   workflow,
   approvingGroupId,
   onApproveGroup,
@@ -263,65 +258,17 @@ export function ApprovalChain({
     );
   }
 
-  // V1 legacy fallback
-  const total = gateEntries.length;
-  const approvedCount = gateEntries.filter((entry) => gate[entry.key] === "Approved").length;
-  const pendingCount = total - approvedCount;
-  const allApproved = pendingCount === 0;
-  const mergeEnabled = canMerge ?? allApproved;
-  const mergeText =
-    mergeLabel ??
-    (!allApproved
-      ? `Awaiting ${pendingCount} approvals`
-      : mergeEnabled
-        ? "Ready to merge"
-        : "Resolve open threads");
-  const roleToStage = new Map<MergeGateRole, ApprovalStage>();
-  for (const stage of stages ?? []) {
-    for (const role of stage.roles) {
-      roleToStage.set(role, stage);
-    }
-  }
-
-  function roleBlocked(role: MergeGateRole) {
-    const stage = roleToStage.get(role);
-    if (!stage?.dependsOn) return false;
-    const dependencyStage = (stages ?? []).find((item) => item.id === stage.dependsOn);
-    if (!dependencyStage) return false;
-    return dependencyStage.roles.some((depRole) => gate[depRole] !== "Approved");
-  }
+  // V1 legacy fallback — no approval groups configured
+  const mergeEnabled = canMerge ?? false;
+  const mergeText = mergeLabel ?? (mergeEnabled ? "Ready to merge" : "Resolve open threads");
 
   return (
     <div className={className}>
-      {gateEntries.map((entry) => (
-        <div className="cm-approver-row" key={entry.key}>
-          <div className="cm-approver-status">{gate[entry.key] === "Approved" ? "✅" : "⏳"}</div>
-          <div>
-            <div className="cm-approver-name">{entry.label}</div>
-            <div className="cm-approver-role">
-              {entry.role}
-              {roleBlocked(entry.key) ? " · waiting on prior stage" : ""}
-            </div>
-          </div>
-          <div className="cm-approver-time">
-            {gate[entry.key] === "Approved"
-              ? `${details?.[entry.key]?.approvedBy ?? "approved"}`
-              : roleBlocked(entry.key)
-                ? "blocked"
-                : "pending"}
-          </div>
-          {gate[entry.key] !== "Approved" && onApprove ? (
-            <button
-              className="cm-thread-action-btn"
-              type="button"
-              disabled={approvingRole === entry.key || roleBlocked(entry.key)}
-              onClick={() => onApprove(entry.key)}
-            >
-              {roleBlocked(entry.key) ? "Blocked" : approvingRole === entry.key ? "Approving..." : "Approve"}
-            </button>
-          ) : null}
-        </div>
-      ))}
+      <div className="cm-approval-fallback" style={{ padding: "12px" }}>
+        <p style={{ margin: "0 0 8px", fontSize: "0.85rem", color: "var(--ink-3, #888)" }}>
+          No approval groups configured.
+        </p>
+      </div>
       <button
         className={`cm-merge-btn ${mergeEnabled ? "" : "disabled"}`}
         type="button"

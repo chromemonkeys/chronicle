@@ -2,7 +2,7 @@ node_modules/
 dist/
 test-results/
 .env
-
+chronicle-prod.pem
 # TypeScript build info
 *.tsbuildinfo
 

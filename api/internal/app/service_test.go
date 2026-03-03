@@ -36,6 +36,7 @@ type fakeStore struct {
 	listThreadReactionCountsFn func(context.Context, string, bool) ([]store.ThreadReactionCount, error)
 	getDocumentFn              func(context.Context, string) (store.Document, error)
 	getActiveProposalFn        func(context.Context, string) (*store.Proposal, error)
+	listOpenProposalsFn        func(context.Context, string) ([]store.Proposal, error)
 	listApprovalsAllFn         func(context.Context, string) ([]store.Approval, error)
 	summaryCountsFn            func(context.Context) (int, int, int, error)
 	listDecisionLogFilteredFn  func(context.Context, string, string, string, string, string, int) ([]store.DecisionLogEntry, error)
@@ -100,6 +101,12 @@ func (f *fakeStore) GetUserByID(ctx context.Context, userID string) (store.User,
 func (f *fakeStore) GetActiveProposal(ctx context.Context, documentID string) (*store.Proposal, error) {
 	if f.getActiveProposalFn != nil {
 		return f.getActiveProposalFn(ctx, documentID)
+	}
+	return nil, nil
+}
+func (f *fakeStore) ListOpenProposals(ctx context.Context, documentID string) ([]store.Proposal, error) {
+	if f.listOpenProposalsFn != nil {
+		return f.listOpenProposalsFn(ctx, documentID)
 	}
 	return nil, nil
 }

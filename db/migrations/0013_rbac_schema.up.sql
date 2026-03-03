@@ -7,7 +7,7 @@
 
 -- Add guest/external user fields
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_external BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS external_space_id UUID REFERENCES spaces(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS external_space_id TEXT REFERENCES spaces(id);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS external_expires_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS scim_external_id TEXT;
 
@@ -30,7 +30,7 @@ CREATE INDEX IF NOT EXISTS idx_users_scim ON users (scim_external_id) WHERE scim
 
 CREATE TABLE IF NOT EXISTS groups (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     description TEXT,
     scim_external_id TEXT,
@@ -75,8 +75,8 @@ CREATE INDEX IF NOT EXISTS idx_group_memberships_user ON group_memberships (user
 
 CREATE TABLE IF NOT EXISTS permissions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+
     -- Subject (who): can be a user or a group
     subject_type TEXT NOT NULL CHECK (subject_type IN ('user', 'group')),
     subject_id UUID NOT NULL,
@@ -241,14 +241,12 @@ CREATE TRIGGER trg_refresh_effective_permissions_groups
 ALTER TABLE threads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE annotations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE branches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE decision_log ENABLE ROW LEVEL SECURITY;
 
 -- Drop existing policies if any
 DROP POLICY IF EXISTS threads_visibility ON threads;
 DROP POLICY IF EXISTS documents_access ON documents;
 DROP POLICY IF EXISTS annotations_access ON annotations;
-DROP POLICY IF EXISTS branches_access ON branches;
 DROP POLICY IF EXISTS decision_log_access ON decision_log;
 
 -- Thread visibility policy: external users never see INTERNAL threads
@@ -266,11 +264,6 @@ CREATE POLICY documents_access ON documents
 
 -- Annotations access policy
 CREATE POLICY annotations_access ON annotations
-    FOR SELECT
-    USING (true);  -- Application enforces
-
--- Branches access policy
-CREATE POLICY branches_access ON branches
     FOR SELECT
     USING (true);  -- Application enforces
 
@@ -295,8 +288,8 @@ INSERT INTO permissions (
     granted_at,
     expires_at
 )
-SELECT 
-    d.workspace_id,
+SELECT
+    s.workspace_id,
     'user' AS subject_type,
     dp.user_id AS subject_id,
     'document' AS resource_type,
@@ -307,9 +300,10 @@ SELECT
     dp.expires_at
 FROM document_permissions dp
 JOIN documents d ON dp.document_id = d.id
+JOIN spaces s ON d.space_id = s.id
 WHERE dp.expires_at IS NULL OR dp.expires_at > NOW()
-ON CONFLICT (workspace_id, subject_type, subject_id, resource_type, resource_id) 
-DO UPDATE SET 
+ON CONFLICT (workspace_id, subject_type, subject_id, resource_type, resource_id)
+DO UPDATE SET
     role = EXCLUDED.role,
     granted_at = EXCLUDED.granted_at,
     expires_at = EXCLUDED.expires_at;
