@@ -1,4 +1,4 @@
-:8080 {
+{$CHRONICLE_DOMAIN::8080} {
   encode gzip zstd
 
   @api path /api* /health /ready

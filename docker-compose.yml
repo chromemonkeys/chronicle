@@ -177,6 +177,8 @@ services:
       - "8080:8080"
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
       interval: 10s
@@ -189,3 +191,5 @@ volumes:
   meili_data:
   minio_data:
   repos_data:
+  caddy_data:
+  caddy_config:
