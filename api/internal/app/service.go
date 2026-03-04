@@ -1720,6 +1720,20 @@ func (s *Service) MergeProposal(ctx context.Context, documentID, proposalID, use
 	pendingApprovals, _ := details["pendingApprovals"].(int)
 	openThreads, _ := details["openThreads"].(int)
 	changeBlockers, _ := details["changeBlockers"].(int)
+
+	// If a V2 approval workflow exists and is fully approved, ignore legacy approval count
+	if pendingApprovals > 0 {
+		groups, gErr := s.store.ListApprovalGroups(ctx, documentID)
+		if gErr == nil && len(groups) > 0 {
+			workflow, wErr := s.GetApprovalWorkflow(ctx, documentID, proposalID, userName)
+			if wErr == nil && workflow != nil {
+				if allApproved, ok := workflow["allApproved"].(bool); ok && allApproved {
+					pendingApprovals = 0
+				}
+			}
+		}
+	}
+
 	if pendingApprovals > 0 || openThreads > 0 || changeBlockers > 0 {
 		return nil, details, nil
 	}
