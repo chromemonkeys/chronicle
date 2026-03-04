@@ -20,6 +20,7 @@ type Props = {
   onCreateDocument?: (folderId?: string) => void;
   onMoveDocument?: (documentId: string, targetFolderId: string) => void;
   onRenameDocument?: (documentId: string, newTitle: string) => void;
+  onDeleteDocument?: (documentId: string) => void;
   onManageSpacePermissions?: (spaceId: string) => void;
   className?: string;
   emptyMessage?: string;
@@ -277,6 +278,7 @@ export function DocumentTree({
   onCreateDocument,
   onMoveDocument,
   onRenameDocument,
+  onDeleteDocument,
   onManageSpacePermissions,
   className = "",
   emptyMessage = "No documents in this section.",
@@ -550,6 +552,21 @@ export function DocumentTree({
                     <span>{folder.icon}</span> {folder.label}
                   </button>
                 ))}
+              {onDeleteDocument && (
+                <>
+                  <div className="cm-context-divider" />
+                  <button
+                    className="cm-context-item cm-context-item-danger"
+                    onClick={() => {
+                      onDeleteDocument(contextMenu.itemId);
+                      handleCloseContextMenu();
+                    }}
+                    type="button"
+                  >
+                    <span>🗑</span> Delete
+                  </button>
+                </>
+              )}
             </>
           )}
         </div>

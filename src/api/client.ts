@@ -72,6 +72,7 @@ export type ApiErrorCode =
   | "VALIDATION_ERROR"
   | "APPROVAL_ORDER_BLOCKED"
   | "MERGE_GATE_BLOCKED"
+  | "HAS_OPEN_PROPOSALS"
   | "INVALID_BODY"
   | "NETWORK_ERROR"
   | "SERVER_ERROR"
@@ -135,6 +136,9 @@ export function mapErrorMessage(code: ApiErrorCode, fallback: string, path: stri
   if (code === "MERGE_GATE_BLOCKED") {
     return "Merge is blocked until approvals and thread resolution are complete.";
   }
+  if (code === "HAS_OPEN_PROPOSALS") {
+    return "Cannot delete a document with open proposals. Close or merge all proposals first.";
+  }
   if (path === "/api/spaces" && isInternalRouteError(fallback)) {
     return "Could not create space. Please retry or cancel.";
   }
@@ -155,6 +159,7 @@ export function parseApiErrorCode(value: unknown): ApiErrorCode | null {
     case "VALIDATION_ERROR":
     case "APPROVAL_ORDER_BLOCKED":
     case "MERGE_GATE_BLOCKED":
+    case "HAS_OPEN_PROPOSALS":
     case "INVALID_BODY":
     case "NETWORK_ERROR":
     case "SERVER_ERROR":
@@ -1151,5 +1156,32 @@ export async function adminCreateUser(data: {
   return apiRequest<import("./types").AdminUser>("/api/admin/users", {
     method: "POST",
     body: data,
+  });
+}
+
+// =============================================================================
+// Trash (soft-delete)
+// =============================================================================
+
+export async function deleteDocument(documentId: string): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>(`/api/documents/${documentId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function restoreDocument(documentId: string): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>(`/api/documents/${documentId}/restore`, {
+    method: "POST",
+  });
+}
+
+export async function fetchTrash(): Promise<import("./types").TrashDocument[]> {
+  const data = await apiRequest<{ documents: import("./types").TrashDocument[] }>("/api/trash");
+  return data.documents;
+}
+
+export async function purgeDocument(documentId: string): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>(`/api/documents/${documentId}/purge`, {
+    method: "POST",
   });
 }

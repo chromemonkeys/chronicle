@@ -50,6 +50,7 @@ type Document struct {
 	Path       string
 	UpdatedBy  string
 	UpdatedAt  time.Time
+	DeletedAt  *time.Time
 }
 
 // DocumentTreeNode represents a document in the tree hierarchy

@@ -8,14 +8,18 @@ import {
   connectWorkspaceRealtime,
   createDocument,
   createProposal,
+  deleteDocument,
   fetchOpenProposals,
   createProposalThread,
   fetchAdminUsers,
   fetchDocuments,
   fetchSpaceDocuments,
   fetchDecisionLog,
+  fetchTrash,
   fetchWorkspaces,
+  purgeDocument,
   rejectProposalGroup,
+  restoreDocument,
   saveApprovalRules,
   sendWorkspaceRealtimeUpdate,
   fetchDocumentCompare,
@@ -47,6 +51,7 @@ import type {
   MergeGateRole,
   SaveApprovalRulesRequest,
   Space,
+  TrashDocument,
   TreeItemData,
   WorkspaceContent,
   WorkspacePayload
@@ -88,7 +93,7 @@ type PanelTab = "discussions" | "approvals" | "history" | "decisions" | "changes
 type DiffMode = "split" | "unified";
 type ViewState = "success" | "loading" | "empty" | "error";
 type WorkspaceMode = "proposal" | "review" | "published";
-type SidebarSection = "all" | "open" | "merged" | "decisions";
+type SidebarSection = "all" | "open" | "merged" | "decisions" | "trash";
 type CompareOption = {
   hash: string;
   label: string;
@@ -374,7 +379,7 @@ function normalizeMergeGateBlockers(value: unknown): MergeGateBlockerRow[] {
 export function WorkspacePage() {
   const { docId = "" } = useParams();
   const navigate = useNavigate();
-  const { userId: currentUserId, userName } = useAuth();
+  const { userId: currentUserId, userName, isAdmin } = useAuth();
   const [viewState, setViewState] = useState<ViewState>("loading");
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -437,6 +442,12 @@ export function WorkspacePage() {
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "connected" | "offline">("connecting");
   const [onlineCount, setOnlineCount] = useState(1);
+  // Trash state
+  const [trashDocuments, setTrashDocuments] = useState<TrashDocument[]>([]);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const threadRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const realtimeSocketRef = useRef<WebSocket | null>(null);
   const realtimeSendTimerRef = useRef<number | null>(null);
@@ -829,6 +840,61 @@ export function WorkspacePage() {
     }
   }, [workspace?.document.id, docId, currentSpaceId]);
 
+  // Trash handlers
+  const handleDeleteDocument = useCallback((documentId: string) => {
+    setDeleteError(null);
+    setDeleteConfirmId(documentId);
+  }, []);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteConfirmId) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteDocument(deleteConfirmId);
+      // Refresh document index
+      const docs = currentSpaceId ? await fetchSpaceDocuments(currentSpaceId) : await fetchDocuments();
+      setDocumentIndex(docs);
+      // Navigate away if deleting the active document
+      if (deleteConfirmId === workspace?.document.id) {
+        if (docs.length > 0) {
+          navigate(`/workspace/${docs[0].id}`);
+        } else {
+          navigate("/documents");
+        }
+      }
+      setDeleteConfirmId(null);
+    } catch (error) {
+      const message = isApiError(error) ? error.message : "Failed to delete document";
+      setDeleteError(message);
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleteConfirmId, currentSpaceId, workspace?.document.id, navigate]);
+
+  const handleRestoreDocument = useCallback(async (documentId: string) => {
+    try {
+      await restoreDocument(documentId);
+      setTrashDocuments(prev => prev.filter(d => d.id !== documentId));
+      // Refresh document index
+      const docs = currentSpaceId ? await fetchSpaceDocuments(currentSpaceId) : await fetchDocuments();
+      setDocumentIndex(docs);
+    } catch (error) {
+      const message = isApiError(error) ? error.message : "Failed to restore document";
+      setActionError(message);
+    }
+  }, [currentSpaceId]);
+
+  const handlePurgeDocument = useCallback(async (documentId: string) => {
+    try {
+      await purgeDocument(documentId);
+      setTrashDocuments(prev => prev.filter(d => d.id !== documentId));
+    } catch (error) {
+      const message = isApiError(error) ? error.message : "Failed to permanently delete document";
+      setActionError(message);
+    }
+  }, []);
+
   async function handleTitleSave() {
     const trimmed = titleDraft.trim();
     if (!trimmed || !workspace || trimmed === content.title) {
@@ -872,6 +938,24 @@ export function WorkspacePage() {
       setSidebarSection("open");
     }
   }, [activeTab, sidebarSection]);
+
+  // Fetch trash documents when viewing trash
+  useEffect(() => {
+    if (sidebarSection !== "trash") return;
+    let active = true;
+    setTrashLoading(true);
+    fetchTrash()
+      .then((docs) => {
+        if (active) setTrashDocuments(docs);
+      })
+      .catch(() => {
+        if (active) setTrashDocuments([]);
+      })
+      .finally(() => {
+        if (active) setTrashLoading(false);
+      });
+    return () => { active = false; };
+  }, [sidebarSection]);
 
   useEffect(() => {
     if ((activeTab !== "history" && activeTab !== "branches") || !workspace) {
@@ -2335,8 +2419,22 @@ export function WorkspacePage() {
             >
               Decision Log
             </button>
+            {isAdmin && (
+              <button
+                className={`cm-sidebar-item ${sidebarSection === "trash" ? "active" : ""}`.trim()}
+                type="button"
+                onClick={() => {
+                  setSidebarSection("trash");
+                  if (activeTab === "decisions") {
+                    setActiveTab("discussions");
+                  }
+                }}
+              >
+                Trash
+              </button>
+            )}
           </div>
-          {sidebarSection !== "decisions" && (
+          {sidebarSection !== "decisions" && sidebarSection !== "trash" && (
             <>
               {documentIndexState === "loading" && <div className="cm-sidebar-hint">Loading documents...</div>}
               {documentIndexState === "error" && <div className="cm-sidebar-hint">Could not load document list.</div>}
@@ -2352,6 +2450,7 @@ export function WorkspacePage() {
                   onCreateDocument={handleCreateDocument}
                   onMoveDocument={handleMoveDocument}
                   onRenameDocument={handleRenameDocument}
+                  onDeleteDocument={isAdmin ? handleDeleteDocument : undefined}
                   onManageSpacePermissions={(spaceId) => {
                     const space = spaces.find(s => s.id === spaceId);
                     if (space) {
@@ -2373,6 +2472,39 @@ export function WorkspacePage() {
             <div className="cm-doc-tree">
               <div className="cm-sidebar-label">Decision Log</div>
               <div className="cm-sidebar-hint">Filter outcomes and rationale from the panel on the right.</div>
+            </div>
+          )}
+          {sidebarSection === "trash" && (
+            <div className="cm-doc-tree">
+              <div className="cm-sidebar-label">Trash</div>
+              {trashLoading && <div className="cm-sidebar-hint">Loading...</div>}
+              {!trashLoading && trashDocuments.length === 0 && (
+                <div className="cm-sidebar-hint">Trash is empty.</div>
+              )}
+              {!trashLoading && trashDocuments.map((doc) => (
+                <div key={doc.id} className="cm-trash-item">
+                  <div className="cm-trash-title">{doc.title}</div>
+                  <div className="cm-trash-date">
+                    Deleted {new Date(doc.deletedAt).toLocaleDateString()}
+                  </div>
+                  <div className="cm-trash-actions">
+                    <button
+                      className="cm-trash-restore"
+                      type="button"
+                      onClick={() => handleRestoreDocument(doc.id)}
+                    >
+                      Restore
+                    </button>
+                    <button
+                      className="cm-trash-purge"
+                      type="button"
+                      onClick={() => handlePurgeDocument(doc.id)}
+                    >
+                      Delete forever
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </aside>
@@ -3347,6 +3479,39 @@ export function WorkspacePage() {
           onClose={() => setActiveSpaceForPermissions(null)}
         />
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        isOpen={deleteConfirmId !== null}
+        onClose={() => { setDeleteConfirmId(null); setDeleteError(null); }}
+        title="Delete document"
+        size="small"
+      >
+        <p style={{ margin: "0 0 16px", color: "var(--ink-2)" }}>
+          This document will be moved to Trash. You can restore it later or delete it permanently.
+        </p>
+        {deleteError && (
+          <p style={{ margin: "0 0 12px", color: "var(--red)", fontSize: "13px" }}>{deleteError}</p>
+        )}
+        <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+          <button
+            className="cm-btn"
+            type="button"
+            onClick={() => { setDeleteConfirmId(null); setDeleteError(null); }}
+            disabled={deleting}
+          >
+            Cancel
+          </button>
+          <button
+            className="cm-btn cm-btn-danger"
+            type="button"
+            onClick={handleConfirmDelete}
+            disabled={deleting}
+          >
+            {deleting ? "Deleting..." : "Delete"}
+          </button>
+        </div>
+      </Dialog>
     </div>
   );
 }

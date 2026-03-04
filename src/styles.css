@@ -8345,3 +8345,106 @@ button:focus-visible {
   font-size: 0.75rem;
   color: var(--ink-4, #aaa);
 }
+
+/* =============================================================================
+   Context Menu — Divider & Danger Item
+   ============================================================================= */
+
+.cm-context-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.cm-context-item-danger {
+  color: var(--red);
+}
+.cm-context-item-danger:hover {
+  background: var(--red-soft);
+}
+
+/* =============================================================================
+   Trash List
+   ============================================================================= */
+
+.cm-trash-item {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.cm-trash-item:last-child {
+  border-bottom: none;
+}
+.cm-trash-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-trash-date {
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-bottom: 6px;
+}
+.cm-trash-actions {
+  display: flex;
+  gap: 6px;
+}
+.cm-trash-restore,
+.cm-trash-purge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--paper);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.cm-trash-restore {
+  color: var(--green);
+}
+.cm-trash-restore:hover {
+  background: var(--green-soft);
+}
+.cm-trash-purge {
+  color: var(--red);
+}
+.cm-trash-purge:hover {
+  background: var(--red-soft);
+}
+
+/* =============================================================================
+   Button Styles (Dialog)
+   ============================================================================= */
+
+.cm-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--paper);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.cm-btn:hover {
+  background: var(--paper-2);
+}
+.cm-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.cm-btn-danger {
+  background: var(--red);
+  color: white;
+  border-color: var(--red);
+}
+.cm-btn-danger:hover {
+  background: #992e2e;
+}
+.cm-btn-danger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

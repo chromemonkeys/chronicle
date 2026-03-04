@@ -1,6 +1,6 @@
 # Chronicle Architecture Model
 
-> **Last Updated:** 2026-03-03 (Removed Blame tab and /api/documents/{id}/blame endpoint; contributor attribution now derived from commit history within History tab)
+> **Last Updated:** 2026-03-04 (Added soft-delete/trash for documents: DELETE /api/documents/{id}, POST restore/purge, GET /api/trash; added deleted_at column to documents table)
 > **Version:** 1.0  
 > **Status:** Canonical reference for system architecture
 
@@ -143,7 +143,7 @@ Stores all operational metadata. **Never stores document content** (that lives i
 | Identity | `users` *(deactivated_at)*, `workspace_memberships`, `email_verifications`, `password_resets` |
 | Permissions | `permissions` *(unified space+document)*, `document_permissions` *(RBAC-102)*, `permission_denials` *(RBAC-101 audit)* |
 | Groups | `groups`, `group_memberships` |
-| Documents | `workspaces`, `spaces` *(visibility column)*, `documents`, `document_versions` |
+| Documents | `workspaces`, `spaces` *(visibility column)*, `documents` *(deleted_at for soft-delete)*, `document_versions` |
 | Version Control | `branches`, `branch_approvals` |
 | Deliberation | `threads`, `annotations`, `decision_log` |
 | Audit | `audit_log`, `permission_denials` |
@@ -454,6 +454,8 @@ When making structural changes, update this document:
 - [x] **New API endpoint pattern?** → Extended `PUT /api/spaces/{id}` to accept `visibility` field; all space list/detail responses now include `visibility`
 - [x] **New API endpoint pattern?** → Added `GET /api/documents/{id}/share/search?q=...` for user/group search in ShareDialog; extended `POST /api/documents/{id}/permissions` to accept `subjectType`+`subjectId` for direct group/user grants
 - [x] **New API endpoint pattern?** → Added `PUT /api/documents/{id}` for renaming documents (title update via sidebar context menu)
+- [x] **New API endpoint pattern?** → Added trash/soft-delete endpoints: `DELETE /api/documents/{id}` (soft delete), `POST /api/documents/{id}/restore`, `POST /api/documents/{id}/purge`, `GET /api/trash` (all admin-only)
+- [x] **New database table?** → Added `deleted_at` column to `documents` table (migration 0022) with partial index for trash listing
 - [x] **New service added?** → Added `internal/storage` package (MinIO/S3 client for image uploads)
 - [x] **New API endpoint pattern?** → Added `POST /api/documents/{id}/uploads` (image upload) and `GET /api/uploads/{key}` (serve uploaded files)
 - [x] **Deployment changed?** → Added S3 environment variables to docker-compose API service; API now depends on MinIO service

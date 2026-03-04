@@ -296,6 +296,21 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Trash listing (admin only)
+	if r.Method == http.MethodGet && r.URL.Path == "/api/trash" {
+		if !s.service.Can(session.Role, rbac.ActionAdmin) {
+			s.forbid(w, r, session, "admin")
+			return
+		}
+		items, err := s.service.ListTrash(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "SERVER_ERROR", "Could not list trash", nil)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"documents": items})
+		return
+	}
+
 	if r.Method == http.MethodPost && r.URL.Path == "/api/documents" {
 		if !s.service.Can(session.Role, rbac.ActionWrite) {
 			writeError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
@@ -652,6 +667,51 @@ func (s *HTTPServer) handleDocuments(w http.ResponseWriter, r *http.Request, ses
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"document": summary})
+		return
+	}
+
+	// Soft-delete document (admin only)
+	if len(parts) == 3 && r.Method == http.MethodDelete {
+		if !s.service.Can(session.Role, rbac.ActionAdmin) {
+			s.forbid(w, r, session, "admin")
+			return
+		}
+		if err := s.service.SoftDeleteDocument(r.Context(), documentID); err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+
+	// Restore document from trash (admin only)
+	if len(parts) == 4 && parts[3] == "restore" && r.Method == http.MethodPost {
+		if !s.service.Can(session.Role, rbac.ActionAdmin) {
+			s.forbid(w, r, session, "admin")
+			return
+		}
+		if err := s.service.RestoreDocument(r.Context(), documentID); err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+
+	// Permanently delete document (admin only, must already be in trash)
+	if len(parts) == 4 && parts[3] == "purge" && r.Method == http.MethodPost {
+		if !s.service.Can(session.Role, rbac.ActionAdmin) {
+			s.forbid(w, r, session, "admin")
+			return
+		}
+		if err := s.service.PurgeDocument(r.Context(), documentID); err != nil {
+			status, code, message, details := mapError(err)
+			writeError(w, status, code, message, details)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
 
@@ -1341,15 +1401,23 @@ func (s *HTTPServer) handleAuthSignUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if email service is configured for dev bypass
-	emailConfigured := s.service.SMTPConfigured()
-
 	response := map[string]any{
-		"userId":  resp.UserID,
-		"message": "Please check your email to verify your account",
+		"userId": resp.UserID,
 	}
-	// Dev bypass: include verification token in response when email not configured
-	if !emailConfigured {
+
+	// Send verification email if SMTP is configured, otherwise dev bypass
+	if emailSvc := s.service.EmailService(); emailSvc != nil {
+		verifyURL := fmt.Sprintf("%s/verify-email?token=%s", s.service.frontendURL(), resp.VerificationToken)
+		if err := emailSvc.SendVerificationEmail(body.Email, body.DisplayName, verifyURL); err != nil {
+			log.Printf("ERROR: failed to send verification email to %s: %v", body.Email, err)
+			// Account was created but email failed — still return success with a warning
+			response["message"] = "Account created but verification email failed to send. Please contact support."
+			response["emailError"] = true
+		} else {
+			response["message"] = "Please check your email to verify your account."
+		}
+	} else {
+		// Dev bypass: include verification token in response when email not configured
 		response["devVerificationToken"] = resp.VerificationToken
 		response["message"] = "Account created. Verify your email to continue."
 	}
@@ -1446,14 +1514,22 @@ func (s *HTTPServer) handleAuthRequestReset(w http.ResponseWriter, r *http.Reque
 
 	token, _ := authSvc.RequestPasswordReset(r.Context(), body.Email)
 
-	// Check if email service is configured for dev bypass
-	emailConfigured := s.service.SMTPConfigured()
-
 	response := map[string]any{
 		"message": "If an account exists, a reset email has been sent",
 	}
-	// Dev bypass: include reset token in response when email not configured and token was created
-	if !emailConfigured && token != "" {
+
+	if emailSvc := s.service.EmailService(); emailSvc != nil && token != "" {
+		// Look up user display name for the email template
+		userName := "User"
+		if user, err := s.service.GetUserByEmail(r.Context(), body.Email); err == nil {
+			userName = user.DisplayName
+		}
+		resetURL := fmt.Sprintf("%s/reset-password?token=%s", s.service.frontendURL(), token)
+		if err := emailSvc.SendPasswordResetEmail(body.Email, userName, resetURL); err != nil {
+			log.Printf("ERROR: failed to send password reset email to %s: %v", body.Email, err)
+		}
+	} else if token != "" {
+		// Dev bypass: include reset token in response when email not configured
 		response["devResetToken"] = token
 	}
 

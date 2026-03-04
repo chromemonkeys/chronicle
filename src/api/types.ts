@@ -591,3 +591,13 @@ export type CreateSpaceRequest = {
   visibility?: SpaceVisibility;
   initialPermissions?: InitialPermission[];
 };
+
+// Trash (soft-deleted documents)
+export type TrashDocument = {
+  id: string;
+  title: string;
+  spaceId: string;
+  status: DocumentStatus;
+  updatedBy: string;
+  deletedAt: string;
+};

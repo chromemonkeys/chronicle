@@ -18,6 +18,7 @@ import (
 	"chronicle/api/internal/auth"
 	"chronicle/api/internal/authpw"
 	"chronicle/api/internal/config"
+	"chronicle/api/internal/email"
 	"chronicle/api/internal/export"
 	"chronicle/api/internal/gitrepo"
 	"chronicle/api/internal/rbac"
@@ -214,6 +215,11 @@ type dataStore interface {
 	// Space creation with permissions
 	CreateSpaceWithPermissions(ctx context.Context, space store.Space, permissions []store.Permission) error
 	CountSlugsWithPrefix(ctx context.Context, workspaceID, baseSlug string) (int, error)
+	// Document soft-delete (trash)
+	SoftDeleteDocument(context.Context, string) error
+	RestoreDocument(context.Context, string) error
+	ListDeletedDocuments(context.Context) ([]store.Document, error)
+	PurgeDocument(context.Context, string) error
 	// Approval workflow V2
 	ListApprovalGroups(context.Context, string) ([]store.ApprovalGroup, error)
 	ListApprovalGroupMembers(context.Context, string) ([]store.ApprovalGroupMember, error)
@@ -254,6 +260,7 @@ type Service struct {
 	search         *search.Service
 	export         *export.Service
 	authPw         *authpw.Service
+	emailSvc       *email.Service
 	objectStore    *storage.Client
 	syncSessionTTL time.Duration
 	syncMu         sync.Mutex
@@ -269,6 +276,22 @@ func NewWithSessionStore(cfg config.Config, dataStore *store.PostgresStore, sess
 	// Initialize auth service (uses JWT secret for token generation)
 	authPwService := authpw.NewService(dataStore, cfg.JWTSecret)
 
+	// Initialize email service if SMTP is configured
+	var emailService *email.Service
+	if cfg.SMTPHost != "" && cfg.SMTPUsername != "" && cfg.SMTPPassword != "" {
+		emailService = email.NewService(email.Config{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			From:     cfg.SMTPFrom,
+			FromName: cfg.SMTPFromName,
+		})
+		log.Printf("Email service configured (SMTP host: %s)", cfg.SMTPHost)
+	} else {
+		log.Printf("Email service not configured — verification tokens will be returned in API responses (dev mode)")
+	}
+
 	return &Service{
 		cfg:            cfg,
 		store:          dataStore,
@@ -277,6 +300,7 @@ func NewWithSessionStore(cfg config.Config, dataStore *store.PostgresStore, sess
 		search:         searchService,
 		export:         export.NewService(&exportStoreAdapter{store: dataStore, git: gitService}),
 		authPw:         authPwService,
+		emailSvc:       emailService,
 		syncSessionTTL: 15 * time.Minute,
 		syncSessions:   make(map[string]syncSessionRecord),
 	}
@@ -2661,6 +2685,74 @@ func (s *Service) MoveDocument(ctx context.Context, documentID, newSpaceID strin
 	return map[string]any{"ok": true, "documentId": documentID, "spaceId": newSpaceID}, nil
 }
 
+// =============================================================================
+// Document Soft-Delete (Trash)
+// =============================================================================
+
+func (s *Service) SoftDeleteDocument(ctx context.Context, documentID string) error {
+	// Check for open proposals — block deletion if any exist
+	proposals, err := s.store.ListOpenProposals(ctx, documentID)
+	if err != nil {
+		return err
+	}
+	if len(proposals) > 0 {
+		return domainError(http.StatusConflict, "HAS_OPEN_PROPOSALS", "Cannot delete a document with open proposals. Close or merge all proposals first.", nil)
+	}
+
+	if err := s.store.SoftDeleteDocument(ctx, documentID); err != nil {
+		return err
+	}
+
+	// Remove from search index
+	s.search.DeleteDocument(documentID)
+
+	return nil
+}
+
+func (s *Service) RestoreDocument(ctx context.Context, documentID string) error {
+	if err := s.store.RestoreDocument(ctx, documentID); err != nil {
+		return err
+	}
+
+	// Re-index in search (best-effort: fetch document for title/space)
+	doc, err := s.store.GetDocument(ctx, documentID)
+	if err == nil {
+		s.search.IndexDocument(search.DocumentRecord{
+			ID:      doc.ID,
+			Title:   doc.Title,
+			SpaceID: doc.SpaceID,
+		})
+	}
+
+	return nil
+}
+
+func (s *Service) ListTrash(ctx context.Context) ([]map[string]any, error) {
+	docs, err := s.store.ListDeletedDocuments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]map[string]any, 0, len(docs))
+	for _, doc := range docs {
+		item := map[string]any{
+			"id":        doc.ID,
+			"title":     doc.Title,
+			"spaceId":   doc.SpaceID,
+			"status":    doc.Status,
+			"updatedBy": doc.UpdatedBy,
+		}
+		if doc.DeletedAt != nil {
+			item["deletedAt"] = doc.DeletedAt.Format(time.RFC3339)
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (s *Service) PurgeDocument(ctx context.Context, documentID string) error {
+	return s.store.PurgeDocument(ctx, documentID)
+}
+
 // Document Tree Operations
 
 // ListDocumentTree returns hierarchical tree structure for a space
@@ -2798,7 +2890,21 @@ func (s *Service) SyncToken() string {
 
 // SMTPConfigured returns true if SMTP is configured for sending emails
 func (s *Service) SMTPConfigured() bool {
-	return s.cfg.SMTPHost != "" && s.cfg.SMTPUsername != "" && s.cfg.SMTPPassword != ""
+	return s.emailSvc != nil
+}
+
+// EmailService returns the email service (may be nil if SMTP not configured)
+func (s *Service) EmailService() *email.Service {
+	return s.emailSvc
+}
+
+// frontendURL returns the base URL for frontend links (derived from CORS origin)
+func (s *Service) frontendURL() string {
+	origin := s.cfg.CORSOrigin
+	if origin == "" || origin == "*" {
+		return "http://localhost:8080"
+	}
+	return strings.TrimRight(origin, "/")
 }
 
 // Ping checks the health of service dependencies (database, etc.)

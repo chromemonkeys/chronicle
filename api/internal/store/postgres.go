@@ -151,6 +151,7 @@ func (s *PostgresStore) ListDocuments(ctx context.Context) ([]Document, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, title, subtitle, status, space_id, updated_by_name, updated_at
 		FROM documents
+		WHERE deleted_at IS NULL
 		ORDER BY updated_at DESC
 	`)
 	if err != nil {
@@ -177,7 +178,7 @@ func (s *PostgresStore) GetDocument(ctx context.Context, documentID string) (Doc
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, title, subtitle, status, space_id, COALESCE(share_mode, 'space'), updated_by_name, updated_at
 		FROM documents
-		WHERE id=$1
+		WHERE id=$1 AND deleted_at IS NULL
 	`, documentID).Scan(&item.ID, &item.Title, &item.Subtitle, &item.Status, &item.SpaceID, &item.ShareMode, &item.UpdatedBy, &item.UpdatedAt)
 	if err != nil {
 		return Document{}, err
@@ -925,11 +926,11 @@ func (s *PostgresStore) ProposalQueue(ctx context.Context) ([]map[string]any, er
 }
 
 func (s *PostgresStore) SummaryCounts(ctx context.Context) (allDocuments int, openReviews int, merged int, err error) {
-	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents`).Scan(&allDocuments); err != nil {
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents WHERE deleted_at IS NULL`).Scan(&allDocuments); err != nil {
 		err = fmt.Errorf("count all documents: %w", err)
 		return
 	}
-	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents WHERE status='In review'`).Scan(&openReviews); err != nil {
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents WHERE status='In review' AND deleted_at IS NULL`).Scan(&openReviews); err != nil {
 		err = fmt.Errorf("count open reviews: %w", err)
 		return
 	}
@@ -1050,7 +1051,7 @@ func (s *PostgresStore) ListDocumentsBySpace(ctx context.Context, spaceID string
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, title, subtitle, status, space_id, updated_by_name, updated_at
 		FROM documents
-		WHERE space_id=$1
+		WHERE space_id=$1 AND deleted_at IS NULL
 		ORDER BY updated_at DESC
 	`, spaceID)
 	if err != nil {
@@ -1082,7 +1083,7 @@ func (s *PostgresStore) MoveDocument(ctx context.Context, documentID, newSpaceID
 
 func (s *PostgresStore) SpaceDocumentCount(ctx context.Context, spaceID string) (int, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents WHERE space_id=$1`, spaceID).Scan(&count)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents WHERE space_id=$1 AND deleted_at IS NULL`, spaceID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count space documents: %w", err)
 	}
@@ -1096,7 +1097,7 @@ func (s *PostgresStore) ListDocumentTree(ctx context.Context, spaceID string) ([
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, title, subtitle, status, space_id, parent_id, sort_order, path, updated_by_name, updated_at
 		FROM documents
-		WHERE space_id=$1 AND parent_id IS NULL
+		WHERE space_id=$1 AND parent_id IS NULL AND deleted_at IS NULL
 		ORDER BY sort_order, title
 	`, spaceID)
 	if err != nil {
@@ -1124,7 +1125,7 @@ func (s *PostgresStore) ListChildDocuments(ctx context.Context, parentID string)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, title, subtitle, status, space_id, parent_id, sort_order, path, updated_by_name, updated_at
 		FROM documents
-		WHERE parent_id=$1
+		WHERE parent_id=$1 AND deleted_at IS NULL
 		ORDER BY sort_order, title
 	`, parentID)
 	if err != nil {
@@ -2477,6 +2478,66 @@ func (s *PostgresStore) UpsertProposalApproval(ctx context.Context, proposalID, 
 	`, proposalID, groupID, userID, commitHash, status, comment)
 	if err != nil {
 		return fmt.Errorf("upsert proposal approval: %w", err)
+	}
+	return nil
+}
+
+// =============================================================================
+// Document Soft-Delete (Trash)
+// =============================================================================
+
+func (s *PostgresStore) SoftDeleteDocument(ctx context.Context, documentID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE documents SET deleted_at = NOW() WHERE id = $1
+	`, documentID)
+	if err != nil {
+		return fmt.Errorf("soft delete document: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) RestoreDocument(ctx context.Context, documentID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE documents SET deleted_at = NULL WHERE id = $1
+	`, documentID)
+	if err != nil {
+		return fmt.Errorf("restore document: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListDeletedDocuments(ctx context.Context) ([]Document, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, title, subtitle, status, space_id, updated_by_name, updated_at, deleted_at
+		FROM documents
+		WHERE deleted_at IS NOT NULL
+		ORDER BY deleted_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list deleted documents: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Document, 0)
+	for rows.Next() {
+		var item Document
+		if err := rows.Scan(&item.ID, &item.Title, &item.Subtitle, &item.Status, &item.SpaceID, &item.UpdatedBy, &item.UpdatedAt, &item.DeletedAt); err != nil {
+			return nil, fmt.Errorf("scan deleted document: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate deleted documents: %w", err)
+	}
+	return items, nil
+}
+
+func (s *PostgresStore) PurgeDocument(ctx context.Context, documentID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM documents WHERE id = $1 AND deleted_at IS NOT NULL
+	`, documentID)
+	if err != nil {
+		return fmt.Errorf("purge document: %w", err)
 	}
 	return nil
 }
