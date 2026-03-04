@@ -74,9 +74,10 @@ ul {
 }
 
 .shell {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .shell-header {
@@ -809,9 +810,10 @@ label {
   font-family: "DM Sans", sans-serif;
   background: var(--paper);
   color: var(--ink);
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .cm-topnav {
