@@ -2207,7 +2207,10 @@ export function WorkspacePage() {
         ? "error"
         : "success";
   const effectiveApprovalState: ViewState = approvalStateOverride ?? runtimeApprovalState;
-  const mergeReady = hasActiveProposal && pendingApprovals === 0 && openThreads === 0 && runtimeApprovalState === "success";
+  const approvalsOk = workspace.approvalWorkflow
+    ? workspace.approvalWorkflow.allApproved
+    : true;
+  const mergeReady = hasActiveProposal && approvalsOk && openThreads === 0;
   const content = contentDraft ?? workspace.content;
   const workspaceDoc = workspace.doc ?? legacyContentToDoc(workspace.content, workspace.nodeIds);
   const activeDoc = docDraft ?? workspaceDoc;
@@ -2939,7 +2942,7 @@ export function WorkspacePage() {
                             disabled={!mergeReady || mergeBusy}
                             onClick={mergeReady ? () => void mergeCurrentProposal() : undefined}
                           >
-                            {mergeBusy ? "Merging..." : mergeReady ? "Ready to merge" : `Awaiting ${openThreads} open thread resolutions`}
+                            {mergeBusy ? "Merging..." : mergeReady ? "Ready to merge" : openThreads > 0 ? `Resolve ${openThreads} open thread${openThreads > 1 ? "s" : ""}` : pendingApprovals > 0 ? `Awaiting ${pendingApprovals} approval${pendingApprovals > 1 ? "s" : ""}` : "Ready to merge"}
                           </button>
                         </div>
                       ) : (
