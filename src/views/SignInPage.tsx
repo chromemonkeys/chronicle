@@ -54,7 +54,7 @@ export function SignInPage() {
     try {
       await signInWithPassword(trimmedEmail, password);
     } catch (error) {
-      if (isApiError(error) && error.code === "FORBIDDEN" && error.message.includes("verify your email")) {
+      if (isApiError(error) && (error.code === "EMAIL_NOT_VERIFIED" || (error.code === "FORBIDDEN" && error.message.includes("verify your email")))) {
         setShowResendVerification(true);
       }
       setErrorMessage(error instanceof Error ? error.message : "Sign in failed.");

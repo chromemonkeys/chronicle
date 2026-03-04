@@ -70,6 +70,8 @@ export type ApiErrorCode =
   | "FORBIDDEN"
   | "NOT_FOUND"
   | "VALIDATION_ERROR"
+  | "INVALID_CREDENTIALS"
+  | "EMAIL_NOT_VERIFIED"
   | "APPROVAL_ORDER_BLOCKED"
   | "MERGE_GATE_BLOCKED"
   | "HAS_OPEN_PROPOSALS"
@@ -157,6 +159,8 @@ export function parseApiErrorCode(value: unknown): ApiErrorCode | null {
     case "FORBIDDEN":
     case "NOT_FOUND":
     case "VALIDATION_ERROR":
+    case "INVALID_CREDENTIALS":
+    case "EMAIL_NOT_VERIFIED":
     case "APPROVAL_ORDER_BLOCKED":
     case "MERGE_GATE_BLOCKED":
     case "HAS_OPEN_PROPOSALS":
@@ -233,7 +237,8 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}, allowRe
       response.status === 401 &&
       allowRefresh &&
       path !== "/api/session/login" &&
-      path !== "/api/session/refresh"
+      path !== "/api/session/refresh" &&
+      !path.startsWith("/api/auth/")
     ) {
       const refreshed = await tryRefreshSessionToken();
       if (refreshed) {
