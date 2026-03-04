@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
+import { isApiError, resendVerification } from "../api/client";
 import { useAuth } from "../state/AuthProvider";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
@@ -27,6 +28,10 @@ export function SignInPage() {
     message: string;
   } | null>(null);
 
+  // Resend verification state
+  const [showResendVerification, setShowResendVerification] = useState(false);
+  const [resendState, setResendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+
   // Demo/legacy mode (display name only)
   const [demoName, setDemoName] = useState("");
   const [showDemoMode, setShowDemoMode] = useState(false);
@@ -43,10 +48,15 @@ export function SignInPage() {
     setIsSubmitting(true);
     setErrorMessage(null);
     setDevBypassInfo(null);
-    
+    setShowResendVerification(false);
+    setResendState("idle");
+
     try {
       await signInWithPassword(trimmedEmail, password);
     } catch (error) {
+      if (isApiError(error) && error.code === "FORBIDDEN" && error.message.includes("verify your email")) {
+        setShowResendVerification(true);
+      }
       setErrorMessage(error instanceof Error ? error.message : "Sign in failed.");
     } finally {
       setIsSubmitting(false);
@@ -117,6 +127,26 @@ export function SignInPage() {
     }
   }
 
+  async function handleResendVerification() {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail || resendState === "sending") return;
+
+    setResendState("sending");
+    try {
+      const result = await resendVerification(trimmedEmail);
+      setResendState("sent");
+      if (result.devVerificationToken) {
+        setDevBypassInfo({
+          type: "verification",
+          token: result.devVerificationToken,
+          message: "Development mode: Use this token to verify your email:"
+        });
+      }
+    } catch {
+      setResendState("error");
+    }
+  }
+
   if (!isAuthLoading && isAuthenticated) {
     return <Navigate to="/documents" replace />;
   }
@@ -138,6 +168,8 @@ export function SignInPage() {
               setActiveTab("signin");
               setErrorMessage(null);
               setDevBypassInfo(null);
+              setShowResendVerification(false);
+              setResendState("idle");
             }}
           >
             Sign In
@@ -149,6 +181,8 @@ export function SignInPage() {
               setActiveTab("signup");
               setErrorMessage(null);
               setDevBypassInfo(null);
+              setShowResendVerification(false);
+              setResendState("idle");
             }}
           >
             Sign Up
@@ -159,6 +193,22 @@ export function SignInPage() {
         {errorMessage && (
           <div className="auth-error" role="alert">
             {errorMessage}
+            {showResendVerification && (
+              <div style={{ marginTop: 8 }}>
+                <button
+                  type="button"
+                  className="auth-link"
+                  onClick={handleResendVerification}
+                  disabled={resendState === "sending" || resendState === "sent"}
+                  style={{ fontSize: "inherit" }}
+                >
+                  {resendState === "sending" && "Sending..."}
+                  {resendState === "sent" && "Verification email sent!"}
+                  {resendState === "error" && "Retry sending verification email"}
+                  {resendState === "idle" && "Resend verification email"}
+                </button>
+              </div>
+            )}
           </div>
         )}
 

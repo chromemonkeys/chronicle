@@ -24,9 +24,11 @@ type UserStore interface {
 	GetUserByEmail(ctx context.Context, email string) (store.User, error)
 	GetUserByID(ctx context.Context, id string) (store.User, error)
 	CreateUser(ctx context.Context, user store.User) error
+	EnsureWorkspaceMembership(ctx context.Context, userID, role string) error
 	UpdateUserVerificationToken(ctx context.Context, userID, token string, expiresAt time.Time) error
 	VerifyUserEmail(ctx context.Context, token string) error
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
+	VerifyUserEmailByID(ctx context.Context, userID string) error
 	CreatePasswordReset(ctx context.Context, userID, token string, expiresAt time.Time) error
 	GetPasswordReset(ctx context.Context, token string) (string, error)
 	MarkPasswordResetUsed(ctx context.Context, token string) error
@@ -99,6 +101,11 @@ func (s *Service) SignUp(ctx context.Context, req SignUpRequest) (*SignUpRespons
 		return nil, fmt.Errorf("create user: %w", err)
 	}
 
+	// Create workspace membership so the user has a role in the default workspace
+	if err := s.store.EnsureWorkspaceMembership(ctx, user.ID, user.Role); err != nil {
+		return nil, fmt.Errorf("create workspace membership: %w", err)
+	}
+
 	// Set verification expiry (24 hours)
 	expiresAt := time.Now().Add(24 * time.Hour)
 	if err := s.store.UpdateUserVerificationToken(ctx, user.ID, verificationToken, expiresAt); err != nil {
@@ -168,6 +175,33 @@ func (s *Service) VerifyEmail(ctx context.Context, token string) error {
 	return nil
 }
 
+// ResendVerification generates a new verification token for an unverified user.
+// Returns the token (for email sending) or empty string if user not found / already verified.
+func (s *Service) ResendVerification(ctx context.Context, email string) (string, error) {
+	user, err := s.store.GetUserByEmail(ctx, email)
+	if err != nil {
+		// Don't reveal if email exists
+		return "", nil
+	}
+
+	if user.IsEmailVerified {
+		// Already verified — return silently
+		return "", nil
+	}
+
+	token, err := generateToken()
+	if err != nil {
+		return "", fmt.Errorf("generate verification token: %w", err)
+	}
+
+	expiresAt := time.Now().Add(24 * time.Hour)
+	if err := s.store.UpdateUserVerificationToken(ctx, user.ID, token, expiresAt); err != nil {
+		return "", fmt.Errorf("update verification token: %w", err)
+	}
+
+	return token, nil
+}
+
 // RequestPasswordReset creates a password reset token
 func (s *Service) RequestPasswordReset(ctx context.Context, email string) (string, error) {
 	user, err := s.store.GetUserByEmail(ctx, email)
@@ -220,6 +254,11 @@ func (s *Service) ResetPassword(ctx context.Context, req ResetPasswordRequest) e
 	// Update password
 	if err := s.store.UpdateUserPassword(ctx, userID, string(hash)); err != nil {
 		return fmt.Errorf("update password: %w", err)
+	}
+
+	// Also verify email — if a user can reset their password, they own the email
+	if err := s.store.VerifyUserEmailByID(ctx, userID); err != nil {
+		// Log but don't fail - password was reset
 	}
 
 	// Mark token as used

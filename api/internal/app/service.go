@@ -179,6 +179,7 @@ type dataStore interface {
 	CreateUser(context.Context, store.User) error
 	UpdateUserVerificationToken(context.Context, string, string, time.Time) error
 	VerifyUserEmail(context.Context, string) error
+	VerifyUserEmailByID(context.Context, string) error
 	UpdateUserPassword(context.Context, string, string) error
 	CreatePasswordReset(context.Context, string, string, time.Time) error
 	GetPasswordReset(context.Context, string) (string, error)

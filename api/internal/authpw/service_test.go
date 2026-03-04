@@ -74,6 +74,15 @@ func (m *mockUserStore) VerifyUserEmail(ctx context.Context, token string) error
 	return errors.New("invalid token")
 }
 
+func (m *mockUserStore) VerifyUserEmailByID(ctx context.Context, userID string) error {
+	if user, ok := m.users[userID]; ok {
+		user.IsEmailVerified = true
+		m.users[userID] = user
+		return nil
+	}
+	return errors.New("user not found")
+}
+
 func (m *mockUserStore) UpdateUserPassword(ctx context.Context, userID, passwordHash string) error {
 	if user, ok := m.users[userID]; ok {
 		user.PasswordHash = passwordHash
@@ -97,6 +106,10 @@ func (m *mockUserStore) GetPasswordReset(ctx context.Context, token string) (str
 		return reset.userID, nil
 	}
 	return "", errors.New("invalid or expired token")
+}
+
+func (m *mockUserStore) EnsureWorkspaceMembership(ctx context.Context, userID, role string) error {
+	return nil
 }
 
 func (m *mockUserStore) MarkPasswordResetUsed(ctx context.Context, token string) error {

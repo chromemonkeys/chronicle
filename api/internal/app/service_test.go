@@ -302,7 +302,8 @@ func (f *fakeStore) CreateUser(context.Context, store.User) error { return nil }
 func (f *fakeStore) UpdateUserVerificationToken(context.Context, string, string, time.Time) error {
 	return nil
 }
-func (f *fakeStore) VerifyUserEmail(context.Context, string) error { return nil }
+func (f *fakeStore) VerifyUserEmail(context.Context, string) error    { return nil }
+func (f *fakeStore) VerifyUserEmailByID(context.Context, string) error { return nil }
 func (f *fakeStore) UpdateUserPassword(context.Context, string, string) error {
 	return nil
 }

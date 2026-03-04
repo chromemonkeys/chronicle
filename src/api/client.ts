@@ -333,6 +333,17 @@ export async function requestPasswordReset(email: string) {
   return data;
 }
 
+export async function resendVerification(email: string) {
+  const data = await apiRequest<{
+    message: string;
+    devVerificationToken?: string;
+  }>("/api/auth/resend-verification", {
+    method: "POST",
+    body: { email }
+  });
+  return data;
+}
+
 export async function resetPassword(token: string, newPassword: string) {
   const data = await apiRequest<{ message: string }>("/api/auth/reset-password", {
     method: "POST",

@@ -93,6 +93,11 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Method == http.MethodPost && r.URL.Path == "/api/auth/resend-verification" {
+		s.handleAuthResendVerification(w, r)
+		return
+	}
+
 	if r.Method == http.MethodPost && r.URL.Path == "/api/auth/reset-password/request" {
 		s.handleAuthRequestReset(w, r)
 		return
@@ -1495,6 +1500,44 @@ func (s *HTTPServer) handleAuthVerifyEmail(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "Email verified successfully",
 	})
+}
+
+func (s *HTTPServer) handleAuthResendVerification(w http.ResponseWriter, r *http.Request) {
+	authSvc := s.service.AuthPasswordService()
+	if authSvc == nil {
+		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "Authentication service not configured", nil)
+		return
+	}
+
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+		return
+	}
+
+	token, _ := authSvc.ResendVerification(r.Context(), body.Email)
+
+	response := map[string]any{
+		"message": "If an unverified account exists, a verification email has been sent",
+	}
+
+	if emailSvc := s.service.EmailService(); emailSvc != nil && token != "" {
+		userName := "User"
+		if user, err := s.service.GetUserByEmail(r.Context(), body.Email); err == nil {
+			userName = user.DisplayName
+		}
+		verifyURL := fmt.Sprintf("%s/verify-email?token=%s", s.service.frontendURL(), token)
+		if err := emailSvc.SendVerificationEmail(body.Email, userName, verifyURL); err != nil {
+			log.Printf("ERROR: failed to send verification email to %s: %v", body.Email, err)
+		}
+	} else if token != "" {
+		// Dev bypass: include verification token in response when email not configured
+		response["devVerificationToken"] = token
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *HTTPServer) handleAuthRequestReset(w http.ResponseWriter, r *http.Request) {

@@ -1582,6 +1582,19 @@ func (s *PostgresStore) CreateUser(ctx context.Context, user User) error {
 	return nil
 }
 
+// EnsureWorkspaceMembership inserts a workspace membership for a user if one doesn't exist.
+func (s *PostgresStore) EnsureWorkspaceMembership(ctx context.Context, userID, role string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO workspace_memberships (user_id, role)
+		VALUES ($1, $2)
+		ON CONFLICT (user_id) DO NOTHING
+	`, userID, role)
+	if err != nil {
+		return fmt.Errorf("ensure workspace membership: %w", err)
+	}
+	return nil
+}
+
 // UpdateUserVerificationToken sets the email verification token
 func (s *PostgresStore) UpdateUserVerificationToken(ctx context.Context, userID, token string, expiresAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
@@ -1608,6 +1621,19 @@ func (s *PostgresStore) VerifyUserEmail(ctx context.Context, token string) error
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
 		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// VerifyUserEmailByID marks a user as email-verified by user ID
+func (s *PostgresStore) VerifyUserEmailByID(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE users
+		SET is_email_verified = true, verification_token = NULL, verification_expires_at = NULL, updated_at = NOW()
+		WHERE id = $1
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("verify email by id: %w", err)
 	}
 	return nil
 }
