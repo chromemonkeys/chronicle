@@ -153,6 +153,7 @@ type dataStore interface {
 	ProposalQueue(context.Context) ([]map[string]any, error)
 	GetDefaultWorkspace(context.Context) (store.Workspace, error)
 	ListSpaces(context.Context, string) ([]store.Space, error)
+	ListAccessibleSpaceIDs(context.Context, string, string) ([]string, error)
 	GetSpace(context.Context, string) (store.Space, error)
 	InsertSpace(context.Context, store.Space) error
 	UpdateSpace(context.Context, string, string, string, string) error
@@ -758,6 +759,11 @@ func (s *Service) Logout(ctx context.Context, session Session, refreshToken stri
 
 func (s *Service) Can(role string, action rbac.Action) bool {
 	return rbac.Can(rbac.Normalize(role), action)
+}
+
+// ListAccessibleSpaceIDs returns the space IDs a user can see.
+func (s *Service) ListAccessibleSpaceIDs(ctx context.Context, userID, role string) ([]string, error) {
+	return s.store.ListAccessibleSpaceIDs(ctx, userID, role)
 }
 
 func (s *Service) ListDocuments(ctx context.Context) ([]map[string]any, error) {
@@ -2453,7 +2459,7 @@ func (s *Service) GetWorkspace(ctx context.Context, documentID string, viewerUse
 	return result, nil
 }
 
-func (s *Service) GetOrgWorkspace(ctx context.Context) (map[string]any, error) {
+func (s *Service) GetOrgWorkspace(ctx context.Context, userID, role string) (map[string]any, error) {
 	ws, err := s.store.GetDefaultWorkspace(ctx)
 	if err != nil {
 		return nil, err
@@ -2462,8 +2468,22 @@ func (s *Service) GetOrgWorkspace(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Filter to only spaces accessible by this user
+	accessibleIDs, err := s.store.ListAccessibleSpaceIDs(ctx, userID, role)
+	if err != nil {
+		return nil, err
+	}
+	accessibleSet := make(map[string]struct{}, len(accessibleIDs))
+	for _, id := range accessibleIDs {
+		accessibleSet[id] = struct{}{}
+	}
+
 	spaceList := make([]map[string]any, 0, len(spaces))
 	for _, sp := range spaces {
+		if _, ok := accessibleSet[sp.ID]; !ok {
+			continue
+		}
 		docCount, err := s.store.SpaceDocumentCount(ctx, sp.ID)
 		if err != nil {
 			return nil, err
@@ -2515,10 +2535,10 @@ type InitialPermission struct {
 }
 
 func (s *Service) CreateSpace(ctx context.Context, name, description string) (map[string]any, error) {
-	return s.CreateSpaceWithOptions(ctx, name, description, "organization", nil, "")
+	return s.CreateSpaceWithOptions(ctx, name, description, "organization", nil, "", "editor")
 }
 
-func (s *Service) CreateSpaceWithOptions(ctx context.Context, name, description, visibility string, initialPermissions []InitialPermission, creatorID string) (map[string]any, error) {
+func (s *Service) CreateSpaceWithOptions(ctx context.Context, name, description, visibility string, initialPermissions []InitialPermission, creatorID, creatorRole string) (map[string]any, error) {
 	spaceName := strings.TrimSpace(name)
 	if spaceName == "" {
 		return nil, domainError(http.StatusUnprocessableEntity, "VALIDATION_ERROR", "name is required", nil)
@@ -2600,7 +2620,7 @@ func (s *Service) CreateSpaceWithOptions(ctx context.Context, name, description,
 			return nil, err
 		}
 	}
-	return s.GetOrgWorkspace(ctx)
+	return s.GetOrgWorkspace(ctx, creatorID, creatorRole)
 }
 
 func (s *Service) UpdateSpace(ctx context.Context, spaceID, name, description, visibility string) (map[string]any, error) {

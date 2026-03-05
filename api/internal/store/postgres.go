@@ -980,6 +980,48 @@ func (s *PostgresStore) ListSpaces(ctx context.Context, workspaceID string) ([]S
 	return items, nil
 }
 
+// ListAccessibleSpaceIDs returns the IDs of spaces visible to a given user.
+// Admins see all spaces. Other users see organization-visible spaces plus
+// restricted spaces where they have a grant in mv_effective_permissions.
+func (s *PostgresStore) ListAccessibleSpaceIDs(ctx context.Context, userID, role string) ([]string, error) {
+	if role == "admin" {
+		rows, err := s.db.QueryContext(ctx, `SELECT id FROM spaces`)
+		if err != nil {
+			return nil, fmt.Errorf("list all space ids: %w", err)
+		}
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan space id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		return ids, rows.Err()
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id FROM spaces WHERE COALESCE(visibility, 'organization') = 'organization'
+		UNION
+		SELECT resource_id FROM mv_effective_permissions
+		WHERE user_id = $1 AND resource_type = 'space'
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list accessible space ids: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan accessible space id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *PostgresStore) GetSpace(ctx context.Context, spaceID string) (Space, error) {
 	var item Space
 	err := s.db.QueryRowContext(ctx, `

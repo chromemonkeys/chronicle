@@ -1148,7 +1148,10 @@ label {
 }
 
 .cm-sidebar.collapsed .cm-sidebar-section,
-.cm-sidebar.collapsed .cm-doc-tree {
+.cm-sidebar.collapsed .cm-doc-tree,
+.cm-sidebar.collapsed .cm-sb-header,
+.cm-sidebar.collapsed .cm-sb-content,
+.cm-sidebar.collapsed .cm-sb-footer {
   display: none;
 }
 
@@ -8470,6 +8473,243 @@ button:focus-visible {
 }
 .cm-trash-purge:hover {
   background: var(--red-soft);
+}
+
+/* =============================================================================
+   Sidebar V2 — Space-focused layout
+   ============================================================================= */
+
+/* Header */
+.cm-sb-header {
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cm-sb-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  font-size: 11px;
+  color: var(--ink-4);
+  cursor: pointer;
+  padding: 0 0 6px;
+  font-family: inherit;
+  transition: color 0.15s;
+}
+
+.cm-sb-back:hover {
+  color: var(--accent);
+}
+
+.cm-sb-space-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+.cm-sb-space-name svg {
+  color: var(--ink-3);
+  flex-shrink: 0;
+}
+
+/* Scrollable content area */
+.cm-sb-content {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Sections */
+.cm-sb-section {
+  padding: 10px 0 6px;
+}
+
+.cm-sb-section + .cm-sb-section {
+  border-top: 1px solid var(--border);
+}
+
+.cm-sb-section--grow {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.cm-sb-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.cm-sb-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.cm-sb-new-btn {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-4);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cm-sb-new-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Proposal cards */
+.cm-sb-proposal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 8px;
+}
+
+.cm-sb-proposal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.cm-sb-proposal:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.cm-sb-proposal-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.cm-sb-proposal-top svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.cm-sb-proposal-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cm-sb-proposal-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+  text-transform: capitalize;
+  background: var(--paper-3);
+  color: var(--ink-3);
+  flex-shrink: 0;
+}
+
+.cm-sb-proposal-badge.review {
+  background: color-mix(in srgb, var(--yellow) 15%, transparent);
+  color: var(--yellow);
+}
+
+.cm-sb-proposal-badge.draft {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+/* Footer */
+.cm-sb-footer {
+  margin-top: auto;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.cm-sb-footer-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  font-size: 11.5px;
+  font-family: inherit;
+  color: var(--ink-4);
+  cursor: pointer;
+  padding: 3px 0;
+  transition: color 0.15s;
+}
+
+.cm-sb-footer-btn:hover {
+  color: var(--ink-2);
+}
+
+.cm-sb-footer-btn svg {
+  opacity: 0.7;
+}
+
+/* Breadcrumb Save Status */
+.cm-breadcrumb-save-status {
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-left: 8px;
+  animation: breadcrumb-fade-in 0.2s ease;
+}
+
+.cm-breadcrumb-save-status--done {
+  color: var(--green, #22c55e);
+}
+
+@keyframes breadcrumb-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Save button "Saved" state */
+.cm-action-btn .cm-saved-text {
+  color: var(--green, #22c55e);
 }
 
 /* =============================================================================

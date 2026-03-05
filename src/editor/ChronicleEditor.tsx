@@ -78,7 +78,7 @@ export function ChronicleEditor({
         codeBlock: false,
       }),
       Placeholder.configure({
-        placeholder: "Start writing...",
+        placeholder: "Start typing to begin your document...",
       }),
       TextStyle,
       Color,

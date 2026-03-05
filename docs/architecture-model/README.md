@@ -1,6 +1,6 @@
 # Chronicle Architecture Model
 
-> **Last Updated:** 2026-03-04 (Added soft-delete/trash for documents: DELETE /api/documents/{id}, POST restore/purge, GET /api/trash; added deleted_at column to documents table)
+> **Last Updated:** 2026-03-05 (Space visibility enforcement: restricted spaces hidden from non-members via ListAccessibleSpaceIDs; GET /api/workspaces and GET /api/spaces/{id}/documents now filter by user permissions)
 > **Version:** 1.0  
 > **Status:** Canonical reference for system architecture
 
@@ -291,6 +291,7 @@ See issues: #83 (AUTH-101), #84 (AUTH-102), #85 (RBAC-101), #86 (RBAC-102)
 - All API routes are guarded by `rbac.Can()` checks (RBAC-101)
 - Permission denials are logged to `permission_denials` table for audit
 - Centralized `forbid()` helper returns standardized 403 responses
+- **Space visibility enforcement:** Restricted spaces are hidden from non-members. `ListAccessibleSpaceIDs(userID, role)` returns organization-visible spaces plus restricted spaces where the user has a grant in `mv_effective_permissions`. Admins see all spaces. Applied at `GET /api/workspaces` and `GET /api/spaces/{id}/documents`.
 
 #### Document-Level Permissions (Implemented — RBAC-102)
 
@@ -460,6 +461,7 @@ When making structural changes, update this document:
 - [x] **New API endpoint pattern?** → Added `POST /api/documents/{id}/uploads` (image upload) and `GET /api/uploads/{key}` (serve uploaded files)
 - [x] **Deployment changed?** → Added S3 environment variables to docker-compose API service; API now depends on MinIO service
 - [x] **New API endpoint pattern?** → Added `?view=published` query param to `GET /api/workspace/{id}` to skip proposal detection and return main branch content read-only
+- [x] **Security model changed?** → Added space visibility enforcement: `ListAccessibleSpaceIDs` filters restricted spaces from non-members at `GET /api/workspaces` and `GET /api/spaces/{id}/documents`
 
 ## Related Documents
 

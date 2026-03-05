@@ -351,7 +351,7 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodGet && r.URL.Path == "/api/workspaces" {
-		payload, err := s.service.GetOrgWorkspace(r.Context())
+		payload, err := s.service.GetOrgWorkspace(r.Context(), session.UserID, session.Role)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "SERVER_ERROR", "Could not load workspaces", nil)
 			return
@@ -375,7 +375,7 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
 			return
 		}
-		payload, err := s.service.CreateSpaceWithOptions(r.Context(), body.Name, body.Description, body.Visibility, body.InitialPermissions, session.UserID)
+		payload, err := s.service.CreateSpaceWithOptions(r.Context(), body.Name, body.Description, body.Visibility, body.InitialPermissions, session.UserID, session.Role)
 		if err != nil {
 			status, code, message, details := mapError(err)
 			writeError(w, status, code, message, details)
@@ -406,6 +406,27 @@ func (s *HTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "spaces" && parts[3] == "documents" {
 		spaceID := parts[2]
+		// Verify user has access to this space
+		if !s.service.Can(session.Role, rbac.ActionRead) {
+			s.forbid(w, r, session, "read")
+			return
+		}
+		accessibleIDs, err := s.service.ListAccessibleSpaceIDs(r.Context(), session.UserID, session.Role)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "SERVER_ERROR", "Could not verify space access", nil)
+			return
+		}
+		hasAccess := false
+		for _, id := range accessibleIDs {
+			if id == spaceID {
+				hasAccess = true
+				break
+			}
+		}
+		if !hasAccess {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "You do not have access to this space", nil)
+			return
+		}
 		if r.Method == http.MethodGet {
 			// Check for tree view query param
 			if r.URL.Query().Get("tree") == "true" {

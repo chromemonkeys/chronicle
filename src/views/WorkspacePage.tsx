@@ -93,7 +93,6 @@ type PanelTab = "discussions" | "approvals" | "history" | "decisions" | "changes
 type DiffMode = "split" | "unified";
 type ViewState = "success" | "loading" | "empty" | "error";
 type WorkspaceMode = "proposal" | "review" | "published";
-type SidebarSection = "all" | "open" | "merged" | "decisions" | "trash";
 type CompareOption = {
   hash: string;
   label: string;
@@ -383,6 +382,7 @@ export function WorkspacePage() {
   const [viewState, setViewState] = useState<ViewState>("loading");
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [titleSaveStatus, setTitleSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [proposalPickerOpen, setProposalPickerOpen] = useState(false);
   const [existingProposals, setExistingProposals] = useState<OpenProposalSummary[]>([]);
   const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
@@ -412,7 +412,6 @@ export function WorkspacePage() {
   const [decisionRows, setDecisionRows] = useState<DecisionLogEntry[] | null>(null);
   const [documentIndex, setDocumentIndex] = useState<DocumentSummary[]>([]);
   const [documentIndexState, setDocumentIndexState] = useState<ViewState>("loading");
-  const [sidebarSection, setSidebarSection] = useState<SidebarSection>("open");
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [decisionOutcomeFilter, setDecisionOutcomeFilter] = useState<"" | "ACCEPTED" | "REJECTED" | "DEFERRED">("");
@@ -448,6 +447,8 @@ export function WorkspacePage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [sidebarProposals, setSidebarProposals] = useState<OpenProposalSummary[]>([]);
+  const [showTrashView, setShowTrashView] = useState(false);
   const threadRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const realtimeSocketRef = useRef<WebSocket | null>(null);
   const realtimeSendTimerRef = useRef<number | null>(null);
@@ -602,6 +603,20 @@ export function WorkspacePage() {
     }
   }, []);
 
+  // Ctrl+S / Cmd+S keyboard shortcut to save
+  const saveDraftRef = useRef(saveDraft);
+  saveDraftRef.current = saveDraft;
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        void saveDraftRef.current();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   // Load workspace users when approval rules editor opens
   useEffect(() => {
     if (!showApprovalRules) return;
@@ -708,26 +723,7 @@ export function WorkspacePage() {
     );
   }, [workspace, compareActive, compareChanges.length]);
 
-  const openReviewDocuments = useMemo(
-    () => documentIndex.filter((doc) => doc.status === "In review" || doc.status === "Ready for approval"),
-    [documentIndex]
-  );
-  const mergedDocuments = useMemo(
-    () => documentIndex.filter((doc) => doc.status === "Approved"),
-    [documentIndex]
-  );
-  const sidebarDocuments = useMemo(() => {
-    if (sidebarSection === "all") {
-      return documentIndex;
-    }
-    if (sidebarSection === "open") {
-      return openReviewDocuments;
-    }
-    if (sidebarSection === "merged") {
-      return mergedDocuments;
-    }
-    return [];
-  }, [documentIndex, openReviewDocuments, mergedDocuments, sidebarSection]);
+  const sidebarDocuments = useMemo(() => documentIndex, [documentIndex]);
 
   // Fetch spaces for folder hierarchy
   const [spaces, setSpaces] = useState<Space[]>([]);
@@ -901,23 +897,22 @@ export function WorkspacePage() {
       setEditingTitle(false);
       return;
     }
+    setTitleSaveStatus("saving");
     try {
       await renameDocument(workspace.document.id, trimmed);
       const updated = await fetchWorkspace(docId);
       applyWorkspacePayload(updated);
       const docs = currentSpaceId ? await fetchSpaceDocuments(currentSpaceId) : await fetchDocuments();
       setDocumentIndex(docs);
+      setTitleSaveStatus("saved");
+      setTimeout(() => setTitleSaveStatus("idle"), 2000);
     } catch (error) {
       setActionError(isApiError(error) ? error.message : "Failed to rename document");
+      setTitleSaveStatus("idle");
     } finally {
       setEditingTitle(false);
     }
   }
-
-  const sidebarAllCount = documentIndexState === "loading" ? (workspace?.counts.allDocuments ?? 0) : documentIndex.length;
-  const sidebarOpenReviewCount =
-    documentIndexState === "loading" ? (workspace?.counts.openReviews ?? 0) : openReviewDocuments.length;
-  const sidebarMergedCount = documentIndexState === "loading" ? (workspace?.counts.merged ?? 0) : mergedDocuments.length;
 
   useEffect(() => {
     if (activeTab !== "discussions") {
@@ -929,19 +924,30 @@ export function WorkspacePage() {
     }
   }, [activeThread, activeTab]);
 
+  // When switching to decisions tab, close trash view
   useEffect(() => {
     if (activeTab === "decisions") {
-      setSidebarSection("decisions");
-      return;
+      setShowTrashView(false);
     }
-    if (sidebarSection === "decisions") {
-      setSidebarSection("open");
-    }
-  }, [activeTab, sidebarSection]);
+  }, [activeTab]);
+
+  // Fetch open proposals for sidebar when document changes
+  useEffect(() => {
+    if (!workspace?.document.id) return;
+    let active = true;
+    fetchOpenProposals(workspace.document.id)
+      .then((proposals) => {
+        if (active) setSidebarProposals(proposals);
+      })
+      .catch(() => {
+        if (active) setSidebarProposals([]);
+      });
+    return () => { active = false; };
+  }, [workspace?.document.id]);
 
   // Fetch trash documents when viewing trash
   useEffect(() => {
-    if (sidebarSection !== "trash") return;
+    if (!showTrashView) return;
     let active = true;
     setTrashLoading(true);
     fetchTrash()
@@ -955,7 +961,7 @@ export function WorkspacePage() {
         if (active) setTrashLoading(false);
       });
     return () => { active = false; };
-  }, [sidebarSection]);
+  }, [showTrashView]);
 
   useEffect(() => {
     if ((activeTab !== "history" && activeTab !== "branches") || !workspace) {
@@ -1378,6 +1384,7 @@ export function WorkspacePage() {
       const updated = await saveWorkspace(workspace.document.id, contentDraft, docDraft ?? undefined);
       applyWorkspacePayload(updated);
       setSaveState("saved");
+      setTimeout(() => setSaveState("idle"), 2000);
     } catch (error) {
       setSaveState("error");
       if (isApiError(error)) {
@@ -2268,6 +2275,11 @@ export function WorkspacePage() {
               {content.title}
             </span>
           )}
+          {titleSaveStatus !== "idle" && (
+            <span className={`cm-breadcrumb-save-status ${titleSaveStatus === "saved" ? "cm-breadcrumb-save-status--done" : ""}`}>
+              {titleSaveStatus === "saving" ? "Saving..." : "Saved"}
+            </span>
+          )}
         </div>
         <div className="cm-topnav-spacer" />
         <div className="cm-topnav-context">
@@ -2298,7 +2310,13 @@ export function WorkspacePage() {
           )}
           <div className="cm-branch-badge" aria-label="Current branch">
             <div className="cm-branch-dot" />
-            {workspace.document.branch.split(" -> ")[0]}
+            {(() => {
+              const raw = workspace.document.branch.split(" -> ")[0];
+              if (!workspace.document.proposalId) return raw;
+              const match = sidebarProposals.find((p) => p.branchName === raw)
+                ?? existingProposals.find((p) => p.branchName === raw);
+              return match?.title ?? raw;
+            })()}
           </div>
         </div>
 
@@ -2331,7 +2349,7 @@ export function WorkspacePage() {
               onClick={() => void saveDraft()}
               title="Save changes"
             >
-              <span>{saveState === "saving" ? "Saving..." : "Save"}</span>
+              <span>{saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save"}</span>
             </button>
           </div>
 
@@ -2364,150 +2382,143 @@ export function WorkspacePage() {
               <path d={leftSidebarCollapsed ? "M6 3l5 5-5 5" : "M10 3L5 8l5 5"} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
-          <div className="cm-sidebar-section">
+          {/* ── Space Header ── */}
+          <div className="cm-sb-header">
             {currentSpaceId ? (
               <>
-                <button className="cm-sidebar-back" type="button" onClick={() => navigate("/documents")}>
-                  ← All Spaces
+                <button className="cm-sb-back" type="button" onClick={() => navigate("/documents")}>
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  All Spaces
                 </button>
-                <div className="cm-sidebar-label">{currentSpaceName ?? "Space"}</div>
+                <div className="cm-sb-space-name">
+                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h3.38a1.5 1.5 0 0 1 1.22.63L10 6h5.5A1.5 1.5 0 0 1 17 7.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5v-9Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/></svg>
+                  {currentSpaceName ?? "Space"}
+                </div>
               </>
             ) : (
-              <div className="cm-sidebar-label">Workspace</div>
-            )}
-            <button
-              className={`cm-sidebar-item ${sidebarSection === "all" ? "active" : ""}`.trim()}
-              type="button"
-              onClick={() => {
-                setSidebarSection("all");
-                if (!currentSpaceId) navigate("/documents");
-              }}
-            >
-              All Documents
-              <span className="cm-sidebar-count">{sidebarAllCount}</span>
-            </button>
-            <button
-              className={`cm-sidebar-item ${sidebarSection === "open" ? "active" : ""}`.trim()}
-              type="button"
-              onClick={() => {
-                setSidebarSection("open");
-                if (activeTab === "decisions") {
-                  setActiveTab("discussions");
-                }
-              }}
-            >
-              Open Reviews
-              <span className="cm-sidebar-count">{sidebarOpenReviewCount}</span>
-            </button>
-            <button
-              className={`cm-sidebar-item ${sidebarSection === "merged" ? "active" : ""}`.trim()}
-              type="button"
-              onClick={() => {
-                setSidebarSection("merged");
-                if (activeTab === "decisions") {
-                  setActiveTab("discussions");
-                }
-              }}
-            >
-              Merged
-              <span className="cm-sidebar-count">{sidebarMergedCount}</span>
-            </button>
-            <button
-              className={`cm-sidebar-item ${sidebarSection === "decisions" ? "active" : ""}`.trim()}
-              type="button"
-              onClick={() => {
-                setSidebarSection("decisions");
-                setActiveTab("decisions");
-              }}
-            >
-              Decision Log
-            </button>
-            {isAdmin && (
-              <button
-                className={`cm-sidebar-item ${sidebarSection === "trash" ? "active" : ""}`.trim()}
-                type="button"
-                onClick={() => {
-                  setSidebarSection("trash");
-                  if (activeTab === "decisions") {
-                    setActiveTab("discussions");
-                  }
-                }}
-              >
-                Trash
-              </button>
+              <div className="cm-sb-space-name">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.2" stroke="currentColor" strokeWidth="1.4"/><rect x="11" y="3" width="6" height="6" rx="1.2" stroke="currentColor" strokeWidth="1.4"/><rect x="3" y="11" width="6" height="6" rx="1.2" stroke="currentColor" strokeWidth="1.4"/><rect x="11" y="11" width="6" height="6" rx="1.2" stroke="currentColor" strokeWidth="1.4"/></svg>
+                Workspace
+              </div>
             )}
           </div>
-          {sidebarSection !== "decisions" && sidebarSection !== "trash" && (
-            <>
-              {documentIndexState === "loading" && <div className="cm-sidebar-hint">Loading documents...</div>}
-              {documentIndexState === "error" && <div className="cm-sidebar-hint">Could not load document list.</div>}
-              {documentIndexState !== "loading" && documentIndexState !== "error" && (
-                <DocumentTree
-                  items={treeItems}
-                  activeId={workspace?.document.id ?? ""}
-                  onSelect={(id) => {
-                    if (id !== workspace?.document.id) {
-                      navigate(`/workspace/${id}`);
-                    }
-                  }}
-                  onCreateDocument={handleCreateDocument}
-                  onMoveDocument={handleMoveDocument}
-                  onRenameDocument={handleRenameDocument}
-                  onDeleteDocument={isAdmin ? handleDeleteDocument : undefined}
-                  onManageSpacePermissions={(spaceId) => {
-                    const space = spaces.find(s => s.id === spaceId);
-                    if (space) {
-                      setActiveSpaceForPermissions(space);
-                    }
-                  }}
-                  emptyMessage={
-                    sidebarSection === "all"
-                      ? "No documents yet. Create your first document to get started."
-                      : sidebarSection === "open"
-                      ? "No open reviews. Start a proposal to begin a review."
-                      : "No merged documents yet."
-                  }
-                />
-              )}
-            </>
-          )}
-          {sidebarSection === "decisions" && (
-            <div className="cm-doc-tree">
-              <div className="cm-sidebar-label">Decision Log</div>
-              <div className="cm-sidebar-hint">Filter outcomes and rationale from the panel on the right.</div>
-            </div>
-          )}
-          {sidebarSection === "trash" && (
-            <div className="cm-doc-tree">
-              <div className="cm-sidebar-label">Trash</div>
-              {trashLoading && <div className="cm-sidebar-hint">Loading...</div>}
-              {!trashLoading && trashDocuments.length === 0 && (
-                <div className="cm-sidebar-hint">Trash is empty.</div>
-              )}
-              {!trashLoading && trashDocuments.map((doc) => (
-                <div key={doc.id} className="cm-trash-item">
-                  <div className="cm-trash-title">{doc.title}</div>
-                  <div className="cm-trash-date">
-                    Deleted {new Date(doc.deletedAt).toLocaleDateString()}
+
+          {!showTrashView && (
+            <div className="cm-sb-content">
+              {/* ── Active Proposals ── */}
+              {sidebarProposals.length > 0 && (
+                <div className="cm-sb-section">
+                  <div className="cm-sb-section-head">
+                    <span>Proposals</span>
+                    <span className="cm-sb-badge">{sidebarProposals.length}</span>
                   </div>
-                  <div className="cm-trash-actions">
-                    <button
-                      className="cm-trash-restore"
-                      type="button"
-                      onClick={() => handleRestoreDocument(doc.id)}
-                    >
-                      Restore
-                    </button>
-                    <button
-                      className="cm-trash-purge"
-                      type="button"
-                      onClick={() => handlePurgeDocument(doc.id)}
-                    >
-                      Delete forever
-                    </button>
+                  <div className="cm-sb-proposal-list">
+                    {sidebarProposals.map((proposal) => {
+                      const statusLabel = proposal.status.replace(/_/g, " ").toLowerCase();
+                      const isReview = /review|pending/i.test(proposal.status);
+                      const isDraft = /draft|open/i.test(proposal.status);
+                      return (
+                        <button
+                          key={proposal.id}
+                          className="cm-sb-proposal"
+                          type="button"
+                          onClick={() => navigate(`/workspace/${proposal.documentId}`)}
+                        >
+                          <div className="cm-sb-proposal-top">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M7 4v12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/><path d="M13 4v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/><path d="M13 8c0 2.2-1.8 3.5-6 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/><circle cx="7" cy="4" r="1.5" stroke="currentColor" strokeWidth="1.2"/><circle cx="13" cy="4" r="1.5" stroke="currentColor" strokeWidth="1.2"/></svg>
+                            <span className="cm-sb-proposal-name">{proposal.title}</span>
+                          </div>
+                          <span className={`cm-sb-proposal-badge ${isReview ? "review" : isDraft ? "draft" : ""}`}>
+                            {statusLabel}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
-              ))}
+              )}
+
+              {/* ── Documents ── */}
+              <div className="cm-sb-section cm-sb-section--grow">
+                <div className="cm-sb-section-head">
+                  <span>Documents</span>
+                  <button
+                    className="cm-sb-new-btn"
+                    type="button"
+                    onClick={() => handleCreateDocument()}
+                    title="New document"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                  </button>
+                </div>
+                {documentIndexState === "loading" && <div className="cm-sidebar-hint">Loading...</div>}
+                {documentIndexState === "error" && <div className="cm-sidebar-hint">Could not load documents.</div>}
+                {documentIndexState !== "loading" && documentIndexState !== "error" && (
+                  <DocumentTree
+                    items={treeItems}
+                    activeId={workspace?.document.id ?? ""}
+                    onSelect={(id) => {
+                      if (id !== workspace?.document.id) {
+                        navigate(`/workspace/${id}`);
+                      }
+                    }}
+                    onCreateDocument={handleCreateDocument}
+                    onMoveDocument={handleMoveDocument}
+                    onRenameDocument={handleRenameDocument}
+                    onDeleteDocument={isAdmin ? handleDeleteDocument : undefined}
+                    onManageSpacePermissions={(spaceId) => {
+                      const space = spaces.find(s => s.id === spaceId);
+                      if (space) {
+                        setActiveSpaceForPermissions(space);
+                      }
+                    }}
+                    emptyMessage="No documents yet."
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Trash View ── */}
+          {showTrashView && (
+            <div className="cm-sb-content">
+              <div className="cm-sb-section cm-sb-section--grow">
+                <div className="cm-sb-section-head">
+                  <button className="cm-sb-back" type="button" onClick={() => setShowTrashView(false)} style={{ margin: 0, padding: 0 }}>
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    Back
+                  </button>
+                  <span style={{ marginLeft: "auto", fontSize: "11px", color: "var(--ink-4)" }}>Trash</span>
+                </div>
+                {trashLoading && <div className="cm-sidebar-hint">Loading...</div>}
+                {!trashLoading && trashDocuments.length === 0 && (
+                  <div className="cm-sidebar-hint">Trash is empty.</div>
+                )}
+                {!trashLoading && trashDocuments.map((doc) => (
+                  <div key={doc.id} className="cm-trash-item">
+                    <div className="cm-trash-title">{doc.title}</div>
+                    <div className="cm-trash-date">
+                      Deleted {new Date(doc.deletedAt).toLocaleDateString()}
+                    </div>
+                    <div className="cm-trash-actions">
+                      <button className="cm-trash-restore" type="button" onClick={() => handleRestoreDocument(doc.id)}>Restore</button>
+                      <button className="cm-trash-purge" type="button" onClick={() => handlePurgeDocument(doc.id)}>Delete forever</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Sidebar Footer ── */}
+          {isAdmin && !showTrashView && (
+            <div className="cm-sb-footer">
+              <button className="cm-sb-footer-btn" type="button" onClick={() => setShowTrashView(true)} title="View trash">
+                <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                  <path d="M4 5h8l-.6 7a1.2 1.2 0 0 1-1.2 1H5.8a1.2 1.2 0 0 1-1.2-1L4 5ZM6.5 7.5v3M9.5 7.5v3M3 5h10M6 5V3.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5V5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Trash
+              </button>
             </div>
           )}
         </aside>
