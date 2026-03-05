@@ -136,6 +136,18 @@ function roomParticipantCount(roomKey) {
   return room ? room.clients.size : 0;
 }
 
+function roomParticipantNames(room) {
+  const seen = new Set();
+  const names = [];
+  for (const c of room.clients) {
+    if (!seen.has(c.userName)) {
+      seen.add(c.userName);
+      names.push(c.userName);
+    }
+  }
+  return names;
+}
+
 function queuePersistence(room, task) {
   room.persistChain = room.persistChain
     .then(task)
@@ -265,7 +277,8 @@ function removeClient(client) {
       type: "presence",
       action: "left",
       participants: room.clients.size,
-      userName: client.userName
+      userName: client.userName,
+      users: roomParticipantNames(room)
     });
   }
 }
@@ -457,7 +470,8 @@ server.on("upgrade", async (req, socket) => {
     room: roomKey,
     participants: roomParticipantCount(roomKey),
     userName: session.userName,
-    persistedUpdates: room.persistedUpdates
+    persistedUpdates: room.persistedUpdates,
+    users: roomParticipantNames(room)
   });
 
   if (room.snapshot) {
@@ -475,7 +489,8 @@ server.on("upgrade", async (req, socket) => {
       type: "presence",
       action: "joined",
       participants: room.clients.size,
-      userName: session.userName
+      userName: session.userName,
+      users: roomParticipantNames(room)
     });
   }
 

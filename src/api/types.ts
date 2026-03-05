@@ -418,12 +418,14 @@ export type SyncEvent =
       participants: number;
       userName: string;
       persistedUpdates?: number;
+      users?: string[];
     }
   | {
       type: "presence";
       action: "joined" | "left";
       participants: number;
       userName: string;
+      users?: string[];
     }
   | {
       type: "snapshot";

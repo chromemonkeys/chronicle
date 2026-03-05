@@ -59,7 +59,7 @@ import type {
 import { ApprovalChain } from "../ui/ApprovalChain";
 import { ApprovalRulesEditor } from "../ui/ApprovalRulesEditor";
 import { BranchGraph } from "../ui/BranchGraph";
-import { DecisionLogTable } from "../ui/DecisionLogTable";
+// DecisionLogTable no longer used — decision log rendered inline with cm-dlog-* classes
 import { DocumentTree } from "../ui/DocumentTree";
 import { EmptyStateError, EmptyState } from "../ui/EmptyState";
 import { Dialog } from "../ui/Dialog";
@@ -69,6 +69,7 @@ import { Tabs } from "../ui/Tabs";
 import { ThreadComposer } from "../ui/ThreadComposer";
 import { ThreadList } from "../ui/ThreadList";
 import { ExportMenu } from "../components/ExportMenu";
+import { PresenceBar } from "../editor/PresenceBar";
 import { ChronicleEditor } from "../editor/ChronicleEditor";
 import { DiffNavigator } from "../ui/DiffNavigator";
 import { SideBySideDiff } from "../editor/SideBySideDiff";
@@ -145,6 +146,13 @@ type MergeGatePolicySnapshot = {
   allowMergeWithDeferredChanges: boolean;
   ignoreFormatOnlyChangesForGate: boolean;
 };
+
+const PRESENCE_COLORS = ["#4a7c5a","#7c4a6a","#4a5c7c","#7c6a4a","#5a4a7c","#4a7c7c","#7c4a4a","#6a7c4a"];
+function userColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+  return PRESENCE_COLORS[Math.abs(h) % PRESENCE_COLORS.length];
+}
 
 const panelTabs: { id: PanelTab; label: string; ariaLabel: string; icon: JSX.Element }[] = [
   {
@@ -440,7 +448,7 @@ export function WorkspacePage() {
   const [mergeBusy, setMergeBusy] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "connected" | "offline">("connecting");
-  const [onlineCount, setOnlineCount] = useState(1);
+  const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
   // Trash state
   const [trashDocuments, setTrashDocuments] = useState<TrashDocument[]>([]);
   const [trashLoading, setTrashLoading] = useState(false);
@@ -525,7 +533,7 @@ export function WorkspacePage() {
     setApprovalError(null);
     setApprovalRefreshBusy(false);
     setRealtimeStatus("connecting");
-    setOnlineCount(1);
+    setOnlineUsers([]);
     setWorkspaceMode("proposal");
     fetchWorkspace(docId)
       .then((response) => {
@@ -1047,7 +1055,7 @@ export function WorkspacePage() {
         realtimeSocketRef.current.close();
       }
       setRealtimeStatus("offline");
-      setOnlineCount(1);
+      setOnlineUsers([]);
       realtimeSocketRef.current = null;
       return;
     }
@@ -1059,12 +1067,12 @@ export function WorkspacePage() {
       (event) => {
         if (event.type === "connected") {
           setRealtimeStatus("connected");
-          setOnlineCount(event.participants);
+          setOnlineUsers(event.users ?? []);
           return;
         }
         if (event.type === "presence") {
           setRealtimeStatus("connected");
-          setOnlineCount(event.participants);
+          setOnlineUsers(event.users ?? []);
           return;
         }
         if (event.type === "snapshot" && event.snapshot?.content) {
@@ -2321,10 +2329,11 @@ export function WorkspacePage() {
         </div>
 
         <div className="cm-topnav-actions">
+          <PresenceBar users={onlineUsers.map(name => ({ name, color: userColor(name) }))} />
           <div className="cm-action-group cm-action-group--secondary">
-            <button 
-              className="cm-action-btn" 
-              type="button" 
+            <button
+              className="cm-action-btn"
+              type="button"
               onClick={() => void compareLatestCommits()}
               title={compareActive ? "Close comparison" : "Compare versions"}
             >
@@ -2992,202 +3001,122 @@ export function WorkspacePage() {
 
           {activeTab === "history" && (
             <div className="cm-panel-content active">
-              <div className="cm-panel-scroll">
-                {/* Contributors summary derived from commit history */}
-                {(() => {
-                  const commits = historyData?.commits ?? workspace.history;
-                  const authorMap = new Map<string, number>();
-                  let latestAuthor = "";
-                  let latestTime = "";
-                  for (const c of commits) {
-                    // meta is formatted as "Author Name · time ago"
-                    const parts = c.meta.split(" · ");
-                    const author = parts[0]?.trim();
-                    if (!author) continue;
-                    authorMap.set(author, (authorMap.get(author) ?? 0) + 1);
-                    if (!latestAuthor) {
-                      latestAuthor = author;
-                      latestTime = parts[1]?.trim() ?? "";
-                    }
-                  }
-                  const contributors = Array.from(authorMap.entries())
-                    .sort((a, b) => b[1] - a[1]);
-                  if (contributors.length === 0) return null;
-
-                  const toneForName = (name: string): string => {
-                    const hash = name.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-                    const tones = ["emerald", "sky", "violet", "rose", "amber"];
-                    return tones[hash % tones.length];
-                  };
-                  const toneClasses: Record<string, string> = {
-                    emerald: "bg-emerald-100 text-emerald-700 border-emerald-200",
-                    sky: "bg-sky-100 text-sky-700 border-sky-200",
-                    violet: "bg-violet-100 text-violet-700 border-violet-200",
-                    rose: "bg-rose-100 text-rose-700 border-rose-200",
-                    amber: "bg-amber-100 text-amber-700 border-amber-200",
-                  };
-                  const initials = (name: string) =>
-                    name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
-
-                  return (
-                    <div className="cm-approval-fallback" style={{ paddingBottom: 8 }}>
-                      <div className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
-                        Contributors ({contributors.length})
-                      </div>
-                      <div className="flex flex-wrap gap-2 mb-2">
-                        {contributors.map(([author, count]) => {
-                          const tone = toneForName(author);
-                          return (
-                            <div
-                              key={author}
-                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-white border border-slate-200 text-xs"
-                            >
-                              <span
-                                className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-medium border ${toneClasses[tone]}`}
-                              >
-                                {initials(author)}
-                              </span>
-                              <span className="text-slate-700">{author}</span>
-                              <span className="text-slate-400">{count} {count === 1 ? "edit" : "edits"}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {latestAuthor && (
-                        <div className="text-xs text-slate-500">
-                          Latest: {latestAuthor}{latestTime ? ` · ${latestTime}` : ""}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-                <div className="cm-approval-fallback">
-                  <strong>Current Branch</strong>
-                  <p className="cm-commit-meta">{historyData?.branch ?? workspace.document.branch.split(" -> ")[0]}</p>
+              <div className="cm-panel-scroll cm-hist">
+                {/* ── Branch header ── */}
+                <div className="cm-hist-branch-bar">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 3v6.5a3.5 3.5 0 003.5 3.5h0A3.5 3.5 0 0012 9.5V8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="5" cy="3" r="1.5" stroke="currentColor" strokeWidth="1.5"/><circle cx="12" cy="6.5" r="1.5" stroke="currentColor" strokeWidth="1.5"/></svg>
+                  <span className="cm-hist-branch-name">{historyData?.branch ?? workspace.document.branch.split(" -> ")[0]}</span>
+                  {mainHistoryData && <span className="cm-hist-branch-sep">/</span>}
+                  {mainHistoryData && <span className="cm-hist-branch-name cm-hist-branch-name--secondary">{mainHistoryData.branch}</span>}
                 </div>
+
+                {/* ── Compare bar ── */}
+                {compareOptions.length > 1 ? (
+                  <div className="cm-hist-compare-bar">
+                    <div className="cm-hist-compare-selects">
+                      <select
+                        className="cm-hist-select"
+                        aria-label="Compare from commit"
+                        value={compareFromHash}
+                        onChange={(event) => setCompareFromHash(event.target.value)}
+                      >
+                        <option value="">From…</option>
+                        {compareOptions.map((option) => (
+                          <option key={`from-${option.hash}`} value={option.hash}>{option.label}</option>
+                        ))}
+                      </select>
+                      <svg className="cm-hist-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      <select
+                        className="cm-hist-select"
+                        aria-label="Compare to commit"
+                        value={compareToHash}
+                        onChange={(event) => setCompareToHash(event.target.value)}
+                      >
+                        <option value="">To…</option>
+                        {compareOptions.map((option) => (
+                          <option key={`to-${option.hash}`} value={option.hash}>{option.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      className="cm-hist-compare-btn"
+                      type="button"
+                      disabled={!compareFromHash || !compareToHash || compareFromHash === compareToHash}
+                      onClick={() => { void compareSelectedCommits(); }}
+                    >
+                      Compare
+                    </button>
+                  </div>
+                ) : null}
+
+                {/* ── Change navigator (when comparing) ── */}
                 {compareActive ? (
-                  <div className="cm-approval-fallback cm-compare-rail" aria-label="Change navigator">
-                    <strong>Change Navigator</strong>
-                    <p className="cm-change-summary">
-                      {filteredCompareChanges.length} of {compareChanges.length} changes · {diffMode} mode
-                    </p>
-                    <div className="cm-change-filters">
-                      <label className="cm-compose-select-wrap">
-                        <span>Type</span>
-                        <select
-                          className="cm-compose-select"
-                          aria-label="Filter change type"
-                          value={compareFilterType}
-                          onChange={(event) => setCompareFilterType(event.target.value as CompareChangeType | "all")}
-                        >
-                          <option value="all">All types</option>
-                          <option value="modified">Modified</option>
-                          <option value="inserted">Inserted</option>
-                          <option value="deleted">Deleted</option>
-                          <option value="moved">Moved</option>
-                          <option value="format_only">Format only</option>
-                        </select>
-                      </label>
-                      <label className="cm-compose-select-wrap">
-                        <span>Author</span>
-                        <select
-                          className="cm-compose-select"
-                          aria-label="Filter change author"
-                          value={compareFilterAuthor}
-                          onChange={(event) => setCompareFilterAuthor(event.target.value)}
-                        >
-                          {compareAuthorOptions.map((author) => (
-                            <option key={author} value={author}>
-                              {author === "all" ? "All authors" : author}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="cm-compose-select-wrap">
-                        <span>State</span>
-                        <select
-                          className="cm-compose-select"
-                          aria-label="Filter review state"
-                          value={compareFilterState}
-                          onChange={(event) => setCompareFilterState(event.target.value as CompareReviewState | "all")}
-                        >
-                          <option value="all">All states</option>
-                          <option value="pending">Pending</option>
-                          <option value="accepted">Accepted</option>
-                          <option value="rejected">Rejected</option>
-                          <option value="deferred">Deferred</option>
-                        </select>
-                      </label>
-                      <label className="cm-compare-toggle">
-                        <input
-                          type="checkbox"
-                          checked={compareUnresolvedOnly}
-                          onChange={(event) => setCompareUnresolvedOnly(event.target.checked)}
-                        />
-                        <span>Unresolved only</span>
+                  <div className="cm-hist-changes">
+                    <div className="cm-hist-changes-head">
+                      <span className="cm-hist-changes-count">{filteredCompareChanges.length}<span className="cm-hist-changes-of"> / {compareChanges.length}</span></span>
+                      <span className="cm-hist-changes-label">changes</span>
+                      <div className="cm-hist-changes-nav">
+                        <button className="cm-hist-nav-btn" type="button" onClick={() => stepCompareChange(-1)} aria-label="Previous change">
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                        </button>
+                        <button className="cm-hist-nav-btn" type="button" onClick={() => stepCompareChange(1)} aria-label="Next change">
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                    {/* Compact inline filters */}
+                    <div className="cm-hist-filters">
+                      <select className="cm-hist-filter" aria-label="Filter change type" value={compareFilterType} onChange={(event) => setCompareFilterType(event.target.value as CompareChangeType | "all")}>
+                        <option value="all">All types</option>
+                        <option value="modified">Modified</option>
+                        <option value="inserted">Inserted</option>
+                        <option value="deleted">Deleted</option>
+                        <option value="moved">Moved</option>
+                        <option value="format_only">Format only</option>
+                      </select>
+                      <select className="cm-hist-filter" aria-label="Filter change author" value={compareFilterAuthor} onChange={(event) => setCompareFilterAuthor(event.target.value)}>
+                        {compareAuthorOptions.map((author) => (
+                          <option key={author} value={author}>{author === "all" ? "All authors" : author}</option>
+                        ))}
+                      </select>
+                      <select className="cm-hist-filter" aria-label="Filter review state" value={compareFilterState} onChange={(event) => setCompareFilterState(event.target.value as CompareReviewState | "all")}>
+                        <option value="all">All states</option>
+                        <option value="pending">Pending</option>
+                        <option value="accepted">Accepted</option>
+                        <option value="rejected">Rejected</option>
+                        <option value="deferred">Deferred</option>
+                      </select>
+                      <label className="cm-hist-filter-check">
+                        <input type="checkbox" checked={compareUnresolvedOnly} onChange={(event) => setCompareUnresolvedOnly(event.target.checked)} />
+                        Unresolved
                       </label>
                     </div>
-                    <div className="cm-compare-nav-actions">
-                      <button className="cm-thread-action-btn" type="button" onClick={() => stepCompareChange(-1)}>
-                        Previous
-                      </button>
-                      <button className="cm-thread-action-btn" type="button" onClick={() => stepCompareChange(1)}>
-                        Next
-                      </button>
-                    </div>
+                    {/* Change list */}
                     {filteredCompareChanges.length === 0 ? (
-                      <p className="cm-commit-meta">No changes match current filters.</p>
+                      <p className="cm-hist-empty">No changes match filters.</p>
                     ) : (
-                      <div className="cm-compare-change-list">
+                      <div className="cm-hist-change-list">
                         {filteredCompareChanges.map((change) => (
                           <button
                             key={change.id}
-                            className={`cm-change-row ${activeCompareChangeId === change.id ? "cm-change-row--active" : ""}`.trim()}
+                            className={`cm-hist-change ${activeCompareChangeId === change.id ? "cm-hist-change--active" : ""}`}
                             type="button"
                             onClick={() => focusCompareChange(change)}
                           >
-                            <div className="cm-change-row-top">
-                              <span className={`cm-change-type cm-badge-change cm-badge-${change.type}`}>{change.type}</span>
-                              <span className="cm-compare-change-id">{change.id}</span>
+                            <div className="cm-hist-change-header">
+                              <span className={`cm-hist-change-type cm-hist-ct--${change.type}`}>{change.type}</span>
+                              <span className={`cm-hist-change-state cm-hist-cs--${change.reviewState}`}>{change.reviewState}</span>
                             </div>
-                            <div className="cm-change-snippet">{change.snippet || "Change"}</div>
-                            <div className="cm-change-meta">
+                            <div className="cm-hist-change-body">{change.snippet || "Change"}</div>
+                            <div className="cm-hist-change-footer">
                               <span>{change.author.name}</span>
-                              <span>{change.editedAt ? new Date(change.editedAt).toLocaleString() : "Unknown time"}</span>
-                              <span className={`cm-change-state cm-change-state--${change.reviewState}`}>{change.reviewState}</span>
+                              {change.threadIds.length > 0 && <span className="cm-hist-change-threads">{change.threadIds.length} thread{change.threadIds.length > 1 ? "s" : ""}</span>}
                             </div>
-                            {(change.threadIds.length > 0 || change.blockers.length > 0) ? (
-                              <div className="cm-change-threads">
-                                {change.threadIds.length > 0 ? <span>Threads {change.threadIds.length}</span> : null}
-                                {change.blockers.length > 0 ? <span>Blockers {change.blockers.length}</span> : null}
-                              </div>
-                            ) : null}
                             {change.reviewState === "pending" && workspace?.document.proposalId && (
-                              <div className="cm-change-actions">
-                                <button
-                                  className="cm-thread-action-btn"
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); void handleChangeReviewAction(change.id, "accepted"); }}
-                                  title="Accept this change"
-                                >
-                                  Accept
-                                </button>
-                                <button
-                                  className="cm-thread-action-btn"
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); void handleChangeReviewAction(change.id, "rejected"); }}
-                                  title="Reject this change"
-                                >
-                                  Reject
-                                </button>
-                                <button
-                                  className="cm-thread-action-btn"
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); void handleChangeReviewAction(change.id, "deferred"); }}
-                                  title="Defer this change"
-                                >
-                                  Defer
-                                </button>
+                              <div className="cm-hist-change-actions">
+                                <button className="cm-hist-action cm-hist-action--accept" type="button" onClick={(e) => { e.stopPropagation(); void handleChangeReviewAction(change.id, "accepted"); }}>Accept</button>
+                                <button className="cm-hist-action cm-hist-action--reject" type="button" onClick={(e) => { e.stopPropagation(); void handleChangeReviewAction(change.id, "rejected"); }}>Reject</button>
+                                <button className="cm-hist-action" type="button" onClick={(e) => { e.stopPropagation(); void handleChangeReviewAction(change.id, "deferred"); }}>Defer</button>
                               </div>
                             )}
                           </button>
@@ -3196,202 +3125,192 @@ export function WorkspacePage() {
                     )}
                   </div>
                 ) : null}
-                {compareOptions.length > 1 ? (
-                  <div className="cm-history-compare-controls">
-                    <label className="cm-compose-select-wrap">
-                      <span>From</span>
-                      <select
-                        className="cm-compose-select"
-                        aria-label="Compare from commit"
-                        value={compareFromHash}
-                        onChange={(event) => setCompareFromHash(event.target.value)}
-                      >
-                        <option value="">Select commit</option>
-                        {compareOptions.map((option) => (
-                          <option key={`from-${option.hash}`} value={option.hash}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="cm-compose-select-wrap">
-                      <span>To</span>
-                      <select
-                        className="cm-compose-select"
-                        aria-label="Compare to commit"
-                        value={compareToHash}
-                        onChange={(event) => setCompareToHash(event.target.value)}
-                      >
-                        <option value="">Select commit</option>
-                        {compareOptions.map((option) => (
-                          <option key={`to-${option.hash}`} value={option.hash}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <button
-                      className="cm-compose-send"
-                      type="button"
-                      disabled={!compareFromHash || !compareToHash || compareFromHash === compareToHash}
-                      onClick={() => {
-                        void compareSelectedCommits();
-                      }}
-                    >
-                      Compare Selected
-                    </button>
-                  </div>
-                ) : (
-                  <div className="cm-approval-fallback">
-                    <strong>Compare</strong>
-                    <p className="cm-commit-meta">Need at least two commits to compare versions.</p>
-                  </div>
-                )}
-                <div className="cm-approval-fallback">
-                  <strong>{historyData?.branch ?? "active"} commits</strong>
-                  {(historyData?.commits ?? workspace.history).map((item) => (
-                    <div
-                      className={`cm-commit-row ${compareFromHash === item.hash || compareToHash === item.hash ? "active" : ""}`}
-                      key={`${historyData?.branch ?? "active"}-${item.hash}`}
-                      onClick={() => {
-                        void compareVersionAgainstCurrent(item.hash, `${historyData?.branch ?? "active"} · ${item.hash.slice(0, 7)}`);
-                      }}
-                      title="Open this version and compare with current"
-                    >
-                      <div className="cm-commit-hash">{item.hash}</div>
-                      <div className="cm-commit-main">
-                        <div className="cm-commit-msg">{item.message}</div>
-                        <div className="cm-commit-meta">{item.meta}</div>
+
+                {/* ── Commit timeline ── */}
+                {(() => {
+                  const branchCommits = historyData?.commits ?? workspace.history;
+                  const branchLabel = historyData?.branch ?? "active";
+                  return (
+                    <div className="cm-hist-timeline">
+                      <div className="cm-hist-section-head">
+                        <span>{branchLabel}</span>
+                        <span className="cm-hist-section-count">{branchCommits.length}</span>
+                      </div>
+                      <div className="cm-hist-commit-list">
+                        {branchCommits.map((item, idx) => {
+                          const parts = item.meta.split(" · ");
+                          const author = parts[0]?.trim() ?? "";
+                          const time = parts[1]?.trim() ?? "";
+                          const isSelected = compareFromHash === item.hash || compareToHash === item.hash;
+                          return (
+                            <button
+                              className={`cm-hist-commit ${isSelected ? "cm-hist-commit--selected" : ""}`}
+                              key={`${branchLabel}-${item.hash}`}
+                              type="button"
+                              onClick={() => { void compareVersionAgainstCurrent(item.hash, `${branchLabel} · ${item.hash.slice(0, 7)}`); }}
+                              title="Compare with current"
+                            >
+                              <div className="cm-hist-commit-dot">{idx === 0 && <div className="cm-hist-commit-dot-inner" />}</div>
+                              <div className="cm-hist-commit-body">
+                                <div className="cm-hist-commit-msg">{item.message}</div>
+                                <div className="cm-hist-commit-info">
+                                  <span className="cm-hist-commit-author">{author}</span>
+                                  {time && <span className="cm-hist-commit-time">{time}</span>}
+                                  <code className="cm-hist-commit-hash">{item.hash.slice(0, 7)}</code>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
+
+                {/* ── Main branch commits (when on proposal) ── */}
                 {mainHistoryData ? (
-                  <div className="cm-approval-fallback">
-                    <strong>{mainHistoryData.branch} commits</strong>
-                    {mainHistoryData.commits.map((item) => (
-                      <div
-                        className={`cm-commit-row ${compareFromHash === item.hash || compareToHash === item.hash ? "active" : ""}`}
-                        key={`${mainHistoryData.branch}-${item.hash}`}
-                        onClick={() => {
-                          void compareVersionAgainstCurrent(item.hash, `main · ${item.hash.slice(0, 7)}`);
-                        }}
-                        title="Open this version and compare with current"
-                      >
-                        <div className="cm-commit-hash">{item.hash}</div>
-                        <div className="cm-commit-main">
-                          <div className="cm-commit-msg">{item.message}</div>
-                          <div className="cm-commit-meta">{item.meta}</div>
-                        </div>
-                      </div>
-                    ))}
+                  <div className="cm-hist-timeline">
+                    <div className="cm-hist-section-head">
+                      <span>{mainHistoryData.branch}</span>
+                      <span className="cm-hist-section-count">{mainHistoryData.commits.length}</span>
+                    </div>
+                    <div className="cm-hist-commit-list">
+                      {mainHistoryData.commits.map((item, idx) => {
+                        const parts = item.meta.split(" · ");
+                        const author = parts[0]?.trim() ?? "";
+                        const time = parts[1]?.trim() ?? "";
+                        const isSelected = compareFromHash === item.hash || compareToHash === item.hash;
+                        return (
+                          <button
+                            className={`cm-hist-commit ${isSelected ? "cm-hist-commit--selected" : ""}`}
+                            key={`${mainHistoryData.branch}-${item.hash}`}
+                            type="button"
+                            onClick={() => { void compareVersionAgainstCurrent(item.hash, `main · ${item.hash.slice(0, 7)}`); }}
+                            title="Compare with current"
+                          >
+                            <div className="cm-hist-commit-dot">{idx === 0 && <div className="cm-hist-commit-dot-inner" />}</div>
+                            <div className="cm-hist-commit-body">
+                              <div className="cm-hist-commit-msg">{item.message}</div>
+                              <div className="cm-hist-commit-info">
+                                <span className="cm-hist-commit-author">{author}</span>
+                                {time && <span className="cm-hist-commit-time">{time}</span>}
+                                <code className="cm-hist-commit-hash">{item.hash.slice(0, 7)}</code>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 ) : null}
+
+                {/* ── Named Versions ── */}
                 {historyData?.namedVersions.length ? (
-                  <div className="cm-approval-fallback">
-                    <strong>Named Versions</strong>
-                    {historyData.namedVersions.map((version) => (
-                      <div
-                        className={`cm-commit-row ${compareFromHash === version.hash || compareToHash === version.hash ? "active" : ""}`}
-                        key={`${version.hash}-${version.name}`}
-                        onClick={() => {
-                          void compareVersionAgainstCurrent(version.hash, `named version: ${version.name}`);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            void compareVersionAgainstCurrent(version.hash, `named version: ${version.name}`);
-                          }
-                        }}
-                        role="button"
-                        tabIndex={0}
-                        title="Open this named version and compare with current"
-                      >
-                        <div className="cm-commit-hash">{version.hash}</div>
-                        <div className="cm-commit-main">
-                          <div className="cm-commit-msg">{version.name}</div>
-                          <div className="cm-commit-meta">{version.createdBy}</div>
-                        </div>
-                      </div>
-                    ))}
+                  <div className="cm-hist-timeline cm-hist-timeline--named">
+                    <div className="cm-hist-section-head">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.5 2.5h5l1.5 2H14.5v9h-13z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/></svg>
+                      <span>Named Versions</span>
+                      <span className="cm-hist-section-count">{historyData.namedVersions.length}</span>
+                    </div>
+                    <div className="cm-hist-commit-list">
+                      {historyData.namedVersions.map((version) => {
+                        const isSelected = compareFromHash === version.hash || compareToHash === version.hash;
+                        return (
+                          <button
+                            className={`cm-hist-commit cm-hist-commit--named ${isSelected ? "cm-hist-commit--selected" : ""}`}
+                            key={`${version.hash}-${version.name}`}
+                            type="button"
+                            onClick={() => { void compareVersionAgainstCurrent(version.hash, `named version: ${version.name}`); }}
+                            title="Compare with current"
+                          >
+                            <div className="cm-hist-commit-dot"><div className="cm-hist-commit-dot-tag" /></div>
+                            <div className="cm-hist-commit-body">
+                              <div className="cm-hist-commit-msg">{version.name}</div>
+                              <div className="cm-hist-commit-info">
+                                <span className="cm-hist-commit-author">{version.createdBy}</span>
+                                <code className="cm-hist-commit-hash">{version.hash.slice(0, 7)}</code>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 ) : null}
-                {historyLoading ? <div className="cm-commit-meta">Loading history…</div> : null}
-                {historyError ? <div className="cm-commit-meta">{historyError}</div> : null}
-                {compareSummary ? (
-                  <div className="cm-approval-fallback">
-                    <strong>Latest Compare</strong>
-                    <pre className="cm-commit-meta" style={{ whiteSpace: "pre-wrap" }}>{compareSummary}</pre>
+
+                {/* ── Status ── */}
+                {historyLoading && <div className="cm-hist-status">Loading history…</div>}
+                {historyError && <div className="cm-hist-status cm-hist-status--error">{historyError}</div>}
+                {compareSummary && (
+                  <div className="cm-hist-summary">
+                    <pre>{compareSummary}</pre>
                   </div>
-                ) : null}
+                )}
               </div>
             </div>
           )}
 
           {activeTab === "decisions" && (
             <div className="cm-panel-content active">
-              <div className="cm-panel-scroll cm-decision-controls">
-                <div className="cm-approval-fallback">
-                  <strong>Decision Log</strong>
-                  <p className="cm-commit-meta">
-                    Resolved thread outcomes and merge decisions appear here once discussions are closed.
-                  </p>
-                </div>
-                <label className="cm-compose-select-wrap">
-                  <span>Outcome</span>
-                  <select
-                    className="cm-compose-select"
-                    value={decisionOutcomeFilter}
-                    onChange={(event) => setDecisionOutcomeFilter(event.target.value as typeof decisionOutcomeFilter)}
-                  >
-                    <option value="">All</option>
+              <div className="cm-panel-scroll cm-dlog">
+                {/* ── Compact filter bar ── */}
+                <div className="cm-dlog-toolbar">
+                  <select className="cm-dlog-filter" value={decisionOutcomeFilter} onChange={(event) => setDecisionOutcomeFilter(event.target.value as typeof decisionOutcomeFilter)} aria-label="Filter by outcome">
+                    <option value="">All outcomes</option>
                     <option value="ACCEPTED">Accepted</option>
                     <option value="REJECTED">Rejected</option>
                     <option value="DEFERRED">Deferred</option>
                   </select>
-                </label>
-                <label className="cm-compose-select-wrap">
-                  <span>Author</span>
-                  <input
-                    className="cm-compose-select"
-                    value={decisionAuthor}
-                    onChange={(event) => setDecisionAuthor(event.target.value)}
-                    placeholder="Filter by author"
-                  />
-                </label>
-                <label className="cm-compose-select-wrap">
-                  <span>Search</span>
-                  <input
-                    className="cm-compose-select"
-                    value={decisionQuery}
-                    onChange={(event) => setDecisionQuery(event.target.value)}
-                    placeholder="Thread, rationale..."
-                  />
-                </label>
-              </div>
-              {decisionRows && decisionRows.length === 0 ? (
-                <div className="cm-panel-scroll">
-                  <div className="cm-panel-fallback-card">
-                    <h3>No decisions yet</h3>
-                    <p>Resolve a thread or merge a proposal to create the first decision log entry.</p>
-                  </div>
+                  <input className="cm-dlog-search" value={decisionQuery} onChange={(event) => setDecisionQuery(event.target.value)} placeholder="Search decisions…" aria-label="Search decisions" />
+                  <input className="cm-dlog-search cm-dlog-search--sm" value={decisionAuthor} onChange={(event) => setDecisionAuthor(event.target.value)} placeholder="Author" aria-label="Filter by author" />
                 </div>
-              ) : (
-                <DecisionLogTable
-                  items={
-                    decisionRows
+                {/* ── Decision entries ── */}
+                {decisionRows && decisionRows.length === 0 ? (
+                  <div className="cm-dlog-empty">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5z" stroke="var(--ink-4)" strokeWidth="1.5" strokeLinejoin="round"/><path d="M2 17l10 5 10-5" stroke="var(--ink-4)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 12l10 5 10-5" stroke="var(--ink-4)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    <p>No decisions yet</p>
+                    <span>Resolve a thread or merge a proposal to create the first entry.</span>
+                  </div>
+                ) : (
+                  <div className="cm-dlog-list">
+                    {(decisionRows
                       ? decisionRows.map((row) => ({
-                          date: `${new Date(row.decidedAt).toISOString().slice(0, 10)} · ${row.commitHash}`,
-                          tags: [{ label: row.outcome, tone: row.outcome === "REJECTED" ? "rejected" : row.outcome === "DEFERRED" ? "deferred" : "approved" }],
+                          date: new Date(row.decidedAt).toISOString().slice(0, 10),
+                          hash: row.commitHash,
+                          tags: [{ label: row.outcome, tone: (row.outcome === "REJECTED" ? "rejected" : row.outcome === "DEFERRED" ? "deferred" : "approved") as "approved" | "rejected" | "deferred" }],
                           text: row.rationale,
                           by: row.decidedBy,
                         }))
-                      : workspace.decisions
-                  }
-                  note="Auto-generated from resolved threads and merges. Filters query the decision log API."
-                  className="cm-panel-scroll"
-                />
-              )}
+                      : workspace.decisions.map((d) => ({
+                          date: d.date.split(" · ")[0] ?? d.date,
+                          hash: d.date.split(" · ")[1] ?? "",
+                          tags: d.tags,
+                          text: d.text,
+                          by: d.by,
+                        }))
+                    ).map((entry, idx) => (
+                      <div className="cm-dlog-entry" key={`${entry.date}-${idx}`}>
+                        <div className="cm-dlog-entry-left">
+                          <div className={`cm-dlog-indicator cm-dlog-indicator--${entry.tags[0]?.tone ?? "approved"}`} />
+                        </div>
+                        <div className="cm-dlog-entry-body">
+                          <div className="cm-dlog-entry-head">
+                            {entry.tags.map((tag) => (
+                              <span key={tag.label} className={`cm-dlog-tag cm-dlog-tag--${tag.tone}`}>{tag.label}</span>
+                            ))}
+                            <span className="cm-dlog-entry-date">{entry.date}</span>
+                          </div>
+                          <div className="cm-dlog-entry-text">{entry.text}</div>
+                          <div className="cm-dlog-entry-meta">
+                            <span className="cm-dlog-entry-author">{entry.by}</span>
+                            {entry.hash && <code className="cm-dlog-entry-hash">{entry.hash.slice(0, 7)}</code>}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -3436,9 +3355,9 @@ export function WorkspacePage() {
       </div>
 
       <div className="cm-statusbar">
-        <div className="cm-statusbar-item">
+        <div className="cm-statusbar-item" title={onlineUsers.length > 0 ? onlineUsers.join(", ") : undefined}>
           <div className="cm-statusbar-dot" />
-          {realtimeStatus === "connected" ? "Connected" : realtimeStatus === "connecting" ? "Connecting" : "Offline"} · {onlineCount} online
+          {realtimeStatus === "connected" ? "Connected" : realtimeStatus === "connecting" ? "Connecting" : "Offline"} · {onlineUsers.length} online
         </div>
         <div className="cm-statusbar-item cm-status-branch">{workspace.document.branch.split(" -> ")[0]}</div>
         <div className="cm-statusbar-item">{workspace.threads.length} threads · {resolvedThreads} resolved · {openThreads} open</div>
