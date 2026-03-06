@@ -65,6 +65,7 @@ function sendJson(client, payload) {
 
 function parseFrames(buffer) {
   const messages = [];
+  const binaryMessages = [];
   const pings = [];
   let offset = 0;
   let shouldClose = false;
@@ -116,6 +117,8 @@ function parseFrames(buffer) {
 
     if (opcode === 0x9) {
       pings.push(payload);
+    } else if (opcode === 0x2) {
+      binaryMessages.push(payload);
     } else if (opcode === 0x1) {
       messages.push(payload.toString("utf8"));
     }
@@ -125,6 +128,7 @@ function parseFrames(buffer) {
 
   return {
     messages,
+    binaryMessages,
     pings,
     shouldClose,
     remaining: buffer.subarray(offset)
@@ -294,6 +298,8 @@ function handleDocumentUpdate(room, client, payload) {
 
   // Preserve canonical ProseMirror doc when provided
   const doc = payload.doc && typeof payload.doc === "object" ? payload.doc : undefined;
+  // Cursor bundled with the update so receivers apply position + content atomically
+  const cursor = payload.cursor && typeof payload.cursor === "object" ? payload.cursor : undefined;
 
   const now = new Date().toISOString();
   const update = {
@@ -319,11 +325,13 @@ function handleDocumentUpdate(room, client, payload) {
   void persistSnapshot(room, room.snapshot);
 
   for (const peer of room.clients) {
+    if (peer.id === client.id) continue;
     sendJson(peer, {
       type: "document_update",
       actor: client.userName,
       content,
       ...(doc ? { doc } : {}),
+      ...(cursor ? { cursor } : {}),
       at: now
     });
   }
@@ -511,6 +519,14 @@ server.on("upgrade", async (req, socket) => {
         payload = { text: raw };
       }
       broadcastMessage(room, client, payload);
+    }
+
+    for (const bin of parsed.binaryMessages) {
+      for (const peer of room.clients) {
+        if (peer.id !== client.id) {
+          writeFrame(peer.socket, bin, 0x02);
+        }
+      }
     }
 
     if (parsed.shouldClose) {

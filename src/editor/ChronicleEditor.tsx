@@ -21,6 +21,8 @@ import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
 import Image from "@tiptap/extension-image";
 import { FindReplace } from "./extensions/find-replace";
+import { CollaborationCursors } from "./extensions/collaboration-cursors";
+import type { Awareness } from "y-protocols/awareness";
 import { common, createLowlight } from "lowlight";
 import { useCallback, useEffect, useRef } from "react";
 
@@ -48,6 +50,8 @@ type Props = {
   diffMode?: "split" | "unified";
   activeChangeNodeId?: string | null;
   threadAnchors?: ThreadAnchor[];
+  awareness?: Awareness | null;
+  onLocalSelectionChange?: (anchor: number, head: number) => void;
   className?: string;
 };
 
@@ -64,6 +68,8 @@ export function ChronicleEditor({
   diffMode = "unified",
   activeChangeNodeId = null,
   threadAnchors = [],
+  awareness = null,
+  onLocalSelectionChange,
   className = "",
 }: Props) {
   const serializedContent = JSON.stringify(content);
@@ -71,6 +77,9 @@ export function ChronicleEditor({
   // Mutable ref for diff state so the ProseMirror plugin always reads latest values
   const diffStateRef = useRef<DiffState>({ manifest: diffManifest, visible: diffVisible, mode: diffMode, activeChangeNodeId });
   const threadAnchorsRef = useRef<ThreadAnchor[]>(threadAnchors);
+  const awarenessRef = useRef<Awareness | null>(awareness);
+  const onLocalSelectionChangeRef = useRef(onLocalSelectionChange);
+  const suppressCursorRef = useRef(false);
 
   const editor = useEditor({
     extensions: [
@@ -126,6 +135,13 @@ export function ChronicleEditor({
       ThreadMarkers.configure({
         getAnchors: () => threadAnchorsRef.current,
       }),
+      CollaborationCursors.configure({
+        getAwareness: () => awarenessRef.current,
+        onSelectionChange: (anchor: number, head: number) => {
+          onLocalSelectionChangeRef.current?.(anchor, head);
+        },
+        isSuppressed: () => suppressCursorRef.current,
+      }),
     ],
     content,
     editable,
@@ -144,6 +160,12 @@ export function ChronicleEditor({
       editor.view.dispatch(editor.state.tr.setMeta("diffUpdate", true));
     }
   }, [editor, diffManifest, diffVisible, diffMode, activeChangeNodeId]);
+
+  // Update awareness ref
+  useEffect(() => {
+    awarenessRef.current = awareness;
+    onLocalSelectionChangeRef.current = onLocalSelectionChange;
+  }, [awareness, onLocalSelectionChange]);
 
   // Update thread anchors ref and force decoration recalculation
   useEffect(() => {
@@ -165,7 +187,37 @@ export function ChronicleEditor({
     }
     const current = JSON.stringify(editor.getJSON());
     if (current !== serializedContent) {
-      editor.commands.setContent(content, { emitUpdate: false });
+      suppressCursorRef.current = true;
+
+      // Incremental diff-and-replace instead of setContent.
+      // setContent replaces the entire document in one step, which
+      // destroys all ProseMirror position mapping — the cursor jumps
+      // to position 0 or end-of-doc.  By computing the minimal changed
+      // region and applying a single replace step, ProseMirror's step
+      // maps automatically preserve the cursor in unchanged regions.
+      const newDoc = editor.schema.nodeFromJSON(content);
+      const start = editor.state.doc.content.findDiffStart(newDoc.content);
+
+      if (start !== null) {
+        const endResult = editor.state.doc.content.findDiffEnd(newDoc.content);
+        if (endResult) {
+          let { a: endA, b: endB } = endResult;
+          // Handle overlapping diff boundaries
+          const overlap = start - Math.min(endA, endB);
+          if (overlap > 0) {
+            endA += overlap;
+            endB += overlap;
+          }
+          editor.view.dispatch(
+            editor.state.tr
+              .replace(start, endA, newDoc.slice(start, endB))
+              .setMeta("addToHistory", false)
+              .setMeta("preventUpdate", true),
+          );
+        }
+      }
+
+      suppressCursorRef.current = false;
     }
   }, [editor, serializedContent, content]);
 

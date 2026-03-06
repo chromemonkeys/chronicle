@@ -801,7 +801,7 @@ export function connectWorkspaceRealtime(
   return socket;
 }
 
-export function sendWorkspaceRealtimeUpdate(socket: WebSocket | null, content: WorkspaceContent, doc?: DocumentContent) {
+export function sendWorkspaceRealtimeUpdate(socket: WebSocket | null, content: WorkspaceContent, doc?: DocumentContent, cursor?: { anchor: number; head: number } | null) {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     return;
   }
@@ -809,7 +809,8 @@ export function sendWorkspaceRealtimeUpdate(socket: WebSocket | null, content: W
     JSON.stringify({
       type: "doc_update",
       content,
-      ...(doc ? { doc } : {})
+      ...(doc ? { doc } : {}),
+      ...(cursor ? { cursor } : {})
     })
   );
 }

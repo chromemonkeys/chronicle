@@ -15,29 +15,6 @@ interface DiffNavigatorProps {
   onReviewAction: (changeId: string, action: "accepted" | "rejected" | "deferred") => void;
 }
 
-const typeColors: Record<Change["type"], string> = {
-  inserted: "var(--green)",
-  deleted: "var(--red)",
-  modified: "var(--yellow)",
-  moved: "var(--blue)",
-  format_only: "var(--ink-4)",
-};
-
-const typeBgColors: Record<Change["type"], string> = {
-  inserted: "var(--green-soft)",
-  deleted: "var(--red-soft)",
-  modified: "var(--yellow-soft)",
-  moved: "var(--blue-soft)",
-  format_only: "var(--paper-3)",
-};
-
-const stateLabels: Record<string, string> = {
-  pending: "Pending",
-  accepted: "Accepted",
-  rejected: "Rejected",
-  deferred: "Deferred",
-};
-
 function formatRelativeTime(dateStr: string): string {
   const date = new Date(dateStr);
   const now = Date.now();
@@ -54,7 +31,7 @@ function formatRelativeTime(dateStr: string): string {
 export function DiffNavigator({
   changes,
   activeChangeId,
-  diffMode,
+  diffMode: _diffMode,
   onChangeClick,
   onStepChange,
   onReviewAction,
@@ -80,9 +57,13 @@ export function DiffNavigator({
   if (changes.length === 0) {
     return (
       <div className="cm-panel-scroll">
-        <div className="cm-panel-fallback-card">
-          <h3>No changes</h3>
-          <p>Compare two commits to see individual changes listed here.</p>
+        <div className="cm-diffnav-empty">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+            <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="var(--ink-4)" strokeWidth="1.5" strokeLinecap="round"/>
+            <rect x="9" y="2" width="6" height="4" rx="1" stroke="var(--ink-4)" strokeWidth="1.5"/>
+          </svg>
+          <p>No changes</p>
+          <span>Compare two commits to see individual changes listed here.</span>
         </div>
       </div>
     );
@@ -90,20 +71,27 @@ export function DiffNavigator({
 
   return (
     <div className="cm-panel-content active">
-      <div className="cm-panel-scroll cm-change-filters">
-        <div className="cm-change-summary">
-          {filtered.length === changes.length
-            ? `${changes.length} change${changes.length === 1 ? "" : "s"}`
-            : `${filtered.length} of ${changes.length} changes`}
-          {" · "}{diffMode} mode
+      <div className="cm-panel-scroll cm-diffnav">
+        {/* ── Header with count + nav ── */}
+        <div className="cm-diffnav-head">
+          <div className="cm-diffnav-count">
+            <span className="cm-diffnav-num">{filtered.length}</span>
+            {filtered.length !== changes.length && <span className="cm-diffnav-of">/ {changes.length}</span>}
+            <span className="cm-diffnav-label">changes</span>
+          </div>
+          <div className="cm-diffnav-nav">
+            <button className="cm-diffnav-step" type="button" onClick={() => onStepChange(-1)} aria-label="Previous change">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+            <button className="cm-diffnav-step" type="button" onClick={() => onStepChange(1)} aria-label="Next change">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+          </div>
         </div>
-        <label className="cm-compose-select-wrap">
-          <span>Type</span>
-          <select
-            className="cm-compose-select"
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value as ChangeTypeFilter)}
-          >
+
+        {/* ── Compact filters ── */}
+        <div className="cm-diffnav-filters">
+          <select className="cm-diffnav-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as ChangeTypeFilter)}>
             <option value="">All types</option>
             <option value="inserted">Inserted</option>
             <option value="deleted">Deleted</option>
@@ -111,110 +99,57 @@ export function DiffNavigator({
             <option value="moved">Moved</option>
             <option value="format_only">Format only</option>
           </select>
-        </label>
-        <label className="cm-compose-select-wrap">
-          <span>State</span>
-          <select
-            className="cm-compose-select"
-            value={stateFilter}
-            onChange={(e) => setStateFilter(e.target.value as ChangeStateFilter)}
-          >
+          <select className="cm-diffnav-select" value={stateFilter} onChange={(e) => setStateFilter(e.target.value as ChangeStateFilter)}>
             <option value="">All states</option>
             <option value="pending">Pending</option>
             <option value="accepted">Accepted</option>
             <option value="rejected">Rejected</option>
             <option value="deferred">Deferred</option>
           </select>
-        </label>
-        <button
-          className={`cm-tool-btn ${unresolvedOnly ? "active" : ""}`}
-          type="button"
-          onClick={() => setUnresolvedOnly((v) => !v)}
-          title="Show only unresolved (pending) changes"
-        >
-          Unresolved only
-        </button>
-        <div className="cm-compare-nav-actions">
-          <button className="cm-thread-action-btn" type="button" onClick={() => onStepChange(-1)}>
-            Prev
-          </button>
-          <button className="cm-thread-action-btn" type="button" onClick={() => onStepChange(1)}>
-            Next
-          </button>
+          <label className="cm-diffnav-check">
+            <input type="checkbox" checked={unresolvedOnly} onChange={(e) => setUnresolvedOnly(e.target.checked)} />
+            Unresolved
+          </label>
         </div>
-      </div>
-      <div className="cm-panel-scroll">
+
+        {/* ── Change list ── */}
         {filtered.length === 0 ? (
-          <p className="cm-commit-meta" style={{ padding: "12px 10px" }}>No changes match current filters.</p>
-        ) : filtered.map((change) => {
-          const isActive = change.id === activeChangeId;
-          return (
-            <div
-              key={change.id}
-              className={`cm-change-row ${isActive ? "cm-change-row--active" : ""}`}
-              onClick={() => onChangeClick(change)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  onChangeClick(change);
-                }
-              }}
-            >
-              <div className="cm-change-row-top">
-                <span
-                  className="cm-change-type"
-                  style={{ color: typeColors[change.type], background: typeBgColors[change.type] }}
+          <p className="cm-diffnav-none">No changes match filters.</p>
+        ) : (
+          <div className="cm-diffnav-list">
+            {filtered.map((change) => {
+              const isActive = change.id === activeChangeId;
+              return (
+                <button
+                  key={change.id}
+                  className={`cm-diffnav-item ${isActive ? "cm-diffnav-item--active" : ""}`}
+                  type="button"
+                  onClick={() => onChangeClick(change)}
                 >
-                  {change.type}
-                </span>
-                <span
-                  className={`cm-change-state cm-change-state--${change.reviewState}`}
-                >
-                  {stateLabels[change.reviewState] ?? change.reviewState}
-                </span>
-                {change.threadIds.length > 0 && (
-                  <span className="cm-change-threads" title={`${change.threadIds.length} thread${change.threadIds.length === 1 ? "" : "s"}`}>
-                    <svg viewBox="0 0 20 20" width="12" height="12" aria-hidden="true">
-                      <path d="M3 4.5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8.7L5 15.2v-2.7H5a2 2 0 0 1-2-2v-6Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-                    </svg>
-                    {change.threadIds.length}
-                  </span>
-                )}
-              </div>
-              <div className="cm-change-snippet">{change.snippet || "(empty)"}</div>
-              <div className="cm-change-meta">
-                {change.author.name} · {formatRelativeTime(change.editedAt)}
-              </div>
-              {change.reviewState === "pending" && (
-                <div className="cm-change-actions">
-                  <button
-                    className="cm-thread-action-btn"
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onReviewAction(change.id, "accepted"); }}
-                  >
-                    Accept
-                  </button>
-                  <button
-                    className="cm-thread-action-btn"
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onReviewAction(change.id, "rejected"); }}
-                  >
-                    Reject
-                  </button>
-                  <button
-                    className="cm-thread-action-btn"
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onReviewAction(change.id, "deferred"); }}
-                  >
-                    Defer
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
+                  <div className="cm-diffnav-item-head">
+                    <span className={`cm-diffnav-type cm-diffnav-ct--${change.type}`}>{change.type.replace("_", " ")}</span>
+                    <span className={`cm-diffnav-state cm-diffnav-cs--${change.reviewState}`}>{change.reviewState}</span>
+                  </div>
+                  <div className="cm-diffnav-snippet">{change.snippet || "(empty)"}</div>
+                  <div className="cm-diffnav-meta">
+                    <span>{change.author.name}</span>
+                    <span>{formatRelativeTime(change.editedAt)}</span>
+                    {change.threadIds.length > 0 && (
+                      <span className="cm-diffnav-threads">{change.threadIds.length} thread{change.threadIds.length > 1 ? "s" : ""}</span>
+                    )}
+                  </div>
+                  {change.reviewState === "pending" && (
+                    <div className="cm-diffnav-actions">
+                      <button className="cm-diffnav-action cm-diffnav-action--accept" type="button" onClick={(e) => { e.stopPropagation(); onReviewAction(change.id, "accepted"); }}>Accept</button>
+                      <button className="cm-diffnav-action cm-diffnav-action--reject" type="button" onClick={(e) => { e.stopPropagation(); onReviewAction(change.id, "rejected"); }}>Reject</button>
+                      <button className="cm-diffnav-action" type="button" onClick={(e) => { e.stopPropagation(); onReviewAction(change.id, "deferred"); }}>Defer</button>
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

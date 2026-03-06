@@ -442,6 +442,7 @@ export type SyncEvent =
       at: string;
       content: WorkspaceContent;
       doc?: import("../editor/schema").DocumentContent;
+      cursor?: { anchor: number; head: number };
     }
   | {
       type: "message";

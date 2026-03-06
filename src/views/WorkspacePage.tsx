@@ -70,6 +70,7 @@ import { ThreadComposer } from "../ui/ThreadComposer";
 import { ThreadList } from "../ui/ThreadList";
 import { ExportMenu } from "../components/ExportMenu";
 import { PresenceBar } from "../editor/PresenceBar";
+import { WebSocketSyncProvider } from "../editor/sync/WebSocketSyncProvider";
 import { ChronicleEditor } from "../editor/ChronicleEditor";
 import { DiffNavigator } from "../ui/DiffNavigator";
 import { SideBySideDiff } from "../editor/SideBySideDiff";
@@ -459,7 +460,11 @@ export function WorkspacePage() {
   const [showTrashView, setShowTrashView] = useState(false);
   const threadRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const realtimeSocketRef = useRef<WebSocket | null>(null);
+  const syncProviderRef = useRef<WebSocketSyncProvider | null>(null);
+  const [awarenessInstance, setAwarenessInstance] = useState<import("y-protocols/awareness").Awareness | null>(null);
   const realtimeSendTimerRef = useRef<number | null>(null);
+  const pendingCursorRef = useRef<{ anchor: number; head: number } | null>(null);
+  const pendingRemoteCursorRef = useRef<{ actor: string; cursor: { anchor: number; head: number } } | null>(null);
   const latestRealtimeAtRef = useRef<number>(0);
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
   const [reviewDiff, setReviewDiff] = useState<DocumentComparePayload | null>(null);
@@ -1054,11 +1059,19 @@ export function WorkspacePage() {
       if (realtimeSocketRef.current) {
         realtimeSocketRef.current.close();
       }
+      syncProviderRef.current?.destroy();
+      syncProviderRef.current = null;
+      setAwarenessInstance(null);
       setRealtimeStatus("offline");
       setOnlineUsers([]);
       realtimeSocketRef.current = null;
       return;
     }
+
+    // Create awareness provider for collaborative cursors
+    const provider = new WebSocketSyncProvider(userName ?? "Anonymous", userColor(userName ?? "Anonymous"));
+    syncProviderRef.current = provider;
+    setAwarenessInstance(provider.getAwareness());
 
     setRealtimeStatus("connecting");
     const socket = connectWorkspaceRealtime(
@@ -1093,6 +1106,11 @@ export function WorkspacePage() {
           if (eventAt !== null) {
             latestRealtimeAtRef.current = eventAt;
           }
+          // Stash the bundled cursor so it can be applied after the editor
+          // renders the new content (see pendingRemoteCursorRef usage).
+          if (event.cursor && event.actor) {
+            pendingRemoteCursorRef.current = { actor: event.actor, cursor: event.cursor };
+          }
           setContentDraft(event.content);
           setDocDraft(event.doc ?? legacyContentToDoc(event.content, workspace.nodeIds));
           setSaveState("idle");
@@ -1106,15 +1124,51 @@ export function WorkspacePage() {
     if (!socket) {
       setRealtimeStatus("offline");
       realtimeSocketRef.current = null;
+      provider.destroy();
+      syncProviderRef.current = null;
+      setAwarenessInstance(null);
       return;
     }
     realtimeSocketRef.current = socket;
 
+    // Attach awareness provider to the socket once it opens
+    if (socket.readyState === WebSocket.OPEN) {
+      provider.attachSocket(socket);
+    } else {
+      const origOnOpen = socket.onopen;
+      socket.onopen = (ev) => {
+        provider.attachSocket(socket);
+        if (typeof origOnOpen === "function") origOnOpen.call(socket, ev);
+      };
+    }
+
     return () => {
       realtimeSocketRef.current = null;
+      provider.destroy();
+      syncProviderRef.current = null;
+      setAwarenessInstance(null);
       socket.close();
     };
-  }, [workspace?.document.id, workspace?.document.proposalId, workspace?.nodeIds]);
+  }, [workspace?.document.id, workspace?.document.proposalId, workspace?.nodeIds, userName]);
+
+  // Apply pending remote cursor after the editor has rendered the updated
+  // document content. This ensures cursor decorations are placed against
+  // the matching document state, preventing flicker.
+  useEffect(() => {
+    const pending = pendingRemoteCursorRef.current;
+    if (!pending || !syncProviderRef.current) return;
+    pendingRemoteCursorRef.current = null;
+    const awareness = syncProviderRef.current.getAwareness();
+    awareness.getStates().forEach((state, clientId) => {
+      if (clientId !== awareness.doc.clientID && state.user?.name === pending.actor) {
+        const current = awareness.getStates().get(clientId);
+        if (current) {
+          awareness.getStates().set(clientId, { ...current, cursor: pending.cursor });
+          awareness.emit("change", [{ added: [], updated: [clientId], removed: [] }, "remote"]);
+        }
+      }
+    });
+  }, [docDraft]);
 
   useEffect(() => {
     if (!workspace?.document.proposalId || workspaceMode !== "review") {
@@ -1347,7 +1401,7 @@ export function WorkspacePage() {
       window.clearTimeout(realtimeSendTimerRef.current);
     }
     realtimeSendTimerRef.current = window.setTimeout(() => {
-      sendWorkspaceRealtimeUpdate(realtimeSocketRef.current, nextContent, doc);
+      sendWorkspaceRealtimeUpdate(realtimeSocketRef.current, nextContent, doc, pendingCursorRef.current);
     }, 250);
     setSaveState("idle");
     setSaveError(null);
@@ -1364,6 +1418,17 @@ export function WorkspacePage() {
       }
     }
   }, [workspace?.threads]);
+
+  const handleLocalSelectionChange = useCallback((anchor: number, head: number) => {
+    pendingCursorRef.current = { anchor, head };
+    // If there is a pending document update, the cursor will be sent
+    // atomically with it so the receiver applies both at once.
+    // Only send a standalone awareness update when the user moves the
+    // cursor without editing (no pending doc update).
+    if (!realtimeSendTimerRef.current) {
+      syncProviderRef.current?.updateCursor(anchor, head);
+    }
+  }, []);
 
 
   function getCurrentAnchorOffsets() {
@@ -2663,6 +2728,8 @@ export function WorkspacePage() {
                     diffMode={diffMode}
                     activeChangeNodeId={compareActive ? activeCompareNodeId : null}
                     threadAnchors={threadAnchors}
+                    awareness={awarenessInstance}
+                    onLocalSelectionChange={handleLocalSelectionChange}
                     className="cm-editor-wrapper"
                   />
                 ) : null}
