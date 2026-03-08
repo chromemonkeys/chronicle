@@ -8,7 +8,6 @@ import type {
   MergeGateRole,
   SaveApprovalRulesRequest,
   SearchResponse,
-  SyncEvent,
   WorkspaceContent,
   WorkspacePayload,
   WorkspacesResponse
@@ -771,47 +770,15 @@ export async function saveNamedVersion(
   });
 }
 
-export function connectWorkspaceRealtime(
-  documentId: string,
-  proposalId: string,
-  onEvent: (event: SyncEvent) => void,
-  onClose: () => void
-) {
+export function getSyncWebSocketUrl(documentId: string, branchId: string): string | null {
   const token = getToken();
-  if (!token) {
-    return null;
-  }
+  if (!token) return null;
   const baseUrl = import.meta.env.VITE_SYNC_URL ?? "ws://localhost:8788/ws";
   const url = new URL(baseUrl);
   url.searchParams.set("token", token);
   url.searchParams.set("documentId", documentId);
-  url.searchParams.set("branchId", proposalId);
-
-  const socket = new WebSocket(url.toString());
-  socket.onmessage = (event) => {
-    try {
-      const payload = JSON.parse(event.data as string) as SyncEvent;
-      onEvent(payload);
-    } catch {
-      // no-op: malformed frame from dev sync gateway
-    }
-  };
-  socket.onclose = onClose;
-  socket.onerror = onClose;
-  return socket;
-}
-
-export function sendWorkspaceRealtimeUpdate(socket: WebSocket | null, content: WorkspaceContent, doc?: DocumentContent) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    return;
-  }
-  socket.send(
-    JSON.stringify({
-      type: "doc_update",
-      content,
-      ...(doc ? { doc } : {})
-    })
-  );
+  url.searchParams.set("branchId", branchId);
+  return url.toString();
 }
 
 export async function updateChangeReviewState(

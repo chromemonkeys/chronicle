@@ -5,7 +5,7 @@ import { useAuth } from "../state/AuthProvider";
 import {
   approveProposalGroup,
   approveProposalRole,
-  connectWorkspaceRealtime,
+  getStoredAuthToken,
   createDocument,
   createProposal,
   deleteDocument,
@@ -21,7 +21,6 @@ import {
   rejectProposalGroup,
   restoreDocument,
   saveApprovalRules,
-  sendWorkspaceRealtimeUpdate,
   fetchDocumentCompare,
   fetchDocumentHistory,
   fetchWorkspace,
@@ -40,6 +39,8 @@ import {
   voteProposalThread,
   updateChangeReviewState
 } from "../api/client";
+import * as Y from "yjs";
+import { WebsocketProvider } from "y-websocket";
 import type {
   AdminUser,
   CompareContentSnapshot,
@@ -269,17 +270,6 @@ function buildNodeLabelMap(doc: DocumentContent | null): Map<string, string> {
   return labels;
 }
 
-function parseRealtimeTimestamp(value?: string): number | null {
-  if (!value) {
-    return null;
-  }
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) {
-    return null;
-  }
-  return parsed;
-}
-
 function compareTypeRank(type: CompareChangeType): number {
   switch (type) {
     case "moved":
@@ -458,9 +448,7 @@ export function WorkspacePage() {
   const [sidebarProposals, setSidebarProposals] = useState<OpenProposalSummary[]>([]);
   const [showTrashView, setShowTrashView] = useState(false);
   const threadRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const realtimeSocketRef = useRef<WebSocket | null>(null);
-  const realtimeSendTimerRef = useRef<number | null>(null);
-  const latestRealtimeAtRef = useRef<number>(0);
+  const wsProviderRef = useRef<WebsocketProvider | null>(null);
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
   const [reviewDiff, setReviewDiff] = useState<DocumentComparePayload | null>(null);
   const [reviewDiffState, setReviewDiffState] = useState<"idle" | "loading" | "error" | "ready">("idle");
@@ -469,6 +457,23 @@ export function WorkspacePage() {
   const proposalPayloadRef = useRef<WorkspacePayload | null>(null);
   const [diffManifest, setDiffManifest] = useState<DiffManifest | null>(null);
   const proposalMode = workspaceMode === "proposal";
+
+  // Create Y.Doc eagerly so the editor always has it on first render.
+  // WebsocketProvider connects it to the server asynchronously.
+  const collabKey = workspace?.document.proposalId ?? null;
+  const ydoc = useMemo(() => {
+    if (!collabKey) return null;
+    return new Y.Doc();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collabKey]);
+
+  useEffect(() => {
+    return () => { ydoc?.destroy(); };
+  }, [ydoc]);
+
+  // y-websocket provider — handles Yjs sync protocol + awareness automatically.
+  const [wsProvider, setWsProvider] = useState<WebsocketProvider | null>(null);
+
   // Derive current space from the loaded workspace
   const currentSpaceId = workspace?.space?.id ?? null;
   const currentSpaceName = workspace?.space?.name ?? null;
@@ -489,7 +494,6 @@ export function WorkspacePage() {
     setDocDraft(payload.doc ?? legacyContentToDoc(payload.content, payload.nodeIds));
     setMergeGateBlockers([]);
     setMergeGatePolicy(null);
-    latestRealtimeAtRef.current = Date.now();
   }, []);
 
   // Lock body scroll when fullscreen diff is open
@@ -502,7 +506,6 @@ export function WorkspacePage() {
 
   useEffect(() => {
     let active = true;
-    latestRealtimeAtRef.current = 0;
     setViewState("loading");
     setSaveState("idle");
     setSaveError(null);
@@ -580,14 +583,6 @@ export function WorkspacePage() {
     if (viewState !== "success") return;
     void refreshDocumentIndex("foreground", currentSpaceId ?? undefined);
   }, [refreshDocumentIndex, currentSpaceId, viewState]);
-
-  useEffect(() => {
-    return () => {
-      if (realtimeSendTimerRef.current) {
-        window.clearTimeout(realtimeSendTimerRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 980px)");
@@ -1049,72 +1044,72 @@ export function WorkspacePage() {
     };
   }, [activeTab, workspace?.document.id, workspace?.document.proposalId, decisionOutcomeFilter, decisionQuery, decisionAuthor]);
 
+  // Yjs WebSocket sync — connects the eagerly-created Y.Doc to the server
+  // using y-websocket's standard WebsocketProvider.
   useEffect(() => {
-    if (!workspace?.document.proposalId) {
-      if (realtimeSocketRef.current) {
-        realtimeSocketRef.current.close();
-      }
+    if (!ydoc || !workspace?.document.proposalId) {
+      wsProviderRef.current?.destroy();
+      wsProviderRef.current = null;
+      setWsProvider(null);
       setRealtimeStatus("offline");
       setOnlineUsers([]);
-      realtimeSocketRef.current = null;
       return;
     }
 
-    setRealtimeStatus("connecting");
-    const socket = connectWorkspaceRealtime(
-      workspace.document.id,
-      workspace.document.proposalId,
-      (event) => {
-        if (event.type === "connected") {
-          setRealtimeStatus("connected");
-          setOnlineUsers(event.users ?? []);
-          return;
-        }
-        if (event.type === "presence") {
-          setRealtimeStatus("connected");
-          setOnlineUsers(event.users ?? []);
-          return;
-        }
-        if (event.type === "snapshot" && event.snapshot?.content) {
-          const eventAt = parseRealtimeTimestamp(event.snapshot.updatedAt);
-          if (eventAt === null || eventAt < latestRealtimeAtRef.current) {
-            return;
-          }
-          latestRealtimeAtRef.current = eventAt;
-          setContentDraft(event.snapshot.content);
-          setDocDraft(event.snapshot.doc ?? legacyContentToDoc(event.snapshot.content, workspace.nodeIds));
-          return;
-        }
-        if (event.type === "document_update") {
-          const eventAt = parseRealtimeTimestamp(event.at);
-          if (eventAt !== null && eventAt < latestRealtimeAtRef.current) {
-            return;
-          }
-          if (eventAt !== null) {
-            latestRealtimeAtRef.current = eventAt;
-          }
-          setContentDraft(event.content);
-          setDocDraft(event.doc ?? legacyContentToDoc(event.content, workspace.nodeIds));
-          setSaveState("idle");
-        }
-      },
-      () => {
-        setRealtimeStatus("offline");
-      }
-    );
-
-    if (!socket) {
+    const token = getStoredAuthToken();
+    if (!token) {
       setRealtimeStatus("offline");
-      realtimeSocketRef.current = null;
       return;
     }
-    realtimeSocketRef.current = socket;
+
+    // VITE_SYNC_URL is "ws://host/ws" — strip the trailing path to get serverUrl,
+    // since y-websocket constructs URLs as serverUrl/roomName.
+    const syncUrl = import.meta.env.VITE_SYNC_URL ?? "ws://localhost:8788/ws";
+    const parsed = new URL(syncUrl);
+    const roomName = parsed.pathname.replace(/^\//, "") || "ws";
+    const serverUrl = `${parsed.protocol}//${parsed.host}`;
+
+    const provider = new WebsocketProvider(serverUrl, roomName, ydoc, {
+      params: {
+        token,
+        documentId: workspace.document.id,
+        branchId: workspace.document.proposalId,
+      },
+    });
+
+    provider.on("status", ({ status }: { status: string }) => {
+      if (status === "connected") setRealtimeStatus("connected");
+      else if (status === "connecting") setRealtimeStatus("connecting");
+      else setRealtimeStatus("offline");
+    });
+
+    // Track online users via Yjs awareness protocol
+    const updateUsers = () => {
+      const states = provider.awareness.getStates();
+      const names: string[] = [];
+      states.forEach((state) => {
+        if (state.user?.name) names.push(state.user.name as string);
+      });
+      setOnlineUsers(names);
+    };
+    provider.awareness.on("change", updateUsers);
+
+    // Set our own awareness user info
+    provider.awareness.setLocalStateField("user", {
+      name: userName ?? "Anonymous",
+      color: userColor(userName ?? "Anonymous"),
+    });
+
+    wsProviderRef.current = provider;
+    setWsProvider(provider);
 
     return () => {
-      realtimeSocketRef.current = null;
-      socket.close();
+      provider.awareness.off("change", updateUsers);
+      provider.destroy();
+      wsProviderRef.current = null;
+      setWsProvider(null);
     };
-  }, [workspace?.document.id, workspace?.document.proposalId, workspace?.nodeIds]);
+  }, [ydoc, workspace?.document.id, workspace?.document.proposalId, userName]);
 
   useEffect(() => {
     if (!workspace?.document.proposalId || workspaceMode !== "review") {
@@ -1343,12 +1338,6 @@ export function WorkspacePage() {
     const nextContent = docToLegacyContent(doc);
     setDocDraft(doc);
     setContentDraft(nextContent);
-    if (realtimeSendTimerRef.current) {
-      window.clearTimeout(realtimeSendTimerRef.current);
-    }
-    realtimeSendTimerRef.current = window.setTimeout(() => {
-      sendWorkspaceRealtimeUpdate(realtimeSocketRef.current, nextContent, doc);
-    }, 250);
     setSaveState("idle");
     setSaveError(null);
   }, []);
@@ -2664,6 +2653,10 @@ export function WorkspacePage() {
                     activeChangeNodeId={compareActive ? activeCompareNodeId : null}
                     threadAnchors={threadAnchors}
                     className="cm-editor-wrapper"
+                    ydoc={ydoc}
+                    provider={wsProvider}
+                    userName={userName ?? "Anonymous"}
+                    userColor={userColor(userName ?? "Anonymous")}
                   />
                 ) : null}
               </div>

@@ -2,6 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import * as Y from "yjs";
+import * as syncProtocol from "y-protocols/sync";
+import * as awarenessProtocol from "y-protocols/awareness";
+import * as encoding from "lib0/encoding";
+import * as decoding from "lib0/decoding";
 
 import { verifyAuthToken } from "./auth-token.mjs";
 
@@ -9,10 +14,132 @@ const PORT = Number(process.env.SYNC_PORT ?? 8788);
 const API_BASE_URL = process.env.API_BASE_URL ?? "http://localhost:8787";
 const SYNC_INTERNAL_TOKEN = process.env.CHRONICLE_SYNC_TOKEN ?? "chronicle-sync-dev-token";
 const DATA_ROOT = path.resolve(process.cwd(), process.env.SYNC_DATA_DIR ?? "backend/.sync-data");
-const SNAPSHOT_DIR = path.join(DATA_ROOT, "snapshots");
-const UPDATES_DIR = path.join(DATA_ROOT, "updates");
+const YJS_STATE_DIR = path.join(DATA_ROOT, "yjs-state");
+
+const MSG_SYNC = 0;
+const MSG_AWARENESS = 1;
+
+const PERSIST_INTERVAL_MS = 5_000;
 
 const rooms = new Map();
+
+// ---------------------------------------------------------------------------
+// Y.Doc → ProseMirror JSON conversion (server-side, no DOM needed)
+// ---------------------------------------------------------------------------
+
+function yDocToJSON(ydoc) {
+  const fragment = ydoc.getXmlFragment("prosemirror");
+  if (fragment.length === 0) return null;
+
+  const content = [];
+  fragment.forEach((child) => {
+    if (child instanceof Y.XmlText) {
+      content.push(...yTextToNodes(child));
+    } else {
+      content.push(yXmlToJSON(child));
+    }
+  });
+
+  return { type: "doc", content };
+}
+
+function yXmlToJSON(element) {
+  const result = { type: element.nodeName };
+
+  const attrs = element.getAttributes();
+  if (Object.keys(attrs).length > 0) {
+    result.attrs = {};
+    for (const [key, value] of Object.entries(attrs)) {
+      result.attrs[key] = value;
+    }
+  }
+
+  const content = [];
+  element.forEach((child) => {
+    if (child instanceof Y.XmlText) {
+      content.push(...yTextToNodes(child));
+    } else {
+      content.push(yXmlToJSON(child));
+    }
+  });
+
+  if (content.length > 0) {
+    result.content = content;
+  }
+
+  return result;
+}
+
+function yTextToNodes(xmlText) {
+  const delta = xmlText.toDelta();
+  return delta
+    .filter((op) => typeof op.insert === "string" && op.insert.length > 0)
+    .map((op) => {
+      const node = { type: "text", text: op.insert };
+      if (op.attributes && Object.keys(op.attributes).length > 0) {
+        node.marks = Object.entries(op.attributes).map(([type, attrs]) => {
+          const mark = { type };
+          if (
+            typeof attrs === "object" &&
+            attrs !== null &&
+            Object.keys(attrs).length > 0
+          ) {
+            mark.attrs = attrs;
+          }
+          return mark;
+        });
+      }
+      return node;
+    });
+}
+
+// ---------------------------------------------------------------------------
+// ProseMirror JSON → legacy flat-string content (mirrors schema.ts)
+// ---------------------------------------------------------------------------
+
+function extractText(node) {
+  if (node.text) return node.text;
+  if (!node.content) return "";
+  return node.content.map(extractText).join("");
+}
+
+function docToLegacyContent(doc) {
+  const result = { title: "", subtitle: "", purpose: "", tiers: "", enforce: "" };
+  if (!doc || !doc.content) return result;
+
+  const nodes = doc.content;
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    const text = extractText(node);
+
+    if (node.type === "heading" && node.attrs?.level === 1) {
+      result.title = text;
+      continue;
+    }
+
+    if (node.type === "paragraph" && result.title && !result.subtitle && !result.purpose) {
+      result.subtitle = text;
+      continue;
+    }
+
+    if (node.type === "heading") {
+      const headingText = text.toLowerCase();
+      const next = nodes[i + 1];
+      if (next && next.type === "paragraph") {
+        const nextText = extractText(next);
+        if (headingText.includes("purpose")) { result.purpose = nextText; i++; }
+        else if (headingText.includes("tier")) { result.tiers = nextText; i++; }
+        else if (headingText.includes("enforce")) { result.enforce = nextText; i++; }
+      }
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket frame helpers (raw WebSocket protocol)
+// ---------------------------------------------------------------------------
 
 function socketKey(roomKey, userName) {
   return `${roomKey}:${userName}:${Math.random().toString(36).slice(2, 8)}`;
@@ -20,19 +147,6 @@ function socketKey(roomKey, userName) {
 
 function roomStorageKey(roomKey) {
   return Buffer.from(roomKey, "utf8").toString("base64url");
-}
-
-function roomPaths(roomKey) {
-  const key = roomStorageKey(roomKey);
-  return {
-    snapshot: path.join(SNAPSHOT_DIR, `${key}.json`),
-    updates: path.join(UPDATES_DIR, `${key}.ndjson`)
-  };
-}
-
-async function ensureStorage() {
-  await fs.mkdir(SNAPSHOT_DIR, { recursive: true });
-  await fs.mkdir(UPDATES_DIR, { recursive: true });
 }
 
 function toWebSocketAcceptKey(key) {
@@ -63,8 +177,13 @@ function sendJson(client, payload) {
   writeFrame(client.socket, JSON.stringify(payload));
 }
 
+function sendBinary(client, data) {
+  writeFrame(client.socket, data, 0x02);
+}
+
 function parseFrames(buffer) {
   const messages = [];
+  const binaryMessages = [];
   const pings = [];
   let offset = 0;
   let shouldClose = false;
@@ -118,6 +237,8 @@ function parseFrames(buffer) {
       pings.push(payload);
     } else if (opcode === 0x1) {
       messages.push(payload.toString("utf8"));
+    } else if (opcode === 0x2) {
+      binaryMessages.push(payload);
     }
 
     offset += totalLength;
@@ -125,16 +246,60 @@ function parseFrames(buffer) {
 
   return {
     messages,
+    binaryMessages,
     pings,
     shouldClose,
     remaining: buffer.subarray(offset)
   };
 }
 
-function roomParticipantCount(roomKey) {
-  const room = rooms.get(roomKey);
-  return room ? room.clients.size : 0;
+// ---------------------------------------------------------------------------
+// Persistence
+// ---------------------------------------------------------------------------
+
+async function ensureStorage() {
+  await fs.mkdir(YJS_STATE_DIR, { recursive: true });
 }
+
+function yjsStatePath(roomKey) {
+  return path.join(YJS_STATE_DIR, `${roomStorageKey(roomKey)}.bin`);
+}
+
+async function loadYjsState(roomKey) {
+  try {
+    const data = await fs.readFile(yjsStatePath(roomKey));
+    return new Uint8Array(data);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.error(`[sync] failed to load Yjs state for ${roomKey}`, error);
+    }
+    return null;
+  }
+}
+
+async function persistYjsState(room) {
+  try {
+    await ensureStorage();
+    const state = Y.encodeStateAsUpdate(room.ydoc);
+    await fs.writeFile(yjsStatePath(room.roomKey), Buffer.from(state));
+  } catch (error) {
+    console.error(`[sync] failed to persist Yjs state for room=${room.roomKey}`, error);
+  }
+}
+
+// Periodic persistence for dirty rooms
+setInterval(() => {
+  for (const room of rooms.values()) {
+    if (room.dirty) {
+      room.dirty = false;
+      void persistYjsState(room);
+    }
+  }
+}, PERSIST_INTERVAL_MS);
+
+// ---------------------------------------------------------------------------
+// Room management
+// ---------------------------------------------------------------------------
 
 function roomParticipantNames(room) {
   const seen = new Set();
@@ -148,70 +313,96 @@ function roomParticipantNames(room) {
   return names;
 }
 
-function queuePersistence(room, task) {
-  room.persistChain = room.persistChain
-    .then(task)
-    .catch((error) => {
-      console.error(`[sync] persistence failed for room=${room.roomKey}`, error);
-    });
-  return room.persistChain;
-}
+function createRoom(roomKey, documentId, branchId, initialState) {
+  const ydoc = new Y.Doc();
+  const awareness = new awarenessProtocol.Awareness(ydoc);
 
-async function loadPersistedState(roomKey) {
-  await ensureStorage();
-  const paths = roomPaths(roomKey);
-  const state = {
-    snapshot: null,
-    persistedUpdates: 0
+  // Load persisted state if available
+  if (initialState) {
+    Y.applyUpdate(ydoc, initialState);
+  }
+
+  const room = {
+    roomKey,
+    documentId,
+    proposalId: branchId,
+    ydoc,
+    awareness,
+    clients: new Set(),
+    sessionId: randomUUID(),
+    sessionStartedAt: new Date().toISOString(),
+    sessionUpdateCount: 0,
+    lastActor: null,
+    cleanupScheduled: false,
+    dirty: false,
   };
 
-  try {
-    const snapshotRaw = await fs.readFile(paths.snapshot, "utf8");
-    state.snapshot = JSON.parse(snapshotRaw);
-  } catch (error) {
-    if (error.code !== "ENOENT") {
-      console.error(`[sync] failed to load snapshot for ${roomKey}`, error);
+  // Broadcast Y.Doc updates to peers (excluding origin)
+  ydoc.on("update", (update, origin) => {
+    if (origin && origin.userName) {
+      room.lastActor = origin.userName;
     }
-  }
+    room.sessionUpdateCount++;
+    room.dirty = true;
 
-  try {
-    const updatesRaw = await fs.readFile(paths.updates, "utf8");
-    if (updatesRaw.trim().length > 0) {
-      state.persistedUpdates = updatesRaw.trim().split("\n").length;
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, MSG_SYNC);
+    syncProtocol.writeUpdate(encoder, update);
+    const message = encoding.toUint8Array(encoder);
+
+    for (const client of room.clients) {
+      if (client !== origin) {
+        sendBinary(client, message);
+      }
     }
-  } catch (error) {
-    if (error.code !== "ENOENT") {
-      console.error(`[sync] failed to load update log for ${roomKey}`, error);
-    }
-  }
-
-  return state;
-}
-
-function persistUpdate(room, update) {
-  const paths = roomPaths(room.roomKey);
-  return queuePersistence(room, async () => {
-    await ensureStorage();
-    await fs.appendFile(paths.updates, `${JSON.stringify(update)}\n`, "utf8");
-    room.persistedUpdates += 1;
   });
+
+  // Broadcast awareness changes to peers (excluding origin)
+  awareness.on("update", ({ added, updated, removed }, origin) => {
+    const changedClients = added.concat(updated).concat(removed);
+    if (changedClients.length === 0) return;
+
+    // Track which awareness IDs belong to which connection
+    if (origin && origin.awarenessClientIds) {
+      for (const id of added.concat(updated)) {
+        origin.awarenessClientIds.add(id);
+      }
+      for (const id of removed) {
+        origin.awarenessClientIds.delete(id);
+      }
+    }
+
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, MSG_AWARENESS);
+    encoding.writeVarUint8Array(
+      encoder,
+      awarenessProtocol.encodeAwarenessUpdate(awareness, changedClients)
+    );
+    const message = encoding.toUint8Array(encoder);
+
+    for (const client of room.clients) {
+      if (client !== origin) {
+        sendBinary(client, message);
+      }
+    }
+  });
+
+  return room;
 }
 
-function persistSnapshot(room, snapshot) {
-  const paths = roomPaths(room.roomKey);
-  return queuePersistence(room, async () => {
-    await ensureStorage();
-    await fs.writeFile(paths.snapshot, JSON.stringify(snapshot, null, 2), "utf8");
-  });
-}
+// ---------------------------------------------------------------------------
+// Session flush (Y.Doc → JSON → Go API)
+// ---------------------------------------------------------------------------
 
 async function flushSession(room) {
-  if (!room.sessionId || !room.documentId || !room.proposalId) {
-    return;
-  }
-  if (!room.snapshot?.content) {
-    return;
-  }
+  if (!room.sessionId || !room.documentId || !room.proposalId) return;
+  if (room.sessionUpdateCount === 0) return;
+
+  const doc = yDocToJSON(room.ydoc);
+  if (!doc || !doc.content || doc.content.length === 0) return;
+
+  const legacyContent = docToLegacyContent(doc);
+
   const payload = {
     sessionId: room.sessionId,
     documentId: room.documentId,
@@ -221,19 +412,20 @@ async function flushSession(room) {
     startedAt: room.sessionStartedAt,
     endedAt: new Date().toISOString(),
     snapshot: {
-      ...room.snapshot.content,
-      ...(room.snapshot.doc ? { doc: room.snapshot.doc } : {})
-    }
+      ...legacyContent,
+      doc,
+    },
   };
+
   const endpoint = `${API_BASE_URL.replace(/\/$/, "")}/api/internal/sync/session-ended`;
   try {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-chronicle-sync-token": SYNC_INTERNAL_TOKEN
+        "x-chronicle-sync-token": SYNC_INTERNAL_TOKEN,
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
     if (!response.ok) {
       const body = await response.text().catch(() => "");
@@ -244,113 +436,78 @@ async function flushSession(room) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Client lifecycle
+// ---------------------------------------------------------------------------
+
 function removeClient(client) {
   const room = rooms.get(client.roomKey);
-  if (!room) {
-    return;
-  }
+  if (!room) return;
+
   room.clients.delete(client);
+
+  // Remove awareness states controlled by this connection
+  if (client.awarenessClientIds.size > 0) {
+    awarenessProtocol.removeAwarenessStates(
+      room.awareness,
+      [...client.awarenessClientIds],
+      null
+    );
+  }
+
   if (room.clients.size === 0) {
-    // Keep the room alive until persistence and optional flush settle so
-    // fast reconnects do not reload a stale on-disk snapshot.
-    if (room.cleanupScheduled) {
-      return;
-    }
+    if (room.cleanupScheduled) return;
     room.cleanupScheduled = true;
-    void room.persistChain
-      .then(async () => {
-        if (room.clients.size > 0) {
-          return;
-        }
+
+    void (async () => {
+      try {
+        await persistYjsState(room);
         await flushSession(room);
-      })
-      .finally(() => {
+      } finally {
         room.cleanupScheduled = false;
         if (room.clients.size === 0 && rooms.get(client.roomKey) === room) {
+          room.awareness.destroy();
+          room.ydoc.destroy();
           rooms.delete(client.roomKey);
         }
-      });
+      }
+    })();
     return;
   }
-  for (const peer of room.clients) {
-    sendJson(peer, {
-      type: "presence",
-      action: "left",
-      participants: room.clients.size,
-      userName: client.userName,
-      users: roomParticipantNames(room)
-    });
+
+}
+
+function handleBinaryMessage(room, client, data) {
+  const decoder = decoding.createDecoder(new Uint8Array(data));
+  const messageType = decoding.readVarUint(decoder);
+
+  switch (messageType) {
+    case MSG_SYNC: {
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, MSG_SYNC);
+      syncProtocol.readSyncMessage(decoder, encoder, room.ydoc, client);
+      if (encoding.length(encoder) > 1) {
+        sendBinary(client, encoding.toUint8Array(encoder));
+      }
+      break;
+    }
+    case MSG_AWARENESS: {
+      const update = decoding.readVarUint8Array(decoder);
+      awarenessProtocol.applyAwarenessUpdate(room.awareness, update, client);
+      break;
+    }
   }
 }
 
-function handleDocumentUpdate(room, client, payload) {
-  if (!payload || typeof payload !== "object") {
-    return;
-  }
-  const content = payload.content;
-  if (!content || typeof content !== "object") {
-    return;
-  }
-
-  // Preserve canonical ProseMirror doc when provided
-  const doc = payload.doc && typeof payload.doc === "object" ? payload.doc : undefined;
-
-  const now = new Date().toISOString();
-  const update = {
-    id: randomUUID(),
-    type: "doc_update",
-    room: room.roomKey,
-    actor: client.userName,
-    at: now,
-    content,
-    ...(doc ? { doc } : {})
-  };
-
-  room.lastActor = client.userName;
-  room.sessionUpdateCount += 1;
-  room.snapshot = {
-    content,
-    ...(doc ? { doc } : {}),
-    actor: client.userName,
-    updatedAt: now
-  };
-
-  void persistUpdate(room, update);
-  void persistSnapshot(room, room.snapshot);
-
-  for (const peer of room.clients) {
-    sendJson(peer, {
-      type: "document_update",
-      actor: client.userName,
-      content,
-      ...(doc ? { doc } : {}),
-      at: now
-    });
-  }
-}
-
-function broadcastMessage(room, client, message) {
-  if (message?.type === "doc_update") {
-    handleDocumentUpdate(room, client, message);
-    return;
-  }
-
-  const payload = {
-    type: "message",
-    from: client.userName,
-    payload: message,
-    receivedAt: new Date().toISOString()
-  };
-  for (const peer of room.clients) {
-    sendJson(peer, payload);
-  }
-}
+// ---------------------------------------------------------------------------
+// Health checks
+// ---------------------------------------------------------------------------
 
 async function checkAPIHealth() {
   try {
     const response = await fetch(`${API_BASE_URL.replace(/\/$/, "")}/api/health`, {
       method: "GET",
-      headers: { "Accept": "application/json" }
+      headers: { Accept: "application/json" },
     });
     return response.ok;
   } catch (error) {
@@ -359,42 +516,36 @@ async function checkAPIHealth() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// HTTP + WebSocket server
+// ---------------------------------------------------------------------------
+
 const server = createServer(async (req, res) => {
-  // Basic health check - lightweight, returns immediately
   if (req.url === "/health") {
-    res.writeHead(200, {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store"
-    });
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ ok: true, service: "sync", rooms: rooms.size }));
     return;
   }
 
-  // Readiness check - verifies API connectivity
   if (req.url === "/ready") {
     const apiHealthy = await checkAPIHealth();
-    const status = apiHealthy ? "ready" : "not_ready";
     const statusCode = apiHealthy ? 200 : 503;
-
-    res.writeHead(statusCode, {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store"
-    });
-    res.end(JSON.stringify({
-      ok: apiHealthy,
-      status,
-      service: "sync",
-      checks: {
-        api: { status: apiHealthy ? "ok" : "error" },
-        rooms: { status: "ok", count: rooms.size }
-      }
-    }));
+    res.writeHead(statusCode, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(
+      JSON.stringify({
+        ok: apiHealthy,
+        status: apiHealthy ? "ready" : "not_ready",
+        service: "sync",
+        checks: {
+          api: { status: apiHealthy ? "ok" : "error" },
+          rooms: { status: "ok", count: rooms.size },
+        },
+      })
+    );
     return;
   }
 
-  res.writeHead(404, {
-    "Content-Type": "application/json"
-  });
+  res.writeHead(404, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "Not found" }));
 });
 
@@ -425,33 +576,21 @@ server.on("upgrade", async (req, socket) => {
   }
 
   const acceptKey = toWebSocketAcceptKey(key);
-  const handshakeHeaders = [
-    "HTTP/1.1 101 Switching Protocols",
-    "Upgrade: websocket",
-    "Connection: Upgrade",
-    `Sec-WebSocket-Accept: ${acceptKey}`
-  ];
-
-  socket.write(`${handshakeHeaders.join("\r\n")}\r\n\r\n`);
+  socket.write(
+    [
+      "HTTP/1.1 101 Switching Protocols",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Accept: ${acceptKey}`,
+    ].join("\r\n") + "\r\n\r\n"
+  );
 
   const roomKey = `${documentId}:${branchId}`;
   let room = rooms.get(roomKey);
   if (!room) {
-    const persisted = await loadPersistedState(roomKey);
-    room = {
-      roomKey,
-      documentId,
-      proposalId: branchId,
-      clients: new Set(),
-      snapshot: persisted.snapshot,
-      persistedUpdates: persisted.persistedUpdates,
-      persistChain: Promise.resolve(),
-      sessionId: randomUUID(),
-      sessionStartedAt: new Date().toISOString(),
-      sessionUpdateCount: 0,
-      lastActor: null,
-      cleanupScheduled: false
-    };
+    await ensureStorage();
+    const persistedState = await loadYjsState(roomKey);
+    room = createRoom(roomKey, documentId, branchId, persistedState);
     rooms.set(roomKey, room);
   }
 
@@ -460,38 +599,40 @@ server.on("upgrade", async (req, socket) => {
     roomKey,
     userName: session.userName,
     socket,
-    buffer: Buffer.alloc(0)
+    buffer: Buffer.alloc(0),
+    awarenessClientIds: new Set(),
   };
 
   room.clients.add(client);
 
-  sendJson(client, {
-    type: "connected",
-    room: roomKey,
-    participants: roomParticipantCount(roomKey),
-    userName: session.userName,
-    persistedUpdates: room.persistedUpdates,
-    users: roomParticipantNames(room)
-  });
-
-  if (room.snapshot) {
-    sendJson(client, {
-      type: "snapshot",
-      snapshot: room.snapshot
-    });
+  // Send Yjs sync step 1 (server's state vector → client sends missing updates)
+  {
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, MSG_SYNC);
+    syncProtocol.writeSyncStep1(encoder, room.ydoc);
+    sendBinary(client, encoding.toUint8Array(encoder));
   }
 
-  for (const peer of room.clients) {
-    if (peer.id === client.id) {
-      continue;
-    }
-    sendJson(peer, {
-      type: "presence",
-      action: "joined",
-      participants: room.clients.size,
-      userName: session.userName,
-      users: roomParticipantNames(room)
-    });
+  // Also send sync step 2 (full server state → client applies missing data)
+  {
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, MSG_SYNC);
+    syncProtocol.writeSyncStep2(encoder, room.ydoc);
+    sendBinary(client, encoding.toUint8Array(encoder));
+  }
+
+  // Send current awareness states so new client sees existing users
+  if (room.awareness.getStates().size > 0) {
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, MSG_AWARENESS);
+    encoding.writeVarUint8Array(
+      encoder,
+      awarenessProtocol.encodeAwarenessUpdate(
+        room.awareness,
+        [...room.awareness.getStates().keys()]
+      )
+    );
+    sendBinary(client, encoding.toUint8Array(encoder));
   }
 
   socket.on("data", (chunk) => {
@@ -503,14 +644,16 @@ server.on("upgrade", async (req, socket) => {
       writeFrame(socket, pingPayload, 0x0a);
     }
 
+    // Handle binary messages (Yjs sync/awareness protocol)
+    for (const binaryData of parsed.binaryMessages) {
+      handleBinaryMessage(room, client, binaryData);
+    }
+
+    // Handle text messages (legacy JSON — ignored for now)
     for (const raw of parsed.messages) {
-      let payload;
-      try {
-        payload = JSON.parse(raw);
-      } catch {
-        payload = { text: raw };
-      }
-      broadcastMessage(room, client, payload);
+      // JSON messages are no longer used for document sync.
+      // Keep ping/pong and ignore doc_update messages.
+      void raw;
     }
 
     if (parsed.shouldClose) {
@@ -518,15 +661,9 @@ server.on("upgrade", async (req, socket) => {
     }
   });
 
-  socket.on("close", () => {
-    removeClient(client);
-  });
-  socket.on("end", () => {
-    removeClient(client);
-  });
-  socket.on("error", () => {
-    removeClient(client);
-  });
+  socket.on("close", () => removeClient(client));
+  socket.on("end", () => removeClient(client));
+  socket.on("error", () => removeClient(client));
 });
 
 server.listen(PORT, () => {

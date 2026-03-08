@@ -23,6 +23,9 @@ import Image from "@tiptap/extension-image";
 import { FindReplace } from "./extensions/find-replace";
 import { common, createLowlight } from "lowlight";
 import { useCallback, useEffect, useRef } from "react";
+import Collaboration from "@tiptap/extension-collaboration";
+import { Extension } from "@tiptap/core";
+import { yCursorPlugin } from "@tiptap/y-tiptap";
 
 const lowlight = createLowlight(common);
 import { NodeId } from "./extensions/node-id";
@@ -35,6 +38,9 @@ import { DiffDecorations, type DiffState } from "./extensions/diff-decorations";
 import { ThreadMarkers, type ThreadAnchor } from "./extensions/thread-markers";
 import type { DiffManifest } from "./diff";
 import type { DocumentContent } from "./schema";
+import type * as Y from "yjs";
+import type { WebsocketProvider } from "y-websocket";
+
 type Props = {
   content: DocumentContent;
   editable?: boolean;
@@ -49,6 +55,10 @@ type Props = {
   activeChangeNodeId?: string | null;
   threadAnchors?: ThreadAnchor[];
   className?: string;
+  ydoc?: Y.Doc | null;
+  provider?: WebsocketProvider | null;
+  userName?: string;
+  userColor?: string;
 };
 
 export function ChronicleEditor({
@@ -65,8 +75,13 @@ export function ChronicleEditor({
   activeChangeNodeId = null,
   threadAnchors = [],
   className = "",
+  ydoc = null,
+  provider = null,
+  userName = "Anonymous",
+  userColor = "#c4622d",
 }: Props) {
   const serializedContent = JSON.stringify(content);
+  const isCollaborative = ydoc != null;
 
   // Mutable ref for diff state so the ProseMirror plugin always reads latest values
   const diffStateRef = useRef<DiffState>({ manifest: diffManifest, visible: diffVisible, mode: diffMode, activeChangeNodeId });
@@ -76,6 +91,8 @@ export function ChronicleEditor({
     extensions: [
       StarterKit.configure({
         codeBlock: false,
+        // Disable built-in undo/redo when Yjs collaboration is active (they conflict)
+        undoRedo: isCollaborative ? false : undefined,
       }),
       Placeholder.configure({
         placeholder: "Start typing to begin your document...",
@@ -126,8 +143,28 @@ export function ChronicleEditor({
       ThreadMarkers.configure({
         getAnchors: () => threadAnchorsRef.current,
       }),
+      // Official TipTap collaboration extensions
+      ...(ydoc
+        ? [
+            Collaboration.configure({ document: ydoc, field: "prosemirror" }),
+            ...(provider
+              ? [
+                  Extension.create({
+                    name: "collaborationCursor",
+                    addProseMirrorPlugins() {
+                      provider.awareness.setLocalStateField("user", {
+                        name: userName,
+                        color: userColor,
+                      });
+                      return [yCursorPlugin(provider.awareness)];
+                    },
+                  }),
+                ]
+              : []),
+          ]
+        : []),
     ],
-    content,
+    content: isCollaborative ? undefined : content,
     editable,
     onUpdate: ({ editor: ed }) => {
       onUpdate?.(ed.getJSON() as DocumentContent);
@@ -135,7 +172,7 @@ export function ChronicleEditor({
     onCreate: ({ editor: ed }) => {
       onEditorReady?.(ed);
     },
-  });
+  }, [ydoc, provider]);
 
   // Update diff state ref and force decoration recalculation
   useEffect(() => {
@@ -159,15 +196,17 @@ export function ChronicleEditor({
     }
   }, [editor, editable]);
 
+  // Sync content prop to editor — SKIP when Yjs collaboration is active
+  // (ySyncPlugin manages content from Y.Doc, external content updates would conflict)
   useEffect(() => {
-    if (!editor) {
+    if (!editor || isCollaborative) {
       return;
     }
     const current = JSON.stringify(editor.getJSON());
     if (current !== serializedContent) {
       editor.commands.setContent(content, { emitUpdate: false });
     }
-  }, [editor, serializedContent, content]);
+  }, [editor, serializedContent, content, isCollaborative]);
 
   // Tab/Shift+Tab escapes the editor for keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
