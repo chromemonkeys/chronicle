@@ -9757,26 +9757,22 @@ button:focus-visible {
   cursor: default;
 }
 
-/* ---- Yjs remote cursor styles ---- */
-.yRemoteSelection {
-  background-color: var(--selection-color, rgba(100, 160, 255, 0.3));
+/* ---- Yjs remote cursor styles (@tiptap/y-tiptap) ---- */
+.ProseMirror-yjs-cursor {
+  position: relative;
+  border-left: 2px solid currentColor;
+  margin-left: -1px;
+  margin-right: -1px;
+  pointer-events: none;
+  word-break: normal;
 }
-.yRemoteSelectionHead {
-  position: absolute;
-  border-left: 2px solid var(--cursor-color, #4a9eff);
-  border-top: 2px solid var(--cursor-color, #4a9eff);
-  height: 1.2em;
-  box-sizing: border-box;
-}
-.yRemoteSelectionHead::after {
-  content: attr(data-user);
+.ProseMirror-yjs-cursor > div {
   position: absolute;
   top: -1.4em;
   left: -2px;
   font-size: 0.65rem;
   font-weight: 600;
   color: #fff;
-  background: var(--cursor-color, #4a9eff);
   padding: 1px 4px;
   border-radius: 3px 3px 3px 0;
   white-space: nowrap;
